@@ -1571,6 +1571,23 @@ plainly:
 has to remember an address — but it is still a real Supabase Auth password sign-in underneath, not a
 bespoke cookie. Do not invent a custom session mechanism for this.
 
+#### Supabase project settings this auth model depends on
+
+Two dashboard settings are part of the security boundary, not preferences, and
+neither is correct by default on a new project:
+
+- **Disable public sign-ups** (Authentication → Sign In / Providers → *Allow new
+  users to sign up* → off). Nobody in this system ever self-registers: there is
+  exactly one `ADMIN`, created once by `scripts/bootstrap-admin.ts`, and every
+  `OPERATOR` is provisioned by the admin (§14.3). The publishable key is public
+  by design — it ships in the browser bundle — so leaving sign-ups on means
+  anyone who views source can create an account in the project. Turn it off
+  before the first deploy and keep it off.
+- **Email confirmation stays on**, which is why operator users must be created
+  through the Supabase admin API with `email_confirm: true`. Their addresses are
+  synthetic (`<slug>@operators.local`) and can never receive a confirmation
+  mail, so an operator created any other way can never sign in (§12.1).
+
 #### Provisioning operators
 
 `/admin/operators` lists operators with their assigned shows, check-in counts and last sign-in. Creating
@@ -1963,8 +1980,8 @@ Paste into Gemini Deep Research if reconsidering the hosting decision.
 | Variable | Used by | Notes |
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | client + server | |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | client | RLS-protected access only |
-| `SUPABASE_SERVICE_ROLE_KEY` | server only | **Never expose to the client.** Bypasses RLS. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | client | RLS-protected access only. Newer dashboards label this the **publishable key** (`sb_publishable_…`); it is the same thing and is public by design — it ships in the browser bundle |
+| `SUPABASE_SERVICE_ROLE_KEY` | server only | **Never expose to the client.** Bypasses RLS. Newer dashboards label this the **secret key** (`sb_secret_…`). Never paste it into a chat, an issue, or a commit |
 | `DATABASE_URL` | server | App runtime. Supabase **pooler**, port `6543`, transaction mode, `prepare: false` (§16.2) |
 | `DIRECT_URL` | migrations | Supabase **pooler**, port `5432`, session mode. Used by `drizzle-kit` only (§16.2) |
 | `GMAIL_USER` | server | Sending address |

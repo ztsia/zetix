@@ -51,7 +51,7 @@ into the V1 critical path; do not make schema choices that V2 would have to resh
 
 ## Stack
 
-Next.js 15 (App Router, TypeScript) · shadcn/ui + Tailwind · Supabase (Postgres, Auth, Storage) ·
+Next.js 16 (App Router, TypeScript) · shadcn/ui + Tailwind · Supabase (Postgres, Auth, Storage) ·
 Drizzle · `nodemailer` + Gmail SMTP · `react-konva` · `pdf-lib` + `sharp` · `@zxing/browser` ·
 Vercel Hobby.
 

@@ -1652,7 +1652,7 @@ CSS variables so it can change per concert without code edits.
 
 | Concern | Choice | Note |
 |---|---|---|
-| Framework | Next.js 15, App Router, TypeScript | Server Actions for mutations, RSC for admin tables |
+| Framework | Next.js 16, App Router, TypeScript | Server Actions for mutations, RSC for admin tables |
 | UI | shadcn/ui + Tailwind | |
 | DB / Auth / Storage | **Supabase** | One service for all three; the idle pause is handled by a keep-alive cron (§17.1) |
 | Data access | Drizzle + `postgres.js` | Typed migrations; allocation logic is a raw SQL function. Two connection URLs — §16.2 |

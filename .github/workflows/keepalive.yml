@@ -1,0 +1,31 @@
+# Second, independent keep-alive (spec.md §17.1).
+#
+# The Vercel cron is the primary. This exists because its failure mode is
+# silent: if the project is renamed, the route errors, or the deployment is
+# removed, nothing tells you until the database has already paused — most
+# likely a month before a concert. One YAML file removes the single point of
+# failure.
+#
+# Requires repo secrets: APP_URL, CRON_SECRET
+name: keepalive
+
+on:
+  schedule:
+    - cron: '0 15 * * *' # 23:00 Asia/Kuala_Lumpur
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          code=$(curl -sS -o /tmp/body -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/health")
+          cat /tmp/body
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::health check returned $code — the database may be paused"
+            exit 1
+          fi

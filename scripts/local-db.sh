@@ -26,9 +26,7 @@ start() {
   fi
   "$PGBIN/createdb" -h "$PGSOCK" -p "$PGPORT" -U postgres "$DBNAME" 2>/dev/null || true
   psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d "$DBNAME" -q \
-    -c 'create extension if not exists citext;' \
-    -c 'create extension if not exists pg_trgm;' \
-    -c 'create extension if not exists pgcrypto;'
+    -f "$(dirname "$0")/db-extensions.sql"
   echo
   echo "  DATABASE_URL=postgresql://postgres@localhost:$PGPORT/$DBNAME"
 }

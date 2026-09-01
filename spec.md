@@ -1,6 +1,6 @@
 # Orchestra Concert Ticketing — System Specification
 
-Status: draft v5
+Status: draft v6
 
 **This document defines the system. It contains no concert-specific values.** Capacities, quotas,
 player counts, dates and deadlines live in `context.md` as data an admin enters, never as constants in
@@ -26,7 +26,10 @@ Today registration runs on Google Forms. Each concert has several **shows**. Two
   from a shared pool.
 - **Public** — audience members register for themselves, with no player relationship.
 
-A show has exactly one audience model. Mixed-mode shows are out of scope.
+**A show may carry both.** Audience mode belongs to a **segment** — a named slice of one show's
+capacity — not to the show. A single evening in a single hall can hold a public block and a
+player-invited block side by side, each with its own capacity, quota, deadline, policy and form. A
+show with one audience simply has one segment. See §7.1 and decision #5 in §19.1.
 
 Seating is unreserved and admission is free. There is no pricing, no payment, and no seat selection
 anywhere in this system.
@@ -63,16 +66,20 @@ that table and the cascade below — it does not go in a `const`.
 ### 2.2 Three-level configuration cascade
 
 ```
-system_settings  →  concert.defaults  →  show.<field>
-   (global)          (per concert)        (per show, authoritative)
+system_settings  →  concert.defaults  →  show.<field>  →  segment.<field>
+   (global)          (per concert)        (per show)      (per segment, authoritative)
 ```
 
-Every tunable is `NULL`-able at the concert and show level, resolving upward until a value is found.
-The system level always has a value, so resolution can never fail. Reads go through one resolver:
+Every tunable is `NULL`-able at the concert, show and segment levels, resolving upward until a value
+is found. The system level always has a value, so resolution can never fail. Reads go through one
+resolver:
 
 ```ts
-resolveSetting(key, { showId, concertId })   // show → concert → system
+resolveSetting(key, { segmentId, showId, concertId })   // segment → show → concert → system
 ```
+
+Allocation values (capacity, base quota, claim deadline, extras policy, party cap) are **segment**
+values; the hall's own capacity is a **show** value. §6 states the level of every key.
 
 Never read a raw column for a cascading value; always resolve. This is what makes "each show is
 independently configured" true without forcing the admin to re-enter everything per show.
@@ -145,14 +152,48 @@ which is faster than reverse-engineering it.
 
 ## 4. Scope
 
-### 4.1 In scope (v1)
+The system is delivered in two versions. **V1 is a complete, usable ticketing system on its own** — it
+runs a real concert end to end. V2 adds the surfaces that assume registration has moved in-house.
 
-Concerts, shows, players, admin/operator accounts; two registration form types with response limiting;
-the allocation engine; spreadsheet import with saved column-mapping profiles; ticket generation with a
-template editor and seeded defaults; batched email via Gmail SMTP; an offline-tolerant door scanner; and
-a QR-reachable concert portal with e-booklet and notes.
+The split follows one fact: registration is captured on Google Forms for both rounds of the first
+concert, so every native-form feature can wait, while nothing in the ticket → email → door path can.
 
-### 4.2 Out of scope (v1)
+### 4.1 V1 — runs the concert
+
+| Area | Included |
+|---|---|
+| Configuration | Concerts, shows, segments, the settings cascade (§2.2, §6) |
+| People | Players (CRUD + CSV import), the shared admin account, operator accounts and show assignments |
+| Allocation | The full engine: `claim_seats()`, base/extras, the extras review screen (§7) |
+| Intake | **Spreadsheet import** with mapping profiles (§9), plus full manual registration CRUD (§7.6) |
+| Tickets | `ticket_code` / `qr_token`, canvas template editor, seeded defaults, PDF render (§10) |
+| Email | Outbox, draft-review-and-edit, Gmail SMTP, idempotent blasts, manual delivery marking (§11) |
+| Door | Offline-tolerant scanner, check-in dashboard, scan log with revert (§12) |
+| Ticket page | A **read-only status page at `/t/{qr_token}`** — name, show, date, doors, venue, QR |
+| Admin | The console around all of the above, `DataTable`, exports, audit log (§14) |
+
+The ticket status page is in V1 deliberately. Ticket holders scan their own QR out of curiosity, and
+the URL is printed on something we told them is their ticket — a 404 there is a support call on concert
+night. It is one read-only page reusing data the door already needs.
+
+### 4.2 V2 — after the first concert
+
+| Area | Included |
+|---|---|
+| Native registration | Both form types, the JSON schema renderer, response limiting, editing (§8) |
+| Public verification | Double opt-in, unverified-registration review (§8.1) |
+| Full portal | Progressive disclosure on admission, e-booklet, practical info (§13) |
+| Notes | Leaving notes, moderation, the wall, per-player grouping, digests (§13.4, §14.2) |
+| Rate limiting | Per-IP form and portal throttles (§8.3, `ref.md` §7) |
+
+V2 features are specified in full below rather than deferred to a later document, because the V1 schema
+must not need reshaping to accept them. Where a V1 table carries a column only V2 uses, it is marked.
+
+**Admin login rate limiting is V1**, not V2: it is the only credential guarding every attendee's name
+and email (§14.3). The per-form and per-portal throttles wait because in V1 there are no public forms
+and the portal is a single read-only page.
+
+### 4.3 Out of scope entirely
 
 Payments, pricing, refunds, seat selection or seat maps, waitlist auto-promotion emails, SMS, native
 mobile apps, multi-organisation tenancy, i18n, public marketing pages.
@@ -163,13 +204,14 @@ mobile apps, multi-organisation tenancy, i18n, public marketing pages.
 
 ```
 concert
- ├── show                     (one concert has many shows, each independently configured)
- │    ├── registration_form   (one active form per show)
- │    ├── registration        (a booking party)
- │    │    └── attendee       (one row per seat / per ticket)
- │    └── check_in            (append-only scan log)
+ ├── show                     (a hall on a night; owns total capacity and the door)
+ │    ├── show_segment        (a slice of that capacity with its own audience mode)
+ │    │    ├── registration_form   (one active form per round, per segment)
+ │    │    └── registration        (a booking party)
+ │    │         └── attendee       (one row per seat / per ticket)
+ │    └── check_in            (append-only scan log, per show)
  ├── player                   (performer, scoped to concert)
- │    └── player_allocation   (player × show → quota + usage)
+ │    └── player_allocation   (player × segment → quota override)
  ├── ticket_template          (canvas layout JSON + background asset)
  ├── booklet                  (e-booklet PDF)
  └── portal_note              (note from an attendee, optionally addressed to a player)
@@ -189,13 +231,22 @@ concert
 
 **`shows`**
 `id`, `concert_id`, `name`, `starts_at` (timestamptz), `doors_open_at`, `venue_name`, `venue_address`,
-`soft_capacity`, `hard_capacity`, `held_seats`,
+`capacity`,
 `portal_unlock_mode` (ON_ADMISSION | OPEN_TO_ALL | CLOSED),
-`status` (DRAFT|OPEN|CLOSED|COMPLETED), `ticket_template_id`,
+`status` (DRAFT|OPEN|CLOSED|COMPLETED), `ticket_template_id` (nullable),
 `created_at`, `updated_at`, `deleted_at`
 
-The show owns the **physical hall**: total capacity and the door. It no longer carries an audience
-mode — see segments below.
+`ticket_template_id` resolves like any other cascading value: **show → concert
+(`ticket.default_template_id`) → the seeded global default**. It is nullable precisely so a concert can
+set one template for all its shows and a single show can override it. Never read the column directly.
+
+The show owns the **physical hall**: one capacity number and the door. It carries no audience mode —
+see segments below.
+
+**One capacity, not three.** There is no separate soft threshold and no `held_seats` column. Seats you
+want to withhold — staff, press, guests of honour — are simply seats you do not give to any segment:
+if the hall is 400 and the segments total 390, ten seats are held, and the overview screen shows them
+as unallocated. One number is easier to reason about at 9pm on a concert night than three.
 
 **`show_segments`** — a slice of one show's capacity with its own audience model
 `id`, `show_id`, `name` (e.g. "Public", "Player invited"),
@@ -207,10 +258,11 @@ mode — see segments below.
 `allow_partial_grant`, `max_tickets_per_response` (nullable),
 `display_order`, `created_at`, `updated_at`
 Unique: `(show_id, audience_mode)` — at most one segment per mode per show
+Unique: `(id, show_id)` — exists only so child tables can carry a composite foreign key (§5.2)
 
 A show has one or more segments; a single-audience show simply has one. Constraint:
-`Σ segment.capacity + held_seats <= hard_capacity`, validated on save with a clear error naming the
-overflow. A second constraint on base entitlement is in §7.4.
+`Σ segment.capacity <= show.capacity`, validated on save with a clear error naming the overflow. A
+second constraint on base entitlement is in §7.4.
 
 Segments do **not** borrow from each other automatically. If the player segment finishes with 20
 unclaimed seats and the public segment is full, an admin moves the numbers explicitly (player 80,
@@ -226,7 +278,7 @@ default in code.
 Unique: `(concert_id, lower(email))`
 
 **`player_allocations`**
-`id`, `player_id`, `segment_id`, `base_quota_override` (nullable → falls back to `segment.base_quota`),
+`id`, `player_id`, `segment_id`, `base_quota_override` (nullable → resolves up the cascade, §2.2),
 `notes`, `created_at`, `updated_at`
 Unique: `(player_id, segment_id)`
 
@@ -256,19 +308,23 @@ second registration round is a new form on the same segment with a new `round_la
 `requested_at` (timestamptz — the FCFS ordering key),
 `created_by`, `created_at`, `updated_at`, `deleted_at`
 Index: `(segment_id, status, requested_at)`, `(show_id, status)`
+Unique: `(id, segment_id, show_id)` — for the composite foreign key in §5.2
 
 **`attendees`** — one row per seat
 `id`, `registration_id`, `show_id`, `segment_id`, `full_name`, `email` (citext, nullable),
 `allocation_type` (BASE|EXTRA|HELD|COMP),
 `ticket_code` (unique), `qr_token` (unique),
 `status` (CONFIRMED|PENDING_REVIEW|WAITLIST|CANCELLED),
-`ticket_issued_at`, `ticket_sent_at`,
+`ticket_issued_at`, `ticket_sent_at`, `ticket_sent_source` (EMAIL|MANUAL, nullable),
+`needs_reissue` (bool — set when a bound field changes after sending, §10.6),
 `ticket_template_id`, `ticket_template_version` (pinned at issue time — see §10.5),
 `created_at`, `updated_at`, `deleted_at`
 Index: `(segment_id, status)`, `(show_id, status)`; unique on `qr_token`, unique on `ticket_code`
 
-`ticket_sent_at` is the **dedup key for repeat blasts** (§11.4). It is set only on a confirmed
-successful send.
+`ticket_sent_at` is the **per-seat delivery truth and the dedup key for repeat blasts** (§11.4). It is
+set only when delivery is confirmed — either by a successful send (`ticket_sent_source = EMAIL`) or by
+an admin marking it delivered by hand (`MANUAL`, §11.5). Email itself is addressed per *registration*,
+not per attendee, so one successful send stamps every attendee whose PDF it carried.
 
 **`check_ins`** — append-only
 `id`, `attendee_id`, `show_id`, `operator_id` (nullable), `device_id`,
@@ -294,27 +350,42 @@ Index: `(show_id, scanned_at)`, `(attendee_id)`
 Index: `(concert_id, moderation_status)`, `(to_player_id)`, `(concert_id, wall_status)`
 
 **`import_batches`**
-`id`, `show_id`, `filename`, `mapping_profile_id`, `uploaded_by`,
+`id`, `show_id`, `segment_id`, `filename`, `mapping_profile_id`, `uploaded_by`,
 `row_count`, `created_count`, `skipped_count`, `error_count`,
-`report` (jsonb), `status` (DRY_RUN|COMMITTED|ROLLED_BACK), `created_at`
+`report` (jsonb), `status` (DRY_RUN|COMMITTED), `created_at`
 
 **`mapping_profiles`**
 `id`, `name`, `show_id` (nullable), `audience`, `config` (jsonb — §9.3), `created_at`, `updated_at`
 
-**`email_outbox`**
-`id`, `to_email`, `to_name`, `subject`, `template_key`, `context` (jsonb),
-`attendee_id` (nullable), `registration_id` (nullable), `attachment_path` (nullable),
-`status` (QUEUED|SENDING|SENT|FAILED|CANCELLED),
-`attempts`, `last_error`, `scheduled_for`, `sent_at`, `created_at`
-Index: `(status, scheduled_for)`
+**`email_outbox`** — one row per *message*, and every message is addressed to a registration
+`id`, `registration_id` (not null), `template_key`,
+`to_email`, `to_name`,
+`subject`, `body_md`, `context` (jsonb — the merge values the body was rendered from),
+`attachment_paths` (jsonb array, nullable),
+`status` (DRAFT|QUEUED|SENDING|SENT|FAILED|CANCELLED),
+`attempts`, `last_error`, `scheduled_for`, `sent_at`, `created_at`, `updated_at`
+Index: `(status, scheduled_for)`, `(registration_id)`
 
 ```sql
 create unique index outbox_no_duplicate_pending
-  on email_outbox (attendee_id, template_key)
-  where status in ('QUEUED', 'SENDING');
+  on email_outbox (registration_id, template_key)
+  where status in ('DRAFT', 'QUEUED', 'SENDING');
 ```
 
+**Every email in this system is addressed to a registrant, never to a seat** (§11.3): a player receives
+one message carrying all their guests' PDFs, a public party receives one message carrying theirs. Guest
+emails are optional (§8.1), so an attendee is not reliably addressable at all. Keying the outbox on
+`registration_id` — non-nullable — is therefore both the accurate model and the only one where the
+partial unique index actually bites; a nullable `attendee_id` would never conflict with itself in
+Postgres and the `on conflict do nothing` in §11.4 would silently do nothing.
+
+`subject` and `body_md` hold the **rendered** message, not a template reference, so the admin can edit
+any message before dispatch and the dispatcher sends exactly what was reviewed (§11.5).
+
 This index is what makes a repeat blast safe (§11.4). Do not omit it.
+
+*(V2 note: `player_notes_digest` is the one player-addressed email. It arrives with V2 and adds a
+nullable `player_id` and its own partial unique index; nothing above changes.)*
 
 **`app_users`** — backed by Supabase Auth
 `id` (= `auth.users.id`), `email`, `display_name`, `role` (ADMIN | OPERATOR),
@@ -339,11 +410,40 @@ a `scripts/bootstrap-admin.ts` that creates its Supabase Auth user and `app_user
 variables, idempotently, and document it as a one-time step. Operators are created from inside the app
 thereafter.
 
-**`audit_log`****`audit_log`**
+**`audit_log`**
 `id`, `actor_id`, `action`, `entity_type`, `entity_id`, `before` (jsonb), `after` (jsonb),
 `reason` (nullable), `created_at`
 
 Every admin override (§2.4) writes here.
+
+### 5.2 Referential integrity: composite foreign keys, not triggers
+
+`registrations` and `attendees` each carry **both** `show_id` and `segment_id`, because almost every
+query filters on one or the other and the denormalisation earns its place. The risk is drift: an
+attendee whose `segment_id` disagrees with its registration's, or a registration pointing at a segment
+that belongs to a different show. Either would corrupt every capacity count in §7 silently.
+
+Postgres can make both impossible with no triggers and no application checks, using the redundant
+unique keys declared above:
+
+```sql
+alter table registrations
+  add constraint registrations_segment_fk
+  foreign key (segment_id, show_id) references show_segments (id, show_id);
+
+alter table attendees
+  add constraint attendees_registration_fk
+  foreign key (registration_id, segment_id, show_id)
+  references registrations (id, segment_id, show_id);
+```
+
+An attendee can now only exist in the same segment and show as its registration, and a registration
+only in a segment that genuinely belongs to its show. Moving a registration between segments (§7.6)
+updates parent and children in one transaction; the constraint is what stops it being done by half.
+
+Apply the same reasoning elsewhere: `player_allocations` is unique on `(player_id, segment_id)`,
+`check_ins` needs no segment column because it derives from the attendee, and `portal_notes` (V2)
+takes `unique (attendee_id)` to back "one note per attendee".
 
 ---
 
@@ -358,15 +458,12 @@ time, not a silent fallback.
 
 | Key | Level | Meaning |
 |---|---|---|
-| `capacity.soft` | show | Advisory threshold on the hall; crossing it warns, never blocks |
-| `capacity.hard` | show | Enforced hall ceiling; only an explicit admin override exceeds it |
-| `capacity.held_seats` | show | Withheld from all segments (staff, press, guests of honour) |
-| `segment.capacity` | segment | This segment's slice of the hall |
+| `capacity` | show | The hall. Segments must fit inside it; only an explicit admin override exceeds it |
+| `segment.capacity` | segment | This segment's slice of the hall. Seats in no segment are held seats |
 | `allocation.base_quota` | segment | Seats each active player is entitled to (PLAYER_INVITED only) |
 | `allocation.base_claim_deadline` | segment | After this, unclaimed base releases into that segment's extras pool |
 | `allocation.extras_policy` | segment | `REVIEW` (batch grant) or `AUTO_FCFS` (instant) |
 | `allocation.allow_partial_grant` | segment | A boundary request may be granted in part |
-| `allocation.allow_base_oversubscription` | segment | Permits base entitlement to exceed segment capacity (§7.4) |
 | `form.max_tickets_per_response` | segment | Party size cap |
 | `form.extra_rows_max` | segment | Rows in the "request extras" repeater |
 | `portal.unlock_mode` | show | `ON_ADMISSION`, `OPEN_TO_ALL`, `CLOSED` |
@@ -381,11 +478,14 @@ install-time seeds.
 
 | Key | Level | Seed | Meaning |
 |---|---|---|---|
-| `portal.note_max_length` | system | 1000 | |
-| `form.rate_limit_per_ip_per_min` | system | 5 | |
+| `portal.note_max_length` | system | 1000 | V2 |
+| `form.rate_limit_per_ip_per_min` | system | 5 | V2 |
+| `form.seat_indicator_exact_below` | system | 20 | Below this the form shows a band, not a number (§8.3) |
+| `auth.admin_max_attempts` | system | 5 | Admin sign-in attempts per IP before lockout (§14.3) |
+| `auth.admin_lockout_window_min` | system | 15 | |
 | `email.transport` | system | `gmail_smtp` | Active transport; alternatives are adapters, not rewrites |
 | `email.max_per_dispatch` | system | 25 | Sized to stay inside the function timeout |
-| `email.max_per_day` | system | 450 | Gmail free-account quota guard (§11.1) |
+| `email.max_per_day` | system | 450 | Gmail free-account quota guard, counted in `concert.timezone` days (§11.1) |
 | `email.inter_message_delay_ms` | system | 400 | |
 | `email.max_attempts` | system | 3 | |
 | `email.merge_attachments_above` | system | 8 | Merge into one PDF past this many tickets |
@@ -412,10 +512,11 @@ The only genuinely non-trivial logic in the system. Specify precisely, test hard
 
 A show is a physical event with one door and one total capacity. Within it, **segments** carve that
 capacity into blocks with different audience models. A show may have a single segment, or several — for
-example a public block and a player-invited block sharing one hall on one night.
+example a public block and a player-invited block sharing one hall on one night. This is the normal
+case, not an exception.
 
-Every formula below is evaluated **per segment**, never per show. The show-level check is only that
-segments plus held seats fit inside the hall.
+Every formula below is evaluated **per segment**, never per show. The show-level check is only that the
+segments fit inside the hall.
 
 Concrete segment configurations for the current concert are in `context.md`.
 
@@ -428,14 +529,18 @@ base_claimed(p) = count(attendees for player p in G, allocation_type='BASE', sta
 unclaimed_base  = Σ over active players of max(0, base_quota(p,G) - base_claimed(p,G))
 open_seats      = sellable - confirmed
 
-extras_pool = open_seats - unclaimed_base     -- before base_claim_deadline
-extras_pool = open_seats                      -- after base_claim_deadline
+extras_pool = max(0, open_seats - unclaimed_base)   -- before base_claim_deadline
+extras_pool = max(0, open_seats)                    -- after base_claim_deadline
 ```
 
 For a `PUBLIC` segment there are no players, so `unclaimed_base = 0` and `extras_pool = open_seats`.
 
-`capacity.soft` and `capacity.hard` remain **show-level** — they describe how many bodies fit in the
-room. Crossing soft warns; hard blocks except under explicit admin override (§7.6).
+The `max(0, …)` is not decoration. Admin overrides (§7.6) can push `confirmed` past `sellable`, at
+which point `open_seats` is negative; the pool must read zero and the screen must say *"full, N over"*,
+never a negative number that some later arithmetic treats as capacity.
+
+`capacity` is **show-level** — it describes how many bodies fit in the room, and blocks except under
+explicit admin override (§7.6). Seats belonging to no segment are held seats and are never allocated.
 
 ### 7.3 Worked example
 
@@ -475,10 +580,12 @@ them leaves the other two as silent routes to an oversubscribed segment.
 The error names the numbers and the shortfall: *"82 active players × 2 base = 164 seats, but the
 segment holds 100. Reduce the quota to 1, raise capacity to 164, or deactivate 32 players."*
 
-An explicit `allocation.allow_base_oversubscription` toggle overrides it, behind a typed confirmation,
-for organisers who knowingly overbook on the expectation that some players never claim. Once enabled,
-the segment carries a permanent warning banner showing the projected shortfall. It defaults off,
-because the default promise — every player gets their allocation — must be one the system can keep.
+**There is no opt-out toggle.** The promise the system makes — every active player gets the base
+allocation they were told they have — is one it should simply keep. An organiser who wants to overbook
+on the expectation that some players never claim already has the honest lever: lower the quota, or raise
+the segment's capacity and let the extras pool absorb the difference. A "knowingly oversubscribe" flag
+buys nothing that those two do not, and costs a code path, a UI, a warning banner and a permanent
+ambiguity about which promise is in force.
 
 **EXTRA seats** follow the segment's `extras_policy`:
 
@@ -486,6 +593,10 @@ because the default promise — every player gets their allocation — must be o
   `requested_at` set, consuming no seats. After the deadline the admin grants in batch (§7.5).
 - **`AUTO_FCFS` (default for public segments).** Granted at submission if the pool has room,
   atomically. With `allow_partial_grant`, the remainder becomes `WAITLIST`.
+
+The pool sizes the **preselection**, not the admin's authority. Under `REVIEW` the admin may tick past
+it (§7.5); the system warns, requires a typed confirmation once the segment or the hall would be
+exceeded, and records it. Automatic rules decide the default; a person decides the exception.
 
 **Ordering key** is `registrations.requested_at` — the form submission time, or for imports the Google
 Form response timestamp. Never `created_at`: an import run a week later must preserve original
@@ -502,8 +613,10 @@ Scoped to one segment.
   selecting until the next request would exceed the pool. The boundary request is granted in part when
   `allow_partial_grant` is on, otherwise skipped whole. Strict order, never best-fit: first come first
   served means the clock decides, not the packing.
-- Admin toggles rows and edits granted counts freely; the header recomputes live and blocks commit
-  above the pool unless overridden.
+- Admin toggles rows and edits granted counts freely; the header recomputes live. Ticking beyond the
+  pool is **allowed** — the row is flagged, the header shows the overage, and commit above the
+  segment's capacity or the hall's requires a typed confirmation written to `audit_log`. Preselection
+  is the recommendation; the admin is the decision.
 - Commit runs in one transaction, moves granted rows to `CONFIRMED`, leaves the rest `WAITLIST`, and
   **queues** the resulting emails without sending (§11.2).
 
@@ -512,7 +625,7 @@ Scoped to one segment.
 Players registering after the form closes are expected, not exceptional. Admin can create a
 registration against any segment bypassing form windows; edit contact details, player link and guest
 list; add, rename or remove attendees; move a registration between segments or shows; cancel and
-restore; and exceed `hard_capacity` with a typed confirmation recorded in `audit_log`.
+restore; and exceed the show's `capacity` with a typed confirmation recorded in `audit_log`.
 
 Manual actions still route through `claim_seats()` so counters stay consistent. Only the hall ceiling
 is overridable, and only deliberately.
@@ -521,7 +634,9 @@ is overridable, and only deliberately.
 
 Segments do not borrow automatically. When the player segment closes with unclaimed seats and public
 demand remains, an admin edits both capacities (player 80, public 320). The edit is validated against
-the hall total, refuses to drop a segment below its confirmed count, and is logged.
+the hall total, refuses to drop a segment below its confirmed count, and is logged. Raising one segment
+without lowering another is also valid so long as the total still fits the hall — that spends held
+seats, which is exactly what they are for.
 
 Automatic borrowing is deliberately excluded: it makes the number of people arriving at the door
 unpredictable, which is the one number the front of house needs to trust.
@@ -552,6 +667,23 @@ Contention is irrelevant at this scale; correctness is not.
 
 Cancelling sets `status = CANCELLED` and returns seats to that segment immediately. Admin sees "N seats
 freed, M waiting". Auto-promotion is out of scope — promotion is deliberate, because it sends email.
+
+**Where a cancelled BASE seat goes depends on the deadline**, and both cases fall out of §7.2 rather
+than needing their own rule:
+
+- **Before `base_claim_deadline`** — `base_claimed(p)` drops, so the seat returns to *that player's*
+  entitlement. They can claim it again. This is right: the deadline has not passed, and their
+  allocation is still theirs.
+- **After the deadline** — `unclaimed_base` is zero by definition, so `extras_pool = open_seats` and
+  the freed seat lands in the **extras pool**, available to the next person in the FCFS queue. The
+  player does not get a private second chance after everyone else's window has closed.
+
+No branch in code implements this; it is what the two formulas in §7.2 already say. State it here so
+nobody later "fixes" it into a special case.
+
+Cancellation also **cancels any `QUEUED` or `DRAFT` outbox rows** for that registration, and never
+clears `ticket_sent_at` — a ticket that was delivered was delivered, and the door needs to know the
+code exists so it can show *"cancelled — refer to desk"* (§12.1) rather than *"not found"*.
 
 ## 8. Registration forms
 
@@ -631,8 +763,34 @@ hardcodes numbers either.
 Enforced server-side on submit and reflected in the form UI: `opens_at`/`closes_at`; `max_responses`;
 `one_response_per_identity` (per player token, or per email — a repeat visit loads the existing response
 for editing while `allow_edit_until` holds); `max_tickets_per_response`; `auto_close_on_capacity`; a
-live remaining-seats indicator (cached ~10s, never exact below 20 to avoid a stampede); and IP rate
-limiting.
+live remaining-seats indicator (cached ~10s, and shown as a band rather than an exact figure below
+`form.seat_indicator_exact_below` to avoid a stampede); and IP rate limiting.
+
+### 8.3.1 Editing a response never adds seats
+
+An edit may **correct or reduce**, never increase. This is what every established ticketing system
+does, for the same reason: an edit form that can claim inventory is a second, unpoliced allocation
+path, and it lets someone who registered early keep an early queue position for seats they did not
+originally ask for.
+
+| Change | Allowed | Effect |
+|---|---|---|
+| Fix a guest's name or email | Yes | Updates the attendee. If `ticket_sent_at` is set, flags `needs_reissue` (§10.6) |
+| Fix contact name / phone / custom fields | Yes | Updates the registration |
+| **Remove** a guest | Yes | That attendee → `CANCELLED`; the seat returns to the pool immediately |
+| **Add** a guest | **No** | The form offers "request extra tickets" instead |
+
+**Seat counts need no recounting**, because nothing caches them. `confirmed`, `unclaimed_base` and
+`extras_pool` are recomputed inside the row lock on every claim (§7.8, `ref.md` §5), so a cancelled
+attendee is reflected in the very next read. There is no counter to drift.
+
+Requesting more seats from the edit screen creates a **new EXTRA request** with a **new
+`requested_at`** — it joins the back of the FCFS queue. Keeping the original timestamp would let an
+early registrant reserve a position for seats they had not yet asked for.
+
+Once tickets are sent, editing is closed to the registrant by default; changes go through admin
+(§7.6), because a name change on a ticket already in someone's inbox needs a reissue decision, not a
+silent divergence.
 
 ### 8.4 Confirmation
 
@@ -647,9 +805,22 @@ Needed for historical data and for any concert still collected on Google Forms.
 
 ### 9.1 Flow
 
-Upload `.xlsx`/`.csv` → select sheet and header row → map columns (auto-suggested, §9.2) → validate
-(dry run, no writes) → review per-row report → commit (one transaction, produces an `import_batch`) →
-rollback available while no tickets have been emailed.
+Upload `.xlsx`/`.csv` → **choose the target segment** → select sheet and header row → map columns
+(auto-suggested, §9.2) → validate (dry run, no writes) → review per-row report → commit (one
+transaction, produces an `import_batch`).
+
+**One import run targets exactly one segment.** A hybrid show is loaded by running the import twice,
+once per file — the player-invited export into the player segment, the public export into the public
+segment. This is why `import_batches` carries `segment_id`, not just `show_id`. A single file cannot be
+split across segments: there is no reliable way to tell from a spreadsheet row which audience it
+belongs to, and guessing would put someone in the wrong block.
+
+**After commit, this database is the source of truth.** The spreadsheet is a one-way input, re-read
+only to pick up *new* responses in a later round. There is no rollback and no re-sync: the dry run is
+where mistakes are caught, and after commit rows are corrected through normal admin CRUD (§7.6), which
+is the same path used for late and manual registrations. A rollback feature would have to reason about
+rows an admin has since edited and tickets already issued, and would earn its complexity only if the
+dry run did not exist.
 
 SheetJS parses in the browser for preview and again server-side for the commit, so the client cannot
 forge rows.
@@ -716,7 +887,7 @@ Profiles are saved and reusable, since each concert's form differs slightly.
 | Player not matched | Blocking until resolved |
 | All guest cells blank | Skip row silently |
 | Guest count exceeds base quota | Info — surplus becomes `EXTRA` |
-| Import would exceed `hard_capacity` | Blocking — report overflow, admin chooses to cap in row order or raise capacity |
+| Import would exceed the segment's or the show's capacity | Blocking — report overflow, admin chooses to cap in row order or raise capacity |
 
 Imports run through `claim_seats()` in `requested_at` order, so capacity rules cannot be bypassed by
 importing. Under `REVIEW` policy, imported extras land as `PENDING_REVIEW` alongside form requests and
@@ -735,7 +906,45 @@ compete fairly on timestamp.
 
 **The QR encodes a URL**, not a bare token: `https://{APP_URL}/t/{qr_token}`. This is what makes it
 multi-purpose (§13) — an audience phone camera lands in the portal; the operator scanner extracts the
-token and calls the check-in API.
+token and validates it locally.
+
+#### The QR is data, not a link that has to resolve
+
+Admission on concert night is the one thing in this system that must not fail, and the QR is its
+narrowest point. A ticket is printed or screenshotted weeks earlier and can never be recalled, so
+anything baked into it is permanent. The design therefore assumes the URL inside it **will** one day be
+wrong — wrong domain, moved host, changed path — and makes that survivable.
+
+**1. The scanner never dereferences the URL.** It decodes the string, extracts the token by pattern,
+and matches it against the offline manifest. No DNS, no HTTP, no origin comparison — the decoded text
+is opaque data that happens to look like a URL. A dead, changed, or simply wrong `APP_URL` therefore
+cannot affect check-in at all. This is the load-bearing rule; everything else below is a convenience.
+
+**2. Token extraction is origin-agnostic and path-agnostic.** The scanner accepts, in order: a bare
+token; the last path segment of any URL; or any `[0-9A-Za-z]{22}` run at the end of the decoded string.
+So `https://old-domain.vercel.app/t/TOKEN`, `https://tickets.example.org/t/TOKEN`, and `TOKEN` all
+resolve to the same attendee. Never validate the host, and never require the path to be `/t/`.
+
+**3. `qr_token` is immutable for the life of the attendee.** Reissuing a ticket (§10.5) re-renders the
+PDF and may repin the template version, but **never** mints a new token. A guest who kept the printed
+first copy must still get through the door.
+
+**4. Three independent ways in.** QR scan (primary), `ticket_code` typed into the Search tab
+(secondary, §15.4), attendee name search against the same offline manifest (tertiary). Two of the three
+work with no camera and no network.
+
+**5. Set the domain before the first render, not the first send.** Use a real custom domain, never the
+generated `*.vercel.app` hostname: a custom domain can be repointed at a different host with no change
+to a single issued ticket, and a platform hostname cannot. A short domain also keeps the QR at a low
+version, which means larger modules and a better read off a cracked phone screen at 25mm.
+
+**6. One blocking gate before the first blast.** Render a real ticket, print it, and scan it with an
+actual usher phone — off paper and off a screen, in low light. Until that passes, no blast goes out. It
+is in the runbook (§18) as a blocking step, not a nice-to-have.
+
+If the domain does change after tickets are issued: point the old host at the new one with a 301 and
+the portal links keep working; if the old host is gone entirely, the door is unaffected (rule 1) and
+only the portal link dies — which in V1 is a status page, so nothing that matters is lost.
 
 ### 10.2 Template layout format
 
@@ -828,7 +1037,18 @@ affects only tickets issued afterwards.
 Re-rendering an already-issued ticket against a newer template is possible but explicit — an admin
 action, "Reissue tickets with current template", which repins the version, clears `ticket_sent_at` for
 the affected attendees, and queues a resend so the recipient actually receives what changed. It refuses
-to run silently.
+to run silently. It never changes `qr_token` (§10.1).
+
+### 10.6 A bound field that changes after sending flags a reissue
+
+The same trap applies to data, not just templates. If an attendee's name is corrected after their PDF
+is already in someone's inbox, the ticket they hold and the ticket the system would render no longer
+agree.
+
+So any edit to a field bound into the template (§10.2) on an attendee with `ticket_sent_at` set marks
+`needs_reissue = true` rather than silently diverging. Admin sees a "N tickets need reissuing" count
+and resolves it deliberately — reissue and resend, or dismiss as cosmetic. The door is unaffected
+either way, because check-in matches on `qr_token`, which never changes.
 
 ---
 
@@ -877,12 +1097,15 @@ address and confirm all three land in the inbox.
 
 ### 11.2 Outbox pattern — no always-on worker
 
-1. Anything that should send email writes `email_outbox` rows as `QUEUED`.
-2. Admin opens **Email → Outbox**, reviews the batch (recipients, template, preview), clicks **Send**.
+1. Anything that should send email writes `email_outbox` rows as `DRAFT`, with `subject` and `body_md`
+   already **rendered** for that recipient (§11.5).
+2. Admin opens **Email → Outbox**, reviews and edits the batch, and confirms — which moves the rows to
+   `QUEUED` — then clicks **Send**.
 3. The UI calls `POST /api/outbox/dispatch` repeatedly. Each call claims up to `email.max_per_dispatch`
-   rows (`FOR UPDATE SKIP LOCKED`), sends with `email.inter_message_delay_ms` between messages, commits
-   per message, and returns progress. The UI shows a progress bar until the queue drains or the daily
-   cap is hit.
+   `QUEUED` rows (`FOR UPDATE SKIP LOCKED`), sends with `email.inter_message_delay_ms` between
+   messages, commits per message, and returns progress. The UI shows a progress bar until the queue
+   drains or the daily cap is hit. `DRAFT` rows are never dispatched — only a human moves a row out of
+   `DRAFT`.
 4. A daily cron hits the same endpoint as a safety net.
 
 This is the one-click blast model: no persistent process, and it survives function timeouts because
@@ -917,21 +1140,45 @@ ticket must not receive it twice, and nobody must be silently skipped.
 
 Three mechanisms, all required:
 
-1. **`attendees.ticket_sent_at` is the dedup key.** Set only on a confirmed successful send, never on
-   queueing. Any attendee with a non-null value is excluded from future blasts.
-2. **Queueing is a filtered insert**, not a loop in application code:
+1. **`attendees.ticket_sent_at` is the dedup key.** Set only on confirmed delivery — a successful send,
+   or an admin marking it delivered by hand (§11.5) — never on queueing. Any attendee with a non-null
+   value is excluded from future blasts.
+2. **Queueing is a filtered insert**, not a loop in application code. It selects **registrations that
+   still have at least one undelivered seat**, because a message is addressed to a registrant and
+   carries every outstanding ticket in that party:
    ```sql
-   insert into email_outbox (attendee_id, template_key, ...)
-   select a.id, 'public_ticket', ...
-     from attendees a
-    where a.segment_id = $1
-      and a.status = 'CONFIRMED'
-      and a.ticket_sent_at is null
+   insert into email_outbox (registration_id, template_key, to_email, to_name, ...)
+   select r.id, 'public_ticket', r.contact_email, r.contact_name, ...
+     from registrations r
+    where r.segment_id = $1
+      and r.status = 'CONFIRMED'
+      and exists (
+          select 1 from attendees a
+           where a.registration_id = r.id
+             and a.status = 'CONFIRMED'
+             and a.ticket_sent_at is null
+             and a.deleted_at is null)
    on conflict do nothing;
    ```
-3. **The partial unique index** on `(attendee_id, template_key) where status in ('QUEUED','SENDING')`
-   (§5.1) makes the `on conflict do nothing` meaningful. Without it, clicking Send twice queues
-   everything twice.
+3. **The partial unique index** on `(registration_id, template_key) where status in
+   ('DRAFT','QUEUED','SENDING')` (§5.1) makes the `on conflict do nothing` meaningful. Without it,
+   clicking Send twice queues everything twice.
+4. **A successful send stamps every attendee it carried.** In the same transaction that marks the
+   outbox row `SENT`, set `ticket_sent_at = now()` and `ticket_sent_source = 'EMAIL'` on exactly the
+   attendees whose PDFs were attached. Partial delivery does not exist: either the message sent and all
+   its tickets are delivered, or it failed and none are.
+
+**Why the key is the registration, not the attendee.** Every ticket-bearing email in §11.3 goes to a
+registrant. Guest emails are optional (§8.1), so many attendees have no address at all — a player
+receives one message with four PDFs to forward. Keying the outbox on a nullable `attendee_id` would
+also defeat the index outright: in Postgres two rows with `attendee_id IS NULL` do not conflict, so
+`on conflict do nothing` would do nothing for exactly the player-invited audience, and a second click
+would queue every player confirmation twice.
+
+**The added-guest case works correctly.** If an admin adds a fourth guest to a party whose first three
+tickets are already sent, that attendee's `ticket_sent_at` is null, the `exists` clause selects the
+registration again, and the next blast re-sends the party's message with all four PDFs. That is the
+right outcome: the party gets one email containing everything they hold.
 
 Together these make the blast **idempotent**: pressing it repeatedly is harmless. This matters because
 an admin who is unsure whether the first click registered will click again.
@@ -956,6 +1203,36 @@ never the default path, and never operates on a whole segment at once without a 
 registration, so the blast screen, exports and reports can group by round without inferring it from
 timestamps.
 
+### 11.5 Review and edit before sending
+
+Nothing leaves the system that a person has not looked at. Preparing a blast **renders** each
+recipient's subject and body — merge fields resolved against their real data — and stores the result on
+the outbox row as `DRAFT`. The admin then sees the actual messages, not a template and a promise.
+
+- **Edit the template** — re-renders every `DRAFT` row in the batch. This is the normal path: fix the
+  wording once, see all 80 messages update.
+- **Edit one message** — overwrite `subject` / `body_md` on a single row, for the one recipient who
+  needs a note about wheelchair access. Marked as edited so it survives a subsequent template
+  re-render.
+- **Preview against a real recipient**, never a lorem stub (`ref.md` §6), with a "longest name" and a
+  "no player linked" case in the picker — template bugs are almost always data-shape bugs.
+- **Confirm** moves the batch `DRAFT → QUEUED`. Only then can the dispatcher touch it.
+
+The dispatcher sends `subject` and `body_md` verbatim. What was reviewed is what goes out; a later
+template edit cannot change a message already reviewed.
+
+### 11.6 Marking a ticket delivered by hand
+
+Delivery sometimes happens outside the system: an admin forwards a PDF from their own mailbox, hands
+someone a printout at a rehearsal, or reaches a registrant whose address bounced through some other
+channel. Without a way to record that, those attendees keep `ticket_sent_at = NULL` and reappear in the
+pending bucket of every future blast for ever.
+
+So: **"Mark as delivered"** is an explicit admin action on selected attendees. It sets `ticket_sent_at`
+and `ticket_sent_source = 'MANUAL'`, requires a short reason, and writes to `audit_log`. It sends
+nothing. It is the exact inverse of "Resend ticket", and the two together mean the pending count on the
+blast screen is always a real, actionable number rather than a residue of edge cases.
+
 ---
 
 ## 12. Door check-in
@@ -964,11 +1241,18 @@ timestamps.
 
 A mobile web app at `/scan` for `OPERATOR` and `ADMIN`.
 
-**Signing in.** Operators enter a **display name and an access code**, both issued by the admin. Behind
-the form this is Supabase Auth against a synthetic address (`<slug>@operators.local`) with the code as
-the password, so session handling, hashing, refresh and rate limiting all come from the platform rather
-than hand-rolled cookies. The session persists on the device, so an usher signs in once during setup
-rather than at the door.
+**Signing in.** Operators enter a **display name and an access code**, both issued by the admin. There
+is no email in the operator's world: the synthetic address is an implementation detail they never see
+or type.
+
+Behind the form this is Supabase Auth against a synthetic address (`<slug>@operators.local`) with the
+code as the password, so session handling, password hashing, refresh, revocation and rate limiting all
+come from the platform. The alternative — a bare id/password pair of our own — means hand-writing all
+five, on the surface that guards every attendee's name and email, for a UI the operator cannot tell
+apart. Not worth it. Create these users through the Supabase admin API with email confirmation
+pre-set, or they will sit unconfirmed and unable to sign in.
+
+The session persists on the device, so an usher signs in once during setup rather than at the door.
 
 - **The show picker lists only the operator's assigned shows.** With exactly one assignment — the
   common case — it is auto-selected and the pill (`ref.md` §1.3) renders read-only, removing the
@@ -1183,9 +1467,10 @@ plainly:
   registration is attributed to the one admin account. The schema already supports individual admin
   accounts if attribution is ever wanted — add rows with `role = ADMIN` and nothing else changes.
 - **The code is the entire security boundary** for every attendee's name and email. So: generate a long
-  random passphrase rather than choosing a memorable one, rate-limit the login route hard (5 attempts
-  per IP per 15 minutes, then a growing lockout), and rotate it after each concert and whenever someone
-  leaves the committee. Rotation is a one-field change on the admin account.
+  random passphrase rather than choosing a memorable one, rate-limit the login route hard
+  (`auth.admin_max_attempts` per IP per `auth.admin_lockout_window_min`, then a growing lockout), and
+  rotate it after each concert and whenever someone leaves the committee. Rotation is a one-field
+  change on the admin account.
 
 **Login UX.** The form asks for the code only. The admin email is a constant held server-side, so nobody
 has to remember an address — but it is still a real Supabase Auth password sign-in underneath, not a
@@ -1275,10 +1560,10 @@ CSS variables so it can change per concert without code edits.
 | Framework | Next.js 15, App Router, TypeScript | Server Actions for mutations, RSC for admin tables |
 | UI | shadcn/ui + Tailwind | |
 | DB / Auth / Storage | **Supabase** | One service for all three; the idle pause is handled by a keep-alive cron (§17.1) |
-| Data access | Drizzle + `postgres.js` | Typed migrations; allocation logic is a raw SQL function |
+| Data access | Drizzle + `postgres.js` | Typed migrations; allocation logic is a raw SQL function. Two connection URLs — §16.2 |
 | Email | **`nodemailer` + Gmail SMTP** | Node runtime, `maxDuration = 60` (§11.1) |
 | Spreadsheet | `sheetjs` | Client preview and server commit |
-| QR generate / scan | `qrcode` / `@zxing/browser` | |
+| QR generate / scan | `qrcode` / `@zxing/browser` | `BarcodeDetector` as an optional fast path — §16.3 |
 | Ticket canvas | `react-konva` | Dynamic import, `ssr: false` |
 | PDF render | `pdf-lib` + `sharp` | |
 | Tables | TanStack Table | |
@@ -1309,6 +1594,51 @@ Route Handler.
 Next.js, and SMTP behind an interface. If any free tier changes, the stack moves to a €3.29/month VPS
 with no code changes.
 
+### 16.2 Two database connection strings, not one
+
+Supabase's direct database host is **IPv6-only** on the free plan, and Vercel's functions are IPv4.
+Connecting to it from the deployed app simply does not work. Both runtime and migrations therefore go
+through Supavisor, the connection pooler, on different ports and in different modes:
+
+| Use | Connection | Mode | Note |
+|---|---|---|---|
+| App runtime (`DATABASE_URL`) | pooler host, port `6543` | Transaction | `postgres.js` **must** set `prepare: false`; transaction pooling does not support prepared statements, and the symptom is intermittent "prepared statement already exists" under concurrency |
+| Migrations (`DIRECT_URL`) | pooler host, port `5432` | Session | Session mode holds one backend for the connection, which DDL and advisory locks need |
+
+Serverless also means many short-lived connections: keep the runtime pool small (`max: 1` per function
+instance) and let the pooler do the multiplexing.
+
+### 16.3 Barcode decoding: `@zxing/browser`, with a native fast path
+
+`@zxing/browser` is a JavaScript port of the ZXing barcode library. It pulls frames from a `<video>`
+element and decodes them in JS — it works in every browser, which is the property that matters.
+
+Browsers now also ship a native `BarcodeDetector`, hardware-accelerated and faster. It is **not
+available in Safari on iOS**, and iPhones will be at the door, so it cannot be the only implementation.
+
+Build ZXing first, then feature-detect:
+
+```ts
+const decoder = 'BarcodeDetector' in globalThis ? nativeDecoder() : zxingDecoder();
+```
+
+Both feed the same token-extraction and manifest-lookup path (§10.1), so the decoder is swappable and
+the fallback is never a different code path with different bugs. Test on the actual usher phones
+regardless — decoding speed on a mid-range Android is the thing that decides whether a queue forms.
+
+### 16.4 Local development without Supabase
+
+The allocation engine — `claim_seats()`, the §7.3 worked example, concurrent-claim tests — needs a real
+Postgres, not a mock, and it does **not** need Supabase. A plain local PostgreSQL 16 with `citext`,
+`pg_trgm` and `pgcrypto` runs the entire schema, every migration, and the whole test suite offline.
+
+That is the inner loop: generate migrations, apply them locally, run the tests. Supabase is only needed
+for what is genuinely Supabase — Auth flows, Storage, and RLS policies — which are exercised against a
+deployed preview rather than locally.
+
+A useful consequence: the development environment never needs the production database password or the
+service-role key.
+
 ## 17. Hosting
 
 **Vercel Hobby + Supabase Free + Gmail SMTP.** Two services and an email account. Consolidation was
@@ -1326,8 +1656,12 @@ activity resets the idle timer, so a daily ping carries 7× margin.
 
 Two details:
 
-- **Vercel Hobby crons run only on Production deployments**, and fire within roughly an hour of the
-  scheduled time. Both are irrelevant at daily-versus-weekly margins.
+- **Vercel Hobby crons run only on Production deployments**, fire within roughly an hour of the
+  scheduled time, and are limited in both number and frequency (daily). Both timing points are
+  irrelevant at daily-versus-weekly margins, but the **budget is not**: the keep-alive and the outbox
+  safety net (§11.2) consume the allowance between them. Confirm the current Hobby limit before adding
+  a third scheduled job — and note that the GitHub Actions cron below is therefore not only a
+  redundancy, it is also the route to any further scheduled work.
 - **The failure mode is silent.** If the cron breaks — project renamed, route erroring, deployment
   removed — nothing tells you until the database is already paused, most likely a month before a
   concert. Add a **second keep-alive as a GitHub Actions cron** hitting the same endpoint. One YAML
@@ -1427,6 +1761,10 @@ Two properties of that plan are architectural rather than scheduling, so they ar
   show's tickets is where PDF render time, function timeouts, font embedding and attachment size
   surface. Run it against real inboxes — Gmail, Outlook, and one university or corporate address — and
   confirm all three land in the inbox rather than spam.
+- **A printed-ticket scan test blocks the first blast.** Render a real ticket, print it, and scan it
+  with an actual usher phone — off paper and off a screen, in low light, with the phone offline
+  (§10.1). Everything downstream of the QR is unrecoverable once tickets are in inboxes, so this is a
+  gate, not a checklist item.
 
 ## 19. Decisions
 
@@ -1452,10 +1790,19 @@ System decisions only. Concert-specific choices and their deadlines are in `cont
 | 14 | Reference material | `ref.md`, not a vendored clone of Hi.Events. |
 | 15 | Backend placement | Next.js Route Handlers and Server Actions. **No Supabase Edge Functions** — `sharp` cannot run on Deno, so rendering must be on Vercel anyway (§16.1). `claim_seats()` stays a Postgres function because it needs a row lock. |
 | 16 | Repeat blasts | Idempotent by construction: `ticket_sent_at` as dedup key, a filtered `insert … on conflict do nothing`, and a partial unique index on pending outbox rows (§11.4). |
-| 17 | Base oversubscription | Blocked by default across all three mutations that can cause it, with an explicit opt-out toggle (§7.4). |
+| 17 | Base oversubscription | Always blocked, across all three mutations that can cause it. **No opt-out toggle** — lowering the quota or raising capacity already expresses the same intent honestly (§7.4). |
 | 18 | Configuration | No operational value has a code default. Concert data lives in `context.md` and is entered through the admin UI (§2.1, §6). |
 | 19 | Admin accounts | **One shared `ADMIN` account** unlocked by a single secret code. No admin user management. Costs audit attribution, which is accepted; the schema still supports individual admins if that changes (§14.3). |
 | 20 | Operator accounts | **Multi-account, provisioned by the admin, scoped to assigned shows** via `operator_show_assignments`. Enforced in the handler and again by RLS — the manifest endpoint is the boundary that matters, since the manifest is the attendee roster (§12.3). |
+| 21 | Capacity model | **One number per show** plus per-segment slices. No soft threshold, no `held_seats` column — held seats are simply seats no segment holds (§5.1, §7.2). |
+| 22 | Email addressing | Every message is addressed to a **registration**, never a seat. `email_outbox.registration_id` is not null and is the dedup key; a successful send stamps every attendee whose PDF it carried (§11.4). |
+| 23 | Review before send | Outbox rows are rendered into `DRAFT` and edited by a human — per template or per message — before anything is queued. The dispatcher sends stored content verbatim (§11.5). |
+| 24 | Delivery outside the system | An explicit "Mark as delivered" admin action sets `ticket_sent_at` with `source = MANUAL`, so hand-delivered tickets leave the pending bucket (§11.6). |
+| 25 | Editing a response | May correct or reduce, never add seats. More seats means a new EXTRA request at the back of the FCFS queue (§8.3.1). |
+| 26 | Import direction | One import run per segment; after commit this database is the source of truth and there is no rollback or re-sync (§9.1). |
+| 27 | Referential integrity | Composite foreign keys, not triggers: an attendee cannot disagree with its registration about segment or show (§5.2). |
+| 28 | QR durability | The scanner treats the QR as opaque data and never dereferences it, so a changed or dead `APP_URL` cannot affect admission. `qr_token` is immutable for life (§10.1). |
+| 29 | Delivery split | **V1** runs the concert (import → ticket → blast → door). **V2** adds native forms, the full portal and notes (§4). |
 
 ### 19.2 Still open
 
@@ -1520,7 +1867,8 @@ Paste into Gemini Deep Research if reconsidering the hosting decision.
 | `NEXT_PUBLIC_SUPABASE_URL` | client + server | |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | client | RLS-protected access only |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only | **Never expose to the client.** Bypasses RLS. |
-| `DATABASE_URL` | server | Direct Postgres connection for Drizzle migrations |
+| `DATABASE_URL` | server | App runtime. Supabase **pooler**, port `6543`, transaction mode, `prepare: false` (§16.2) |
+| `DIRECT_URL` | migrations | Supabase **pooler**, port `5432`, session mode. Used by `drizzle-kit` only (§16.2) |
 | `GMAIL_USER` | server | Sending address |
 | `GMAIL_APP_PASSWORD` | server | App password, not the account password; requires 2FA |
 | `APP_URL` | server | Absolute base for QR URLs and email links; must be the production origin |
@@ -1528,9 +1876,13 @@ Paste into Gemini Deep Research if reconsidering the hosting decision.
 | `ADMIN_EMAIL` | server | Constant address behind the code-only admin login (§14.3) |
 | `BOOTSTRAP_ADMIN_PASSWORD` | script | The initial shared admin code; rotate from the UI afterwards |
 
-`APP_URL` deserves care: it is baked into every QR code at issue time. If tickets are generated against
-a preview URL and then the domain changes, every QR points at a dead host and the only fix is
-reissuing. Set it correctly before the first render, not before the first send.
+`APP_URL` deserves care: it is baked into every QR code at issue time. Set it to a **real custom
+domain** before the first render, not before the first send — a custom domain can be repointed at
+another host without touching an issued ticket, and a generated `*.vercel.app` hostname cannot.
+
+If it is nevertheless wrong, admission still works: the scanner treats the QR as opaque data and never
+resolves the URL (§10.1). Only the portal link breaks, and a 301 from the old host repairs even that.
+The rule stands anyway — the cheapest bug is the one that never ships.
 
 ---
 

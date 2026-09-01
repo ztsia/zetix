@@ -13,20 +13,35 @@ Orchestra concert ticketing system. Free admission, unreserved seating, no payme
 ## Non-negotiables
 
 - **No operational value is hardcoded.** Capacities, quotas, deadlines, party caps, batch sizes and
-  rate limits are stored and admin-editable, resolved through the cascade in `spec.md` §2.2. If a
-  number from `context.md` appears in a `.ts` file, it is a bug.
+  rate limits are stored and admin-editable, resolved through the four-level cascade in `spec.md` §2.2
+  (segment → show → concert → system). If a number from `context.md` appears in a `.ts` file, it is a
+  bug.
 - **`claim_seats()` is a Postgres function.** It holds a row lock across a read-then-write; oversell
   must be impossible. Its three-row worked example (`spec.md` §7.3) is the primary test case — write
   those tests before the implementation.
 - **Blasts are idempotent.** `ticket_sent_at` plus a partial unique index on pending outbox rows
-  (`spec.md` §11.4). Pressing Send twice must be harmless.
+  (`spec.md` §11.4). Pressing Send twice must be harmless. **Email is addressed per registration, never
+  per attendee** — `email_outbox.registration_id` is not null, and a nullable key would silently defeat
+  the index.
 - **Ticket template versions are pinned at issue time** (`spec.md` §10.5). Never let a template edit
   silently change a ticket someone already holds.
 - **Segments, not shows, own audience mode.** One show can hold both a public and a player-invited
-  block.
+  block, and for this concert it does. Allocation is computed per segment; the show owns only the hall.
+
+- **The scanner never dereferences the QR.** It extracts the token by pattern and matches the offline
+  manifest, so a wrong or dead `APP_URL` cannot stop admission (`spec.md` §10.1). `qr_token` is
+  immutable for the life of an attendee — reissuing re-renders the PDF, never the token.
 - **Asymmetric auth.** One shared `ADMIN` account behind a single code; many `OPERATOR` accounts scoped
   to assigned shows. The check-in manifest endpoint must verify assignment before returning data — it
   is the full attendee roster (`spec.md` §12.3, §14.3).
+
+## Scope: V1 ships this concert
+
+`spec.md` §4 splits delivery. **V1** — config, players, spreadsheet import, allocation, ticket editor
+and render, outbox and blast, door scanner, admin console, and a read-only ticket page at
+`/t/{token}`. **V2** — native registration forms, the full portal, notes. Registration for both rounds
+of this concert is on Google Forms, so V1 is a complete system on its own. Do not build V2 surfaces
+into the V1 critical path; do not make schema choices that V2 would have to reshape.
 
 ## Stack
 
@@ -56,6 +71,12 @@ The email dispatch route also needs `export const maxDuration = 60`.
 pnpm dev
 pnpm test                # claim_seats tests must pass before anything ships
 pnpm db:generate         # drizzle migration from schema changes
-pnpm db:migrate
+pnpm db:migrate          # applies to DIRECT_URL (session pooler, port 5432)
 pnpm tsc --noEmit
 ```
+
+Two database URLs, not one: `DATABASE_URL` is the transaction pooler on `6543` with
+`prepare: false`; `DIRECT_URL` is the session pooler on `5432` for migrations (`spec.md` §16.2).
+
+The allocation engine is developed against a **local Postgres 16**, not Supabase — it needs `citext`,
+`pg_trgm` and `pgcrypto` and nothing else (`spec.md` §16.4).

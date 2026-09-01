@@ -126,7 +126,7 @@ Hi.Events keeps capacity in its own entity that can apply across several ticket 
 column on the ticket. That generality is more than we need — our capacity is per show — but one idea
 carries over: **capacity is evaluated at claim time against a live count, never cached on a row.**
 
-Our `claim_seats()` (`spec.md` §7.7) recomputes `confirmed`, `unclaimed_base` and `extras_pool` inside a
+Our `claim_seats()` (`spec.md` §7.8) recomputes `confirmed`, `unclaimed_base` and `extras_pool` inside a
 row lock on every claim. Do not denormalise a `seats_remaining` counter onto `shows`. It will drift, and
 the drift only surfaces as an oversell on the night.
 

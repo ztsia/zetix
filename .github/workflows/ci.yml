@@ -1,0 +1,78 @@
+# Verifies every pull request before it can merge.
+#
+# CLAUDE.md: "claim_seats tests must pass before anything ships." That rule is
+# only real if a machine enforces it, so the test job runs against a real
+# Postgres 16 rather than a mock — claim_seats() holds a row lock across a
+# read-then-write and the concurrency assertions are the whole point
+# (spec.md §7.8, §16.4).
+#
+# NOTE: this workflow being green does not by itself block a merge. That needs
+# a branch protection rule on `main` requiring the "ci" check.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A superseded run tells you nothing; cancel it and save the minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zetix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zetix
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/zetix
+      # Never a real origin: a QR rendered in CI must not be mistakable for a
+      # live ticket (spec.md §10.1).
+      APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Create extensions
+        run: psql "$DATABASE_URL" -f scripts/db-extensions.sql
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

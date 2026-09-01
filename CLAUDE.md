@@ -11,6 +11,7 @@ All in `docs/`. Each has one job; keep content in the file whose job it is.
 | `docs/spec.md` | The system: data model, allocation engine, tickets, email, check-in, portal, surfaces | The contract. If code disagrees with it, the code is wrong. |
 | `docs/context.md` | This concert: real capacities, player counts, dates, delivery plan, open questions | Facts, not rules. Never let these values reach code, and do not edit unless asked. |
 | `docs/ref.md` | Patterns distilled from Hi.Events, chiefly the door-scanner IA | Background reading. Do not clone or copy from that repo. |
+| `docs/modules.md` | How V1 is cut into branches, what each owns, and the rules that keep parallel sessions from colliding | Your branch's boundary. Read the row for your module before starting. |
 | `docs/local.md` | Everything only a human or a local session can do — dashboards, secrets, migrations | A queue. Add to it rather than attempting these from a cloud session. |
 | `docs/handoff/` | One-time notes handing one session's context to the next | See below. Read once, then archive. |
 

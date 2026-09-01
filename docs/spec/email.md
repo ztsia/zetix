@@ -3,6 +3,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `F`.
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 11. Email

@@ -3,6 +3,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `D` (identifiers and render, §10.1, §10.4–§10.6) and `E` (the editor, §10.2–§10.3).
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 10. Tickets

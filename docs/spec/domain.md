@@ -5,6 +5,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `F1`. **Read by:** every module — every branch queries these tables.
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 ## 5. Domain model

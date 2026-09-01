@@ -124,3 +124,12 @@ Two database URLs, not one: `DATABASE_URL` is the transaction pooler on `6543` w
 
 The allocation engine is developed against a **local Postgres 16**, not Supabase — it needs `citext`,
 `pg_trgm` and `pgcrypto` and nothing else (`docs/spec/platform.md` §16.4).
+
+## Skills
+
+Two project skills in `.claude/skills/`, available to every session:
+
+| Skill | Use it when |
+|---|---|
+| `uiux` | Choosing shadcn components for a screen, or auditing one. Reads its index first, then only the component docs it shortlists. All 61 components are already installed — never `npx shadcn add`. |
+| `database` | Designing tables, writing or reviewing SQL and RLS, adding a mutation, or auditing a handler. It encodes this project's settled architecture, which is **not** the generic Supabase-first one. |

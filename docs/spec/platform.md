@@ -5,6 +5,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `F1` (§16.2, §16.4) and `F2`. **Read by:** anyone touching runtime or deploy.
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 ## 16. Tech stack

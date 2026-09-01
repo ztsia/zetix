@@ -3,6 +3,9 @@ Part of the system specification — see [`README.md`](README.md) for the index.
 **Read this file before re-litigating anything.** Each row is a question that was worked through once;
 the obvious simplification was usually considered and is worse.
 
+**Read by:** every module, before re-litigating anything.
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 19. Decisions

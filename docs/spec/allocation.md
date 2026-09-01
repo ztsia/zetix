@@ -3,6 +3,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `F1` (the engine) and `B` (the extras review screen).
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 7. Capacity and allocation engine

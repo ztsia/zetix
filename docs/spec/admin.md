@@ -3,6 +3,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `F2` (shell and auth), `A` (config screens) and `H` (operators, §14.3).
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 14. Admin

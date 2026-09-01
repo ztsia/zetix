@@ -3,6 +3,9 @@
 Part of the system specification — see [`README.md`](README.md) for the index, and
 [`decisions.md`](decisions.md) before re-litigating anything here.
 
+**Built by:** `G` (the scanner, §12.1–§12.3) and `H` (the dashboard, §12.4).
+See [`../modules.md`](../modules.md) for what each label owns and when it runs.
+
 ---
 
 # 12. Door check-in

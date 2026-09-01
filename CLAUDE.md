@@ -117,6 +117,9 @@ pnpm test                # claim_seats tests must pass before anything ships
 pnpm db:generate         # drizzle migration from schema changes
 pnpm db:migrate          # applies to DIRECT_URL (session pooler, port 5432)
 pnpm tsc --noEmit
+
+./scripts/qa-db.sh       # disposable zetix_qa database for a QA run
+pnpm exec playwright test # end-to-end; Chromium is preinstalled, never `playwright install`
 ```
 
 Two database URLs, not one: `DATABASE_URL` is the transaction pooler on `6543` with
@@ -127,9 +130,20 @@ The allocation engine is developed against a **local Postgres 16**, not Supabase
 
 ## Skills
 
-Two project skills in `.claude/skills/`, available to every session:
+Three project skills in `.claude/skills/`, available to every session:
 
 | Skill | Use it when |
 |---|---|
+| `qa` | A module is finished and before its PR opens, or a non-negotiable was touched. Spawns the `qa-reviewer` subagent (`.claude/agents/`) — clean context, writes acceptance criteria from the spec *before* reading the code, checks the tests have teeth, then walks the flows in a real browser on happy **and** sad paths. |
 | `uiux` | Choosing shadcn components for a screen, or auditing one. Reads its index first, then only the component docs it shortlists. All 61 components are already installed — never `npx shadcn add`. |
 | `database` | Designing tables, writing or reviewing SQL and RLS, adding a mutation, or auditing a handler. It encodes this project's settled architecture, which is **not** the generic Supabase-first one. |
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -151,6 +151,13 @@ in whichever module wrote it (`CLAUDE.md`).
 **The outbox cron stays out of `vercel.json` until F ships.** A cron pointed at a route that does not
 exist 404s daily and trains everyone to ignore the alert (§11.2). F adds it; nobody else does.
 
+**Every branch ends with a QA pass.** Invoke the `qa` skill before opening the PR. It spawns a
+clean-context reviewer that derives acceptance criteria from your spec slice without reading your
+code first, then walks the flows in a real browser on happy and sad paths. A module session grades its
+own homework otherwise, and nine sessions doing that unsupervised is how a system arrives at 19 Sep
+green and broken. A Blocker finding — oversell, a double blast, an unassigned operator reaching the
+roster, a hardcoded operational value — does not open a PR, whatever the schedule says.
+
 **Every branch ends with a handoff.** `docs/handoff/<branch-slug>.md`, per the protocol in
 `docs/handoff/README.md`.
 

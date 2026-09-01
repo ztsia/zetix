@@ -12,19 +12,6 @@ pnpm install
 cp .env.example .env.local     # fill in — see spec.md Appendix B
 ```
 
-### shadcn/ui components
-
-Not yet installed: `ui.shadcn.com` is blocked by the cloud environment's egress
-policy, so this has to run once from a local machine.
-
-```bash
-pnpm dlx shadcn@latest init      # reconciles src/app/globals.css
-pnpm dlx shadcn@latest add --all # writes src/components/ui/*
-```
-
-`components.json` and the theme tokens are already in place, so both commands
-should be non-interactive.
-
 ### Database
 
 Two connection strings, not one — Supabase's direct host is IPv6-only on the

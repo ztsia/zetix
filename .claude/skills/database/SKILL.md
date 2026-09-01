@@ -18,14 +18,16 @@ mutation reaches the database without validation.
 
 ## How to Activate
 
-1. **Mode 1 — audit a plan.** Given an implementation plan or feature description, define the tables,
-   columns, constraints, indexes, RLS policies and the server boundary it needs.
-2. **Mode 2 — audit existing code.** Given migrations, schema files, Server Actions or Route Handlers,
-   analyse them for integrity, authorization and performance gaps.
+Two modes. **Infer which one from the context you already have — never stop to ask.** Most sessions
+using this skill are running unattended against a spec.
 
-If the user does not say which, ask.
+1. **Mode 1 — design.** There is a plan, a spec section, or a feature to be built and the schema for it
+   does not exist yet. Define the tables, columns, constraints, indexes, RLS policies and the server
+   boundary it needs.
+2. **Mode 2 — audit.** Migrations, schema files, Server Actions or Route Handlers already exist.
+   Analyse them for integrity, authorization and performance gaps.
 
-$ARGUMENTS
+If both apply, design what is missing and audit what is there. If nothing distinguishes them, design.
 
 ---
 
@@ -86,9 +88,9 @@ Validation failure returns a structured error, never a thrown stack.
 
 ---
 
-## Mode 1 — audit a plan
+## Mode 1 — design
 
-1. Read the plan and identify every entity, relationship, role and mutation.
+1. Read the plan or spec section and identify every entity, relationship, role and mutation.
 2. Define the schema: exact columns, types, defaults, constraints, and `on delete` behaviour.
 3. Define RLS per table: the `select` / `insert` / `update` / `delete` logic, including how an
    operator's show assignment is expressed. Remember RLS is the second layer — say what the handler
@@ -98,7 +100,7 @@ Validation failure returns a structured error, never a thrown stack.
    through `claim_seats()`.
 6. Check it against **Architecture** above and flag anything that would need a decision reversed.
 
-## Mode 2 — audit existing code
+## Mode 2 — audit
 
 1. Read the target and establish whether it runs in Postgres, in a Server Action, or in a Route Handler.
 2. Look for:

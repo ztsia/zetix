@@ -42,14 +42,16 @@ settings cascade, never from a constant in a component (`CLAUDE.md`).
 
 ## How to Activate
 
-The user will invoke this skill in one of two ways:
+Two modes. **Infer which one from the context you already have — never stop to ask.** Most sessions
+using this skill are running unattended.
 
-1. **Mode 1 — Suggest** → The user provides an implementation plan (or feature description). You recommend which shadcn/ui components to use, including advanced usage patterns and examples.
-2. **Mode 2 — Audit** → The user points you to an existing component/page file. You analyze its UI implementation and suggest improvements — even if it's already correct, look for ways to elevate the UI/UX.
+1. **Mode 1 — Suggest** → there is a plan, a feature description, or a screen to be built, and no
+   component file exists yet. Recommend which shadcn/ui components to use, with usage patterns.
+2. **Mode 2 — Audit** → an existing component or page file is in play. Analyse its UI implementation
+   and suggest improvements, looking to elevate it even where it is already correct.
 
-If the user doesn't specify a mode, ask them which mode they want.
-
-$ARGUMENTS
+If both apply — a plan *and* existing files — do Mode 1 for what is new and Mode 2 for what exists.
+If genuinely nothing distinguishes them, do Mode 1 and say which you assumed.
 
 ---
 

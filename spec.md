@@ -311,7 +311,8 @@ Index: `(segment_id, status, requested_at)`, `(show_id, status)`
 Unique: `(id, segment_id, show_id)` — for the composite foreign key in §5.2
 
 **`attendees`** — one row per seat
-`id`, `registration_id`, `show_id`, `segment_id`, `full_name`, `email` (citext, nullable),
+`id`, `registration_id`, `show_id`, `segment_id`,
+`full_name`, `name_source` (PROVIDED|PLACEHOLDER), `email` (citext, nullable),
 `allocation_type` (BASE|EXTRA|HELD|COMP),
 `ticket_code` (unique), `qr_token` (unique),
 `status` (CONFIRMED|PENDING_REVIEW|WAITLIST|CANCELLED),
@@ -706,6 +707,17 @@ base allocation. Tokens are rotatable from admin.
 ticket; their PDF is attached to the player's confirmation email for the player to forward. This is
 accepted and is the reason the player, not the guest, fills the form.
 
+**A public registration is a party, not a person.** One person fills the form for several people: one
+`registration`, one `contact_email`, N `attendees`, N tickets. This is the same shape as the player
+form — the only difference is that a player is not one of the N (below) and a public registrant usually
+is. Nothing downstream distinguishes them: the outbox is keyed on the registration (§5.1), the email
+carries every PDF, and one successful send stamps all N (§11.4).
+
+**Each seat gets its own `qr_token` and its own PDF**, even within one party. Not one QR that "admits
+4". A shared QR cannot express partial arrival, cannot produce per-person check-in counts, and breaks
+the moment a party splits up — and parties do split up. The cost is that a party of four arriving
+together needs four scans, which §12.1 handles directly.
+
 **Players consume no seats.** A player is a performer, not audience, and holds no attendee row in the
 player segment of their own show. (A player attending a *different* show of the same concert registers through that
 show's form, or is added by admin.)
@@ -757,6 +769,27 @@ Section types: `REGISTRANT` (flat fields about the submitter), `GUESTS_BASE` (re
 Field types: `text`, `textarea`, `email`, `tel`, `number`, `select`, `multiselect`, `checkbox`, `radio`,
 `date`. `{{base_quota}}` and other resolved settings interpolate into `description_md`, so copy never
 hardcodes numbers either.
+
+### 8.2.1 An attendee with no name still gets a ticket
+
+Native forms require a name per seat. **Imported forms often do not** — a Google Form that asks *"how
+many tickets do you need?"* rather than listing names produces a party of four with one name on it.
+That file still has to import, because those four people are coming.
+
+So a missing attendee name is never blocking:
+
+- The attendee is created with `full_name` set to a generated placeholder — `"Guest of {contact_name}"`
+  — and `name_source = 'PLACEHOLDER'` (versus `'PROVIDED'`).
+- Import reports it as **info**, not a warning, with a count: *"12 attendees have no name and will
+  ticket as 'Guest of …'"*.
+- Admin sees the same count in the registrations table and can fill names in later; doing so before the
+  blast changes nothing else, and after the blast flags `needs_reissue` (§10.6).
+- The ticket renders the placeholder. At a free concert with unreserved seating the name on a ticket is
+  a door-search convenience, not identity verification — and a party that registered together arrives
+  together, so searching "Guest of Alice Tan" finding all four is the useful behaviour, not a defect.
+
+`attendees.name_source` (PROVIDED|PLACEHOLDER) is one column and it is what lets the admin screen
+distinguish *"we do not know this person's name"* from *"this person is called Guest"*.
 
 ### 8.3 Response limiting
 
@@ -862,7 +895,7 @@ The admin confirms or edits every proposal; auto-detection suggests, never appli
         { "full_name": "Extra Ticket 1 Name" },
         { "full_name": "Extra Ticket 2 Name" } ] }
   ],
-  "include_registrant_as_attendee": false,
+  "include_registrant_as_attendee": false,   // false for player imports, true for public — see below
   "extra_fields": { "accessibility": "Accessibility needs" },
   "transforms": {
     "trim_whitespace": true, "lowercase_emails": true,
@@ -870,6 +903,13 @@ The admin confirms or edits every proposal; auto-detection suggests, never appli
   }
 }
 ```
+
+**`include_registrant_as_attendee` differs by audience, and getting it wrong is silent.** On a
+`PLAYER_INVITED` import it is `false`: the player is performing and consumes no seat (§19.1 #3). On a
+`PUBLIC` import it is normally `true`: the person who filled the form is usually attending, and if the
+sheet lists only their guests, leaving this false quietly under-issues by one ticket per party — a
+mistake nobody notices until someone is at the door without a ticket. The import preview shows the
+resulting seat count per row precisely so this is visible during the dry run.
 
 `player_match.strategy`: `EMAIL` (exact, case-insensitive), `NAME` (normalised exact), or `NAME_FUZZY`
 (trigram similarity; anything below `import.fuzzy_match_threshold` requires explicit confirmation).
@@ -885,8 +925,10 @@ Profiles are saved and reusable, since each concert's form differs slightly.
 | Duplicate email within the file | Warning |
 | Registration already exists for this player + show | Blocking — skip row |
 | Player not matched | Blocking until resolved |
-| All guest cells blank | Skip row silently |
+| All guest cells blank | Skip row silently — unless a seat count is mapped, in which case create that many placeholder attendees (§8.2.1) |
+| Guest name blank but seat is real | Info — attendee created with a placeholder name (§8.2.1) |
 | Guest count exceeds base quota | Info — surplus becomes `EXTRA` |
+| Party exceeds `form.max_tickets_per_response` | Warning — import and flag; the cap governs the form, and an admin may have granted more |
 | Import would exceed the segment's or the show's capacity | Blocking — report overflow, admin chooses to cap in row order or raise capacity |
 
 Imports run through `claim_seats()` in `requested_at` order, so capacity rules cannot be bypassed by
@@ -933,18 +975,49 @@ first copy must still get through the door.
 (secondary, §15.4), attendee name search against the same offline manifest (tertiary). Two of the three
 work with no camera and no network.
 
-**5. Set the domain before the first render, not the first send.** Use a real custom domain, never the
-generated `*.vercel.app` hostname: a custom domain can be repointed at a different host with no change
-to a single issued ticket, and a platform hostname cannot. A short domain also keeps the QR at a low
-version, which means larger modules and a better read off a cracked phone screen at 25mm.
+**5. Freeze the origin before the first render, not the first send.** This concert uses the Vercel
+production hostname, `<project>.vercel.app` — see below.
 
 **6. One blocking gate before the first blast.** Render a real ticket, print it, and scan it with an
 actual usher phone — off paper and off a screen, in low light. Until that passes, no blast goes out. It
 is in the runbook (§18) as a blocking step, not a nice-to-have.
 
-If the domain does change after tickets are issued: point the old host at the new one with a 301 and
+#### Using the Vercel hostname instead of a custom domain
+
+A custom domain is the more durable choice, because it can be repointed at another host without
+touching an issued ticket. This project deliberately does not buy one, so the QR origin is Vercel's
+production hostname. That is a sound decision here, for one reason and with three rules.
+
+**The reason it is safe: admission does not depend on it.** Rule 1 above is what makes the domain
+question a matter of convenience rather than risk. The scanner never resolves the URL, so even a
+completely dead origin admits every guest. In V1 the only thing behind `/t/{token}` is a read-only
+status page (§4.1), so the worst realistic outcome is a ticket holder who taps their own QR early and
+gets nothing — not a person turned away at the door.
+
+**Rule A — use the production alias, never a deployment URL.** `<project>.vercel.app` is stable and
+points at whatever is currently in production. The per-deployment hostnames
+(`<project>-<hash>-<scope>.vercel.app`) change on **every** deploy and are dead within days. A ticket
+rendered against one of those is born broken. `APP_URL` must be the bare production alias, set in the
+Production environment only, and it must never be derived at runtime from `VERCEL_URL` — that variable
+holds the deployment URL.
+
+**Rule B — choose the project name once and freeze it.** The hostname is the project name, so renaming
+the project, transferring it to a team account, or deleting and recreating it changes the origin of
+every ticket already issued. Pick a short, permanent name before the first render and record it in the
+runbook as a do-not-change. Nothing else about the deployment is affected by this constraint.
+
+**Rule C — verify the rendered origin, do not assume it.** The pre-blast gate (rule 6) checks the QR
+that actually came out of the renderer, which catches a preview-environment `APP_URL` before tickets
+reach anyone.
+
+Length is not a concern: `https://<project>.vercel.app/t/<22-char token>` is roughly 55 characters,
+which at error correction M is a version-4 QR — 33×33 modules, about 0.75mm per module at the 25mm
+minimum print size (§10.4). That reads comfortably off paper and off a cracked phone screen. A shorter
+custom domain would save one QR version, which is not a difference anyone would notice.
+
+If the origin does change after tickets are issued: point the old host at the new one with a 301 and
 the portal links keep working; if the old host is gone entirely, the door is unaffected (rule 1) and
-only the portal link dies — which in V1 is a status page, so nothing that matters is lost.
+only the portal link dies.
 
 ### 10.2 Template layout format
 
@@ -1261,6 +1334,26 @@ The session persists on the device, so an usher signs in once during setup rathe
 - Continuous scanning with `checkin.scan_debounce_ms` per token to stop double-fires.
 - Manual fallback: type or search `ticket_code`, or search by attendee name.
 
+**Parties arrive together, and only one phone comes out.** A family of four holds four PDFs in one
+email, and in practice the person at the front shows the first one while the other three walk in behind
+them. Scan one, and three people are admitted but unrecorded — the stats tab is then wrong for the rest
+of the night, which is the number the door uses to decide when to stop holding seats.
+
+So every scan result carries **party context**, and the manifest (§12.3) includes `registration_id` and
+the party's size and check-in state to make it available offline:
+
+```
+✓  ALICE TAN                    admitted
+   Party of 4 · 1 in, 3 remaining
+   [ Admit remaining 3 ]
+```
+
+One tap writes three more `check_ins` rows with `source = MANUAL`. The operator is never forced to use
+it — a party that genuinely splits up scans individually — but the alternative is asking an usher to
+say "next, please" four times to the same family while a queue builds behind them.
+
+A party of one shows no such control, so nothing changes for the common case.
+
 **Result states**, readable at arm's length in a dim foyer:
 
 | State | Colour | Shows |
@@ -1308,7 +1401,9 @@ Venue wifi is unreliable and a full house arrives inside twenty minutes. Scannin
 the network.
 
 - On show selection, download a **manifest**: `[{ qr_token_sha256, ticket_code, name, player_name,
-  status }]` for every attendee — a few hundred rows, well under 200KB — into IndexedDB.
+  status, registration_id, party_size }]` for every attendee — a few hundred rows, well under 200KB —
+  into IndexedDB. `registration_id` and `party_size` are what make the party-admission control in
+  §12.1 work with no network.
 
   **The manifest is the attendee roster, so its endpoint is the security boundary that matters.**
   `GET /api/checkin/manifest?showId=` must verify an `operator_show_assignments` row for the caller
@@ -1802,6 +1897,9 @@ System decisions only. Concert-specific choices and their deadlines are in `cont
 | 26 | Import direction | One import run per segment; after commit this database is the source of truth and there is no rollback or re-sync (§9.1). |
 | 27 | Referential integrity | Composite foreign keys, not triggers: an attendee cannot disagree with its registration about segment or show (§5.2). |
 | 28 | QR durability | The scanner treats the QR as opaque data and never dereferences it, so a changed or dead `APP_URL` cannot affect admission. `qr_token` is immutable for life (§10.1). |
+| 30 | QR origin | **No custom domain.** The Vercel production alias `<project>.vercel.app` is the origin, which is safe because decision 28 makes admission independent of it. The project name is frozen before the first render and `APP_URL` is never derived from `VERCEL_URL` (§10.1). |
+| 31 | Party tickets | A registration is a party of N in both audiences: one email, N `qr_token`s, N PDFs. No shared "admits 4" QR. The door gets an **Admit remaining** control instead (§8.1, §12.1). |
+| 32 | Missing attendee names | Never blocking. Imported seats with no name ticket as "Guest of {contact_name}" with `name_source = PLACEHOLDER` (§8.2.1). |
 | 29 | Delivery split | **V1** runs the concert (import → ticket → blast → door). **V2** adds native forms, the full portal and notes (§4). |
 
 ### 19.2 Still open
@@ -1876,13 +1974,19 @@ Paste into Gemini Deep Research if reconsidering the hosting decision.
 | `ADMIN_EMAIL` | server | Constant address behind the code-only admin login (§14.3) |
 | `BOOTSTRAP_ADMIN_PASSWORD` | script | The initial shared admin code; rotate from the UI afterwards |
 
-`APP_URL` deserves care: it is baked into every QR code at issue time. Set it to a **real custom
-domain** before the first render, not before the first send — a custom domain can be repointed at
-another host without touching an issued ticket, and a generated `*.vercel.app` hostname cannot.
+`APP_URL` deserves care: it is baked into every QR code at issue time and cannot be recalled. Set it
+before the first render, not before the first send.
+
+This project uses the Vercel **production alias** `<project>.vercel.app` rather than a custom domain
+(§10.1). Two consequences follow, and both are absolute:
+
+- **Never derive it from `VERCEL_URL`.** That variable holds the per-deployment hostname, which is dead
+  within days. `APP_URL` is a hardcoded environment variable in the Production environment.
+- **Never rename or transfer the Vercel project** once tickets have rendered. The project name *is* the
+  hostname.
 
 If it is nevertheless wrong, admission still works: the scanner treats the QR as opaque data and never
-resolves the URL (§10.1). Only the portal link breaks, and a 301 from the old host repairs even that.
-The rule stands anyway — the cheapest bug is the one that never ships.
+resolves the URL (§10.1). Only the ticket status page breaks.
 
 ---
 

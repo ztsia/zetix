@@ -31,6 +31,12 @@ Orchestra concert ticketing system. Free admission, unreserved seating, no payme
 - **The scanner never dereferences the QR.** It extracts the token by pattern and matches the offline
   manifest, so a wrong or dead `APP_URL` cannot stop admission (`spec.md` §10.1). `qr_token` is
   immutable for the life of an attendee — reissuing re-renders the PDF, never the token.
+
+- **`APP_URL` is the Vercel production alias**, hardcoded in the Production environment. Never derive
+  it from `VERCEL_URL` — that is the per-deployment hostname and it dies within days.
+
+- **A registration is a party of N, in both audiences.** One email, N `qr_token`s, N PDFs. An attendee
+  with no name is not an error — it tickets as a placeholder (`spec.md` §8.2.1).
 - **Asymmetric auth.** One shared `ADMIN` account behind a single code; many `OPERATOR` accounts scoped
   to assigned shows. The check-in manifest endpoint must verify assignment before returning data — it
   is the full attendee roster (`spec.md` §12.3, §14.3).

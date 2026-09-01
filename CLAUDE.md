@@ -10,6 +10,24 @@ Orchestra concert ticketing system. Free admission, unreserved seating, no payme
 | `context.md` | This concert: real capacities, player counts, dates, delivery plan, open questions | Data, not rules. Never let these values reach code. |
 | `ref.md` | Patterns distilled from Hi.Events, chiefly the door-scanner IA | Background reading. Do not clone or copy from that repo. |
 
+## Where the build is
+
+Scaffold only — no schema, no domain code yet. `pnpm dev`, `pnpm test`, `pnpm build` and CI all pass.
+
+| Done | Not started |
+|---|---|
+| Next.js 16 + Tailwind 4 + all 61 shadcn components | **Drizzle schema** (`src/db/schema/`) |
+| Drizzle/postgres.js wiring, two pooler URLs | **`claim_seats()`** and its tests — the next task |
+| `src/lib/env.ts`, `/api/health` keep-alive | Everything in `spec.md` §4.1 beyond those |
+| CI: typecheck/lint/test/build on a real Postgres 16 | |
+| Route groups for the four surfaces | |
+
+**Next task**, per the non-negotiable below: the schema, then `claim_seats()` — with the `spec.md` §7.3
+three-row worked example written as tests *before* the implementation.
+
+Deployment state: Supabase project live (public sign-ups off, email confirmation on); `main` is
+branch-protected requiring `ci`. Outstanding items are in `context.md` §6.
+
 ## Non-negotiables
 
 - **No operational value is hardcoded.** Capacities, quotas, deadlines, party caps, batch sizes and

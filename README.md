@@ -31,6 +31,22 @@ pnpm db:local:reset            # wipe and recreate
 ./scripts/local-db.sh psql     # a shell on it
 ```
 
+## Working in the Claude Code cloud environment
+
+Facts established by trying them, so they need not be rediscovered:
+
+- **A local Postgres 16 is installed and runs**, with `citext`, `pg_trgm` and `pgcrypto`. `pnpm db:local`
+  starts it; a SessionStart hook does so automatically. This is the whole development database.
+- **Postgres is not reachable over the network from the container.** Supabase's direct host is
+  IPv6-only and the container is IPv4, so `db.<ref>.supabase.co:5432` fails with *"Address family not
+  supported"*. Generate migrations here, apply them from a machine that can reach the pooler.
+  Consequently this environment never needs the production DB password or the service-role key.
+- **There is no Docker daemon**, so the Supabase CLI's local stack is unavailable. The local Postgres
+  above replaces it for everything except Auth, Storage and RLS, which are exercised on a Vercel
+  preview.
+- **Node's built-in `fetch` ignores `HTTPS_PROXY`.** Tools that use it — `shadcn` among them — need
+  `NODE_USE_ENV_PROXY=1` prefixed, or they fail with an unhelpful "Request was cancelled".
+
 ## Commands
 
 ```bash

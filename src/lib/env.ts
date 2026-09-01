@@ -1,12 +1,24 @@
 import { z } from 'zod';
 
 /**
- * The only place `process.env` is read.
+ * The validated view of the environment for application code.
  *
  * Note what is NOT here: no capacity, quota, deadline, cap, batch size or rate
  * limit. Those are stored, admin-editable, and resolved through the cascade in
  * `spec.md` §2.2 — never through the environment and never as a literal.
  * This file holds infrastructure coordinates only.
+ *
+ * Three places read `process.env` directly instead, each deliberately:
+ *
+ * - `src/db/client.ts` takes `DATABASE_URL` alone, so it stays importable from
+ *   scripts and tests that set only that one variable — the local development
+ *   database needs nothing else (§16.4).
+ * - `src/app/api/health/route.ts` takes `CRON_SECRET` alone. It is the
+ *   keep-alive that proves the database has not paused, so an unrelated
+ *   variable being absent or malformed must not be able to take it down.
+ * - `drizzle.config.ts` and the tests run outside Next entirely.
+ *
+ * Everything else goes through `env()`.
  */
 const schema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),

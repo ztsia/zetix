@@ -1179,7 +1179,10 @@ address and confirm all three land in the inbox.
    messages, commits per message, and returns progress. The UI shows a progress bar until the queue
    drains or the daily cap is hit. `DRAFT` rows are never dispatched — only a human moves a row out of
    `DRAFT`.
-4. A daily cron hits the same endpoint as a safety net.
+4. A daily cron hits the same endpoint as a safety net. Add it to `vercel.json`
+   **when the dispatch route ships, not before** — a cron pointing at a route
+   that does not exist yet returns 404 daily and trains everyone to ignore the
+   one signal that would tell them dispatching had actually broken.
 
 This is the one-click blast model: no persistent process, and it survives function timeouts because
 progress is committed per message. Failures back off, retry to `email.max_attempts`, then surface in

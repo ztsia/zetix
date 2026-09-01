@@ -5,7 +5,7 @@ import { z } from 'zod';
  *
  * Note what is NOT here: no capacity, quota, deadline, cap, batch size or rate
  * limit. Those are stored, admin-editable, and resolved through the cascade in
- * `spec.md` §2.2 — never through the environment and never as a literal.
+ * `spec/README.md` §2.2 — never through the environment and never as a literal.
  * This file holds infrastructure coordinates only.
  *
  * Three places read `process.env` directly instead, each deliberately:
@@ -25,13 +25,13 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 
-  // Transaction pooler, port 6543. See spec.md §16.2.
+  // Transaction pooler, port 6543. See spec/platform.md §16.2.
   DATABASE_URL: z.string().min(1),
   // Session pooler, port 5432. Migrations only.
   DIRECT_URL: z.string().min(1).optional(),
 
   /**
-   * Baked into every QR at issue time and unrecallable (spec.md §10.1).
+   * Baked into every QR at issue time and unrecallable (spec/tickets.md §10.1).
    * MUST be the Vercel production alias, never VERCEL_URL — that is the
    * per-deployment hostname and it dies within days.
    */

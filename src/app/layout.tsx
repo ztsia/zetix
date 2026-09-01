@@ -7,7 +7,7 @@ const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: 'Zetix',
-  // Every tokenised surface is noindex (spec.md §13.3, ref.md §7).
+  // Every tokenised surface is noindex (spec/v2.md §13.3, ref.md §7).
   robots: { index: false, follow: false },
 };
 

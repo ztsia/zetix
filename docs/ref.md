@@ -4,7 +4,7 @@
 out below in enough detail to build from. The source is a 93k-LOC Laravel + 94k-LOC Vite/React
 application; reading it costs context and yields patterns expressed in a stack we are not using.
 
-This is a companion to `spec.md`. `spec.md` is authoritative for what to build; this file explains a
+This is a companion to `spec/`. The spec is authoritative for what to build; this file explains a
 handful of design decisions that were validated by a mature product, so we do not re-derive them.
 
 **Licence note.** Hi.Events is AGPL-3.0. These are described patterns and architectural decisions, not
@@ -65,8 +65,8 @@ This is the single most valuable detail in this document. Do not use a route cha
 
 ### 1.5 What Hi.Events does *not* do that we must
 
-- No offline manifest — it assumes venue connectivity. Ours does not (`spec.md` §12.3).
-- No sound or haptic feedback — colour only. Ours adds both (`spec.md` §12.2).
+- No offline manifest — it assumes venue connectivity. Ours does not (`spec/checkin.md` §12.3).
+- No sound or haptic feedback — colour only. Ours adds both (`spec/checkin.md` §12.2).
 - Its check-in is per check-in-list with product filtering; ours is simply per show.
 
 ---
@@ -83,7 +83,7 @@ Hi.Events carries **both** a `short_id` and a `public_id` on attendees, and the 
 The mistake this avoids: using one identifier for both. A code short enough to read over the phone is
 short enough to enumerate, and an ID long enough to be unguessable is unusable at a door.
 
-Our equivalents are `ticket_code` and `qr_token` (`spec.md` §10.1). The QR carries only `qr_token`; the
+Our equivalents are `ticket_code` and `qr_token` (`spec/tickets.md` §10.1). The QR carries only `qr_token`; the
 printed ticket shows `ticket_code` for the Search tab.
 
 ---
@@ -116,7 +116,7 @@ scanning and nothing else.
 
 Take the principle: **a volunteer usher's phone should not be able to read the attendee list, export
 data, or edit a registration.** Our `OPERATOR` role sees name and ticket status, and nothing more
-(`spec.md` §14.3). Assume at least one usher phone will be left unlocked on a table.
+(`spec/admin.md` §14.3). Assume at least one usher phone will be left unlocked on a table.
 
 ---
 
@@ -126,7 +126,7 @@ Hi.Events keeps capacity in its own entity that can apply across several ticket 
 column on the ticket. That generality is more than we need — our capacity is per show — but one idea
 carries over: **capacity is evaluated at claim time against a live count, never cached on a row.**
 
-Our `claim_seats()` (`spec.md` §7.8) recomputes `confirmed`, `unclaimed_base` and `extras_pool` inside a
+Our `claim_seats()` (`spec/allocation.md` §7.8) recomputes `confirmed`, `unclaimed_base` and `extras_pool` inside a
 row lock on every claim. Do not denormalise a `seats_remaining` counter onto `shows`. It will drift, and
 the drift only surfaces as an oversell on the night.
 
@@ -146,7 +146,7 @@ Two things worth copying:
   data-shape bugs (a null player on a public registration, a 40-character name), and only real data
   surfaces them.
 
-Same principle applies to our ticket template bindings (`spec.md` §10.2): bindings are picked from an
+Same principle applies to our ticket template bindings (`spec/tickets.md` §10.2): bindings are picked from an
 enumerated list, never free-typed, and preview runs against a real attendee — including a "longest name
 in this show" mode.
 
@@ -179,7 +179,7 @@ What comes with it, and what we must also do:
 | `TicketDesigner` | Five files: a settings form with a live preview. Not a canvas editor. Our §10.3 is a different and more capable thing — there is nothing to take. |
 | Order → OrderItem → Attendee chain | A pricing/payment structure. Ours is `registration → attendee`, and the middle layer would be dead weight. |
 | Domain-object code generation | Solves a problem Laravel has. Drizzle already gives us typed schema inference. |
-| Its queue-worker-dependent side effects | Assumes an always-on worker. We are serverless; our outbox is admin-dispatched (`spec.md` §11.2). |
+| Its queue-worker-dependent side effects | Assumes an always-on worker. We are serverless; our outbox is admin-dispatched (`spec/email.md` §11.2). |
 | Multi-tenant SaaS mode, application fees, Stripe Connect | Irrelevant to a free concert, and load-bearing in its order lifecycle. |
 
 ---

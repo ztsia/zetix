@@ -3,7 +3,7 @@ import postgres from 'postgres';
 
 /**
  * Proves the local development database is reachable and carries the three
- * extensions the schema needs (spec.md §16.4). If this fails, run
+ * extensions the schema needs (spec/platform.md §16.4). If this fails, run
  * `pnpm db:local` — everything else in the suite depends on it.
  */
 describe('local database', () => {

@@ -1,0 +1,192 @@
+*Identifiers, the QR contract, the template format, editor and PDF render.*
+
+Part of the system specification — see [`README.md`](README.md) for the index, and
+[`decisions.md`](decisions.md) before re-litigating anything here.
+
+---
+
+# 10. Tickets
+
+## 10.1 Identifiers
+
+- **`ticket_code`** — human-readable, e.g. `ORC-7K4Q`. Crockford base32 (no `I`, `L`, `O`, `U`),
+  collision-checked. Printed on the ticket, used for door lookup and phone support.
+- **`qr_token`** — 128 bits of CSPRNG entropy, base62 (~22 chars), unique-indexed, unguessable. The
+  only thing inside the QR.
+
+**The QR encodes a URL**, not a bare token: `https://{APP_URL}/t/{qr_token}`. This is what makes it
+multi-purpose (`v2.md` §13) — an audience phone camera lands in the portal; the operator scanner extracts the
+token and validates it locally.
+
+### The QR is data, not a link that has to resolve
+
+Admission on concert night is the one thing in this system that must not fail, and the QR is its
+narrowest point. A ticket is printed or screenshotted weeks earlier and can never be recalled, so
+anything baked into it is permanent. The design therefore assumes the URL inside it **will** one day be
+wrong — wrong domain, moved host, changed path — and makes that survivable.
+
+**1. The scanner never dereferences the URL.** It decodes the string, extracts the token by pattern,
+and matches it against the offline manifest. No DNS, no HTTP, no origin comparison — the decoded text
+is opaque data that happens to look like a URL. A dead, changed, or simply wrong `APP_URL` therefore
+cannot affect check-in at all. This is the load-bearing rule; everything else below is a convenience.
+
+**2. Token extraction is origin-agnostic and path-agnostic.** The scanner accepts, in order: a bare
+token; the last path segment of any URL; or any `[0-9A-Za-z]{22}` run at the end of the decoded string.
+So `https://old-domain.vercel.app/t/TOKEN`, `https://tickets.example.org/t/TOKEN`, and `TOKEN` all
+resolve to the same attendee. Never validate the host, and never require the path to be `/t/`.
+
+**3. `qr_token` is immutable for the life of the attendee.** Reissuing a ticket (§10.5) re-renders the
+PDF and may repin the template version, but **never** mints a new token. A guest who kept the printed
+first copy must still get through the door.
+
+**4. Three independent ways in.** QR scan (primary), `ticket_code` typed into the Search tab
+(secondary, `surfaces.md` §15.4), attendee name search against the same offline manifest (tertiary). Two of the three
+work with no camera and no network.
+
+**5. Freeze the origin before the first render, not the first send.** This concert uses the Vercel
+production hostname, `<project>.vercel.app` — see below.
+
+**6. One blocking gate before the first blast.** Render a real ticket, print it, and scan it with an
+actual usher phone — off paper and off a screen, in low light. Until that passes, no blast goes out. It
+is in the runbook (`README.md` §18) as a blocking step, not a nice-to-have.
+
+### Using the Vercel hostname instead of a custom domain
+
+A custom domain is the more durable choice, because it can be repointed at another host without
+touching an issued ticket. This project deliberately does not buy one, so the QR origin is Vercel's
+production hostname. That is a sound decision here, for one reason and with three rules.
+
+**The reason it is safe: admission does not depend on it.** Rule 1 above is what makes the domain
+question a matter of convenience rather than risk. The scanner never resolves the URL, so even a
+completely dead origin admits every guest. In V1 the only thing behind `/t/{token}` is a read-only
+status page (`README.md` §4.1), so the worst realistic outcome is a ticket holder who taps their own QR early and
+gets nothing — not a person turned away at the door.
+
+**Rule A — use the production alias, never a deployment URL.** `<project>.vercel.app` is stable and
+points at whatever is currently in production. The per-deployment hostnames
+(`<project>-<hash>-<scope>.vercel.app`) change on **every** deploy and are dead within days. A ticket
+rendered against one of those is born broken. `APP_URL` must be the bare production alias, set in the
+Production environment only, and it must never be derived at runtime from `VERCEL_URL` — that variable
+holds the deployment URL.
+
+**Rule B — choose the project name once and freeze it.** The hostname is the project name, so renaming
+the project, transferring it to a team account, or deleting and recreating it changes the origin of
+every ticket already issued. Pick a short, permanent name before the first render and record it in the
+runbook as a do-not-change. Nothing else about the deployment is affected by this constraint.
+
+**Rule C — verify the rendered origin, do not assume it.** The pre-blast gate (rule 6) checks the QR
+that actually came out of the renderer, which catches a preview-environment `APP_URL` before tickets
+reach anyone.
+
+Length is not a concern: `https://<project>.vercel.app/t/<22-char token>` is roughly 55 characters,
+which at error correction M is a version-4 QR — 33×33 modules, about 0.75mm per module at the 25mm
+minimum print size (§10.4). That reads comfortably off paper and off a cracked phone screen. A shorter
+custom domain would save one QR version, which is not a difference anyone would notice.
+
+If the origin does change after tickets are issued: point the old host at the new one with a 301 and
+the portal links keep working; if the old host is gone entirely, the door is unaffected (rule 1) and
+only the portal link dies.
+
+## 10.2 Template layout format
+
+A background asset plus absolutely-positioned elements, stored in `ticket_templates.layout`:
+
+```jsonc
+{
+  "canvas": { "width_pt": 595, "height_pt": 280, "dpi": 300 },
+  "elements": [
+    { "id": "el_name", "type": "TEXT", "binding": "attendee.full_name",
+      "x": 48, "y": 120, "w": 320, "h": 34, "rotation": 0,
+      "font_family": "Inter", "font_size": 22, "font_weight": 600,
+      "color": "#1a1a1a", "align": "left", "valign": "middle",
+      "max_lines": 1, "overflow": "SHRINK" },
+    { "id": "el_qr", "type": "QR", "binding": "attendee.qr_url",
+      "x": 430, "y": 60, "w": 130, "h": 130, "ec_level": "M", "margin_modules": 2 },
+    { "id": "el_code", "type": "TEXT", "binding": "attendee.ticket_code",
+      "x": 430, "y": 196, "w": 130, "h": 18,
+      "font_family": "JetBrains Mono", "font_size": 12, "align": "center" },
+    { "id": "el_static", "type": "TEXT", "binding": null,
+      "text": "Free seating · Doors {{show.doors_open_at}}",
+      "x": 48, "y": 200, "w": 320, "h": 18, "font_size": 11, "color": "#666666" }
+  ]
+}
+```
+
+Element types: `TEXT`, `QR`, `IMAGE`, `RECT`. Bindings are picked from a list, never free-typed:
+
+```
+attendee.full_name   attendee.ticket_code   attendee.qr_url
+registration.contact_name   player.full_name   player.instrument
+show.name   show.starts_at   show.doors_open_at   show.venue_name   show.venue_address
+concert.name
+```
+
+Dates render through a per-element `format` string (e.g. `EEE d MMM yyyy, HH:mm`).
+
+## 10.3 Template editor
+
+Admin-only canvas editor:
+
+- Upload background: PNG/JPG, or PDF page 1. Canvas dimensions derive from the asset; for PDF the page
+  box in points is authoritative.
+- Drag, resize, rotate; snap-to-grid and alignment guides; arrow-key nudge (1pt, 10pt with shift);
+  z-order, lock, duplicate, multi-select.
+- Properties panel: binding picker, typography, colour, alignment, overflow behaviour.
+- Live preview against a real attendee, plus a **"longest name in this show"** preview so overflow is
+  caught before a whole show's tickets go out.
+- Undo/redo. Templates are **versioned** — never mutate a template that has already issued tickets;
+  clone it.
+- **Three seeded default layouts** (Classic Landscape, Minimal Portrait, Wide Banner) that work with no
+  background asset, so the system is usable before anyone opens the editor.
+
+Library: **react-konva**, dynamically imported with `ssr: false`.
+
+## 10.4 Rendering
+
+Server-side, deterministic, consuming the same layout JSON as the editor:
+
+| Background | Renderer | Output |
+|---|---|---|
+| PDF | `pdf-lib` — load the original, draw text and QR onto page 1 | PDF, vector design preserved |
+| Image / none | `sharp` composite or `satori` + `resvg-js`, embedded via `pdf-lib` | PDF |
+
+Always attach a **PDF**: it prints predictably and every phone opens it. QR at ≥25mm printed, error
+correction M.
+
+Render on demand rather than storing, to stay inside free storage limits; cache to Storage keyed by
+`attendee_id + template_version` only when a ticket is fetched repeatedly.
+
+**Fonts must be self-hosted and embedded** — serverless runtimes have almost no system fonts, and the
+render must match the editor.
+
+**QR contrast is a rendering constraint, not a design preference.** Artwork with a busy or dark region
+behind the QR will not scan. The renderer always draws an opaque light backing plate under the QR with
+a quiet zone of at least `margin_modules`, regardless of what the template background looks like. The
+editor shows this plate so the layout is honest about the space it takes.
+
+## 10.5 Template versions are pinned at issue time
+
+Rendering on demand creates a trap: if an admin edits a template after tickets have been emailed, every
+already-issued ticket would re-render differently on its next download. The PDF in someone's inbox and
+the PDF behind their portal link would disagree, and the door would be scanning against a design nobody
+sent.
+
+So: **`attendees.ticket_template_id` and `ticket_template_version` are written when the ticket is first
+issued, and rendering always uses the pinned version.** Editing a template creates a new version and
+affects only tickets issued afterwards.
+
+Re-rendering an already-issued ticket against a newer template is possible but explicit — an admin
+action, "Reissue tickets with current template", which repins the version, clears `ticket_sent_at` for
+the affected attendees, and queues a resend so the recipient actually receives what changed. It refuses
+to run silently. It never changes `qr_token` (§10.1).
+
+## 10.6 A bound field that changes after sending flags a reissue
+
+The same trap applies to data, not just templates. If an attendee's name is corrected after their PDF
+is already in someone's inbox, the ticket they hold and the ticket the system would render no longer
+agree.
+
+So any edit to a field bound into the template (§10.2) on an attendee with `ticket_sent_at` set marks
+`needs_reissue = true` rather than silently diverging. Admin sees a "N tickets need reissuing" count
+and resolves it deliberately — reissue and resend, or dismiss as cosmetic. The door is unaffected
+either way, because check-in matches on `qr_token`, which never changes.

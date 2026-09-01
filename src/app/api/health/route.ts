@@ -5,7 +5,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Keep-alive endpoint (spec.md §17.1).
+ * Keep-alive endpoint (spec/platform.md §17.1).
  *
  * Supabase free projects pause after 7 days of inactivity and do NOT wake on
  * an incoming query — they need a manual restore. Two independent crons hit

@@ -6,8 +6,8 @@ One module per branch, one PR per branch into `main`, one cloud session per bran
 contract between those sessions: it is how nine sessions that never see each other's code avoid
 building the same thing twice or reshaping each other's tables.
 
-Scope comes from `spec.md` §4.1. Dates and priority come from `context.md` §5. Where this file and
-`spec.md` disagree about behaviour, `spec.md` wins — this file allocates work, it does not define it.
+Scope comes from `spec/README.md` §4.1. Dates and priority come from `context.md` §5. Where this file
+and the spec disagree about behaviour, the spec wins — this file allocates work, it does not define it.
 
 ---
 
@@ -33,8 +33,8 @@ and **F waits on D**. The rest is genuinely parallel.
 
 Every module reads the same tables, and `claim_seats()` is the correctness core — oversell must be
 impossible, and that property is established once, in one function, or not at all. A schema built by
-nine sessions at once is nine migrations that conflict. `CLAUDE.md` states the rule: the `spec.md` §7.3
-three-row worked example is written as tests **before** the implementation.
+nine sessions at once is nine migrations that conflict. `CLAUDE.md` states the rule: the
+`spec/allocation.md` §7.3 three-row worked example is written as tests **before** the implementation.
 
 ### Why F2 is serial
 
@@ -184,13 +184,10 @@ it is B's extras review screen (round 1 can be granted by hand for one concert) 
 ## 6. What is deliberately not a module
 
 **V2 is not here** — native forms (§8), the full portal (§13), notes (§13.4, §14.2), per-IP rate
-limiting (§8.3). `spec.md` §4.2 keeps them specified so the V1 schema does not need reshaping, but no
+limiting (§8.3). `spec/README.md` §4.2 keeps them specified so the V1 schema does not need reshaping, but no
 V1 branch builds them and none should make a schema choice V2 would have to undo.
 
-**The spec split is not a module either.** `spec.md` becomes `spec/` — one file per module above — so
-that a session working on the scanner reads the scanner's spec rather than 2,000 lines of everything.
-That is its entire value, so it is worth doing **before** the fan-out, not after. It is mechanical:
-§5–§6 → `domain.md`, §7 → `allocation.md`, §9 → `import.md`, §10 → `tickets.md`, §11 → `email.md`,
-§12 → `checkin.md`, §14 → `admin.md`, §15 → `surfaces.md`, §16–§17 → `platform.md`, §8 and §13 →
-`v2.md`, §19 → `decisions.md`, with §1–§4 and the index in `spec/README.md`. Section numbers are
-referenced from everywhere in this repo, so **keep them** inside the split files.
+**The spec split was not a module either, and is done.** `spec.md` is now `spec/` — one file per
+module above — so that a session working on the scanner reads the scanner's spec rather than 2,000
+lines of everything. `spec/README.md` carries the index and the section-to-file map. Section numbers
+are unchanged, so §7.3 is still §7.3; only the filename in front of it moved.

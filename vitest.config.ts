@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-// The session-start hook brings up the local Postgres (spec.md §16.4) but
+// The session-start hook brings up the local Postgres (spec/platform.md §16.4) but
 // cannot export into the shell that later runs `pnpm test`, so a fresh session
 // would otherwise fail on an unset DATABASE_URL rather than on a real problem.
 // CI sets both URLs explicitly, so this fallback only ever applies locally.

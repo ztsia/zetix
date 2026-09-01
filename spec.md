@@ -1318,12 +1318,24 @@ A mobile web app at `/scan` for `OPERATOR` and `ADMIN`.
 is no email in the operator's world: the synthetic address is an implementation detail they never see
 or type.
 
-Behind the form this is Supabase Auth against a synthetic address (`<slug>@operators.local`) with the
+Behind the form this is Supabase Auth against a synthetic address (`<slug>@operators.invalid`) with the
 code as the password, so session handling, password hashing, refresh, revocation and rate limiting all
-come from the platform. The alternative — a bare id/password pair of our own — means hand-writing all
-five, on the surface that guards every attendee's name and email, for a UI the operator cannot tell
-apart. Not worth it. Create these users through the Supabase admin API with email confirmation
-pre-set, or they will sit unconfirmed and unable to sign in.
+come from the platform. `.invalid` is reserved by RFC 2606 for names guaranteed never to resolve, which
+is what this is: an identifier shaped like an email because Supabase's password provider is keyed on
+one. Nothing is ever sent to it, and the operator never sees or types it.
+
+Creating an operator is one call:
+
+```ts
+await supabaseAdmin.auth.admin.createUser({
+  email: `${slug}@operators.invalid`,
+  password: code,
+  email_confirm: true,   // synthetic address; no confirmation mail can ever arrive
+});
+```
+
+`email_confirm: true` is the whole of the "synthetic address" overhead. Omit it and the operator sits
+unconfirmed and cannot sign in.
 
 The session persists on the device, so an usher signs in once during setup rather than at the door.
 
@@ -1585,8 +1597,32 @@ neither is correct by default on a new project:
   before the first deploy and keep it off.
 - **Email confirmation stays on**, which is why operator users must be created
   through the Supabase admin API with `email_confirm: true`. Their addresses are
-  synthetic (`<slug>@operators.local`) and can never receive a confirmation
+  synthetic (`<slug>@operators.invalid`) and can never receive a confirmation
   mail, so an operator created any other way can never sign in (§12.1).
+
+#### Why not anonymous sign-in, or our own id/password pair
+
+Both look simpler than a synthetic address and both cost more.
+
+**Supabase anonymous sign-in** issues a session without authenticating anyone — `signInAnonymously()`
+succeeds for any caller. The secret code would therefore have to be checked by *us*: our hashing, our
+comparison, our rate limiting, our lockout, and finally our code assigning `role = 'OPERATOR'`. A bug
+anywhere in that path is privilege escalation onto the full attendee roster. It also requires anonymous
+sign-in enabled project-wide, so anyone holding the publishable key — which ships in the browser
+bundle — can mint auth rows without limit.
+
+**A bare id/password pair of our own** means hand-writing password hashing, session issuance, refresh,
+revocation and lockout, on the one surface guarding every attendee's name and email, for a login screen
+the operator cannot tell apart from this one.
+
+The property worth keeping is the split: **Supabase decides authentication, we decide only
+authorisation.** A synthetic email is what buys it, and it costs one line to construct and one field to
+create.
+
+**Disabling email confirmation project-wide changes nothing here**, because public sign-ups are off
+(above). Client-side `signUp()` is blocked, so operators are created through the admin API either way —
+and that is where `email_confirm: true` lives. Leaving confirmation on costs one field and means a
+future sign-up misconfiguration cannot immediately mint usable accounts.
 
 #### Provisioning operators
 
@@ -1906,6 +1942,7 @@ System decisions only. Concert-specific choices and their deadlines are in `cont
 | 18 | Configuration | No operational value has a code default. Concert data lives in `context.md` and is entered through the admin UI (§2.1, §6). |
 | 19 | Admin accounts | **One shared `ADMIN` account** unlocked by a single secret code. No admin user management. Costs audit attribution, which is accepted; the schema still supports individual admins if that changes (§14.3). |
 | 20 | Operator accounts | **Multi-account, provisioned by the admin, scoped to assigned shows** via `operator_show_assignments`. Enforced in the handler and again by RLS — the manifest endpoint is the boundary that matters, since the manifest is the attendee roster (§12.3). |
+| 20a | Operator credentials | Supabase Auth password sign-in against a synthetic `<slug>@operators.invalid` address. **Not** anonymous sign-in and not a hand-rolled id/password pair — both move the credential check into our code, which is the thing the platform is there to do (§12.1). |
 | 21 | Capacity model | **One number per show** plus per-segment slices. No soft threshold, no `held_seats` column — held seats are simply seats no segment holds (§5.1, §7.2). |
 | 22 | Email addressing | Every message is addressed to a **registration**, never a seat. `email_outbox.registration_id` is not null and is the dedup key; a successful send stamps every attendee whose PDF it carried (§11.4). |
 | 23 | Review before send | Outbox rows are rendered into `DRAFT` and edited by a human — per template or per message — before anything is queued. The dispatcher sends stored content verbatim (§11.5). |

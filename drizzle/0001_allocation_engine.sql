@@ -459,9 +459,11 @@ begin
     perform assert_base_entitlement_fits(v_segment_id);
   end loop;
 
-  -- `capacity` and `segment.capacity` resolve through this level too.
-  perform assert_segments_fit_hall(s.id)
-     from shows s where s.concert_id = new.id and s.deleted_at is null;
+  -- `capacity` and `segment.capacity` resolve through this level too, so a
+  -- concert-level edit can shrink a segment below its confirmed count.
+  for v_segment_id in select id from shows where concert_id = new.id and deleted_at is null loop
+    perform assert_show_configuration(v_segment_id);
+  end loop;
   return null;
 end;
 $$;--> statement-breakpoint
@@ -481,30 +483,6 @@ create constraint trigger concerts_entitlement_guard
 -- Both also re-check the hall arithmetic, because `capacity` and
 -- `segment.capacity` resolve through the same levels: lowering the hall through
 -- `defaults` would otherwise leave the segments overflowing it.
-create or replace function tg_show_defaults_guard() returns trigger
-language plpgsql as $$
-declare
-  v_segment_id bigint;
-begin
-  for v_segment_id in
-    select g.id from show_segments g
-     where g.show_id = new.id
-       and g.audience_mode = 'PLAYER_INVITED'
-       and g.deleted_at is null
-  loop
-    perform assert_base_entitlement_fits(v_segment_id);
-  end loop;
-  perform assert_segments_fit_hall(new.id);
-  return null;
-end;
-$$;--> statement-breakpoint
-
-drop trigger if exists shows_defaults_guard on shows;--> statement-breakpoint
-create constraint trigger shows_defaults_guard
-  after update of defaults on shows
-  deferrable initially deferred
-  for each row execute function tg_show_defaults_guard();--> statement-breakpoint
-
 -- `system_settings` is the root, so a change there reaches every segment that
 -- does not override it. There are a few dozen segments in a concert's life;
 -- checking all of them on a settings edit costs nothing and closes the last
@@ -512,22 +490,14 @@ create constraint trigger shows_defaults_guard
 create or replace function tg_system_settings_guard() returns trigger
 language plpgsql as $$
 declare
-  v_segment_id bigint;
-  v_show_id    bigint;
+  v_show_id bigint;
 begin
   if new.key not in ('allocation.base_quota', 'segment.capacity', 'capacity') then
     return null;
   end if;
 
-  for v_segment_id in
-    select g.id from show_segments g
-     where g.audience_mode = 'PLAYER_INVITED' and g.deleted_at is null
-  loop
-    perform assert_base_entitlement_fits(v_segment_id);
-  end loop;
-
   for v_show_id in select id from shows where deleted_at is null loop
-    perform assert_segments_fit_hall(v_show_id);
+    perform assert_show_configuration(v_show_id);
   end loop;
   return null;
 end;
@@ -635,9 +605,68 @@ begin
 end;
 $$;--> statement-breakpoint
 
+-- Everything a configuration change can invalidate, in one place.
+--
+-- The guards below were added one route at a time as each was found, and each
+-- time the *next* route was missed: the segment's own column was guarded while
+-- the same value arriving through `shows.defaults`, `concerts.defaults` or
+-- `system_settings` was not. Resolving a value walks four levels, so every
+-- check on a resolved value has four doors. This function is the one door.
+create or replace function assert_show_configuration(p_show_id bigint) returns void
+language plpgsql as $$
+declare
+  v_segment_id bigint;
+begin
+  for v_segment_id in
+    select id from show_segments where show_id = p_show_id and deleted_at is null
+  loop
+    perform assert_capacity_covers_confirmed(v_segment_id);
+    perform assert_base_entitlement_fits(v_segment_id);
+  end loop;
+  perform assert_segments_fit_hall(p_show_id);
+end;
+$$;--> statement-breakpoint
+
+-- §7.7 refuses to drop a segment below its confirmed count. Deleting it
+-- outright is that same edit taken to zero, and it is worse: the hall
+-- arithmetic stops counting a deleted segment's capacity while its attendees
+-- still occupy seats, so another segment can be raised into space that is not
+-- there. Same for a show.
+create or replace function assert_nothing_confirmed_here(
+  p_segment_id bigint default null,
+  p_show_id    bigint default null
+) returns void language plpgsql as $$
+declare
+  v_confirmed int;
+  v_what      text;
+begin
+  if coalesce(current_setting('zetix.granting', true), '') = 'on' then return; end if;
+
+  select count(*)::int into v_confirmed
+    from attendees a
+    join registrations r on r.id = a.registration_id
+   where (p_segment_id is null or a.segment_id = p_segment_id)
+     and (p_show_id is null or a.show_id = p_show_id)
+     and a.status = 'CONFIRMED'
+     and a.deleted_at is null
+     and r.deleted_at is null
+     and r.status <> 'CANCELLED';
+
+  if v_confirmed > 0 then
+    v_what := case when p_segment_id is not null then 'segment' else 'show' end;
+    raise exception 'This % still holds % confirmed seats, so it cannot be deleted.',
+      v_what, v_confirmed
+      using hint = 'Cancel or move those registrations first — deleting it would leave them holding tickets to nothing.';
+  end if;
+end;
+$$;--> statement-breakpoint
+
 create or replace function tg_segment_capacity() returns trigger
 language plpgsql as $$
 begin
+  if new.deleted_at is not null and old.deleted_at is null then
+    perform assert_nothing_confirmed_here(p_segment_id => new.id);
+  end if;
   perform assert_capacity_covers_confirmed(new.id);
   perform assert_segments_fit_hall(new.show_id);
   return null;
@@ -655,14 +684,21 @@ create constraint trigger show_segments_capacity_guard
 create or replace function tg_show_capacity() returns trigger
 language plpgsql as $$
 begin
-  perform assert_segments_fit_hall(new.id);
+  if tg_op = 'UPDATE' and new.deleted_at is not null and old.deleted_at is null then
+    perform assert_nothing_confirmed_here(p_show_id => new.id);
+  end if;
+  perform assert_show_configuration(new.id);
   return null;
 end;
 $$;--> statement-breakpoint
 
 drop trigger if exists shows_capacity_guard on shows;--> statement-breakpoint
+-- `concert_id` is in the list because moving a show to another concert changes
+-- **which players are entitled** in its player segments, and `deleted_at`
+-- because deleting a show holding confirmed seats is the same contradiction as
+-- shrinking one.
 create constraint trigger shows_capacity_guard
-  after insert or update of capacity on shows
+  after insert or update of capacity, defaults, concert_id, deleted_at on shows
   deferrable initially deferred
   for each row execute function tg_show_capacity();--> statement-breakpoint
 

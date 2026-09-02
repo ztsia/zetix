@@ -93,6 +93,21 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
     ).rejects.toThrow(/101 active players/);
   });
 
+  it('route 4 — blocks raising the quota through the cascade, not just on the segment', async () => {
+    // `concerts.defaults` supplies `allocation.base_quota` to every segment that
+    // does not override it, so editing it *is* editing the quota up — at a
+    // different level. Without this the cascade is a silent fourth route to an
+    // oversubscribed segment, which is the exact failure §7.4 describes.
+    await sql`update show_segments set base_quota = null where id = ${segmentId}::bigint`;
+
+    await expect(
+      sql`
+        update concerts set defaults = ${json({ 'allocation.base_quota': 5 })}::jsonb
+         where id = ${concertId}::bigint
+      `,
+    ).rejects.toThrow(/82 active players × 5 base = 410 seats, but the segment holds 200/);
+  });
+
   it('allows the two honest levers — lowering the quota and raising capacity', async () => {
     await sql`update show_segments set base_quota = 1 where id = ${segmentId}::bigint`;
     await sql`update show_segments set capacity = 100 where id = ${segmentId}::bigint`;

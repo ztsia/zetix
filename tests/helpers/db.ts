@@ -18,6 +18,21 @@ if (!url) throw new Error('DATABASE_URL is not set — run `pnpm db:local`');
 export const sql = postgres(url, { prepare: false, max: 4 });
 export const db = drizzle(sql);
 
+/**
+ * An independent connection, for tests that need two transactions open at once.
+ *
+ * `claim_seats()` takes a row lock, and a lock is only observable from a
+ * *different* session — a second query on the same connection would simply join
+ * the same transaction and see nothing. The caller must close it.
+ */
+export function newConnection(options: Record<string, string> = {}) {
+  // Connection-level settings rather than a `set` statement: a separate `set`
+  // is a second round trip that can land on a different backend if the pool
+  // ever grows, and a lock-wait test whose timeout silently failed to apply
+  // hangs instead of failing.
+  return postgres(url!, { prepare: false, max: 1, connection: options });
+}
+
 let migrated = false;
 
 /** Applies every migration once per process, then empties the tables. */

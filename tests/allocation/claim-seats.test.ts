@@ -258,22 +258,19 @@ describe('claim_seats() — extras, spec/allocation.md §7.4', () => {
 });
 
 describe('claim_seats() — the hall ceiling, spec/allocation.md §7.8', () => {
-  it('cannot be exceeded by two segments claiming against the same show', async () => {
+  it('caps a second segment at what the hall has left, not at what its own slice shows', async () => {
     await resetDb();
     const concertId = await createConcert();
-    // The hall holds 10; the two segments together are sized for 16. Each stays
-    // inside its own slice, and only the show-level check stops the hall going
-    // over — which is why the lock is taken on the show, not the segment.
     const showId = await createShow(concertId, 10);
     const a = await createSegment(showId, {
       audienceMode: 'PUBLIC',
-      capacity: 8,
+      capacity: 6,
       extrasPolicy: 'AUTO_FCFS',
       allowPartialGrant: true,
     });
     const b = await createSegment(showId, {
       audienceMode: 'PLAYER_INVITED',
-      capacity: 8,
+      capacity: 4,
       extrasPolicy: 'AUTO_FCFS',
       allowPartialGrant: true,
     });
@@ -281,13 +278,18 @@ describe('claim_seats() — the hall ceiling, spec/allocation.md §7.8', () => {
     const regA = await createRegistration({ showId, segmentId: a });
     const regB = await createRegistration({ showId, segmentId: b });
 
-    const first = await claim(a, regA, seats(8, 'EXTRA'));
-    const second = await claim(b, regB, seats(8, 'EXTRA'));
+    // Segment A fills its own slice, and then an admin deliberately seats three
+    // more with the §7.6 override. The hall now holds 9 of 10 — reached the only
+    // way production can reach it, because the segments themselves are not
+    // allowed to total more than the hall.
+    expect((await claim(a, regA, seats(6, 'EXTRA'))).granted_extra).toBe(6);
+    const overrideReg = await createRegistration({ showId, segmentId: a });
+    expect((await claim(a, overrideReg, seats(3, 'EXTRA'), true)).granted_extra).toBe(3);
 
-    expect(first.granted_extra).toBe(8);
-    // Only 2 seats of hall remain, however much room segment B still shows.
-    expect(second.granted_extra).toBe(2);
-    expect(second.waitlisted).toBe(6);
+    // Segment B still shows 4 free seats of its own. The hall has 1.
+    const outcome = await claim(b, regB, seats(4, 'EXTRA'));
+    expect(outcome.granted_extra).toBe(1);
+    expect(outcome.waitlisted).toBe(3);
 
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from attendees

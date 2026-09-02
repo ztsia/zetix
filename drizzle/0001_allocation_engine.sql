@@ -51,6 +51,35 @@ end;
 $$;--> statement-breakpoint
 
 --------------------------------------------------------------------------------
+-- Make the attendee composite FK deferrable
+--------------------------------------------------------------------------------
+
+-- spec/domain.md §5.2: "Moving a registration between segments (§7.6) updates
+-- parent and children in one transaction; the constraint is what stops it being
+-- done by half."
+--
+-- With an immediate constraint that move is not merely awkward, it is
+-- impossible: updating `attendees` first points them at a registration that is
+-- still in the old segment, and updating `registrations` first strands the
+-- attendees. There is no ordering that works, and re-creating the attendees is
+-- not an option because `qr_token` is immutable for life (decision 28) — a guest
+-- holding a printed ticket must still get through the door.
+--
+-- Deferring to commit is what §5.2 actually describes: the constraint judges the
+-- transaction's result rather than its intermediate states, so a half-finished
+-- move still fails and a complete one succeeds.
+--
+-- `registrations_segment_fk` stays immediate: a registration moving to another
+-- show changes `show_id` and `segment_id` in the same row, in one statement, so
+-- it never passes through an inconsistent state.
+alter table attendees drop constraint attendees_registration_fk;--> statement-breakpoint
+alter table attendees add constraint attendees_registration_fk
+  foreign key (registration_id, segment_id, show_id)
+  references registrations (id, segment_id, show_id)
+  on delete cascade
+  deferrable initially deferred;--> statement-breakpoint
+
+--------------------------------------------------------------------------------
 -- resolve_setting() — the four-level cascade (spec/README.md §2.2)
 --------------------------------------------------------------------------------
 
@@ -190,11 +219,20 @@ begin
       using hint = 'Set the segment capacity in the admin UI (spec/domain.md §6).';
   end if;
 
+  -- Joined to `registrations` on purpose. §7.2 counts attendees by attendee
+  -- status, but a seat belonging to a cancelled or soft-deleted registration is
+  -- not a booking: §7.9 says cancelling "returns seats to that segment
+  -- immediately", and a party whose registration is gone is not sitting in the
+  -- hall. Counting them would overstate `confirmed` and understate the pool,
+  -- which is the figure §7.5 sizes the FCFS preselection from.
   select count(*)::int into v_confirmed
-    from attendees
-   where segment_id = p_segment_id
-     and status = 'CONFIRMED'
-     and deleted_at is null;
+    from attendees a
+    join registrations r on r.id = a.registration_id
+   where a.segment_id = p_segment_id
+     and a.status = 'CONFIRMED'
+     and a.deleted_at is null
+     and r.deleted_at is null
+     and r.status <> 'CANCELLED';
 
   v_quota := (resolve_setting('allocation.base_quota', p_segment_id)) #>> '{}';
   v_deadline := (resolve_setting('allocation.base_claim_deadline', p_segment_id)) #>> '{}';
@@ -218,7 +256,9 @@ begin
               and r.player_id = p.id
               and a.allocation_type = 'BASE'
               and a.status = 'CONFIRMED'
-              and a.deleted_at is null) as claimed
+              and a.deleted_at is null
+              and r.deleted_at is null
+              and r.status <> 'CANCELLED') as claimed
         from players p
         left join player_allocations pa
                on pa.player_id = p.id and pa.segment_id = p_segment_id
@@ -298,17 +338,32 @@ begin
   v_needed := v_players * v_quota;
   if v_needed <= v_capacity then return; end if;
 
-  -- The error names the numbers and the shortfall, and the three ways out.
-  raise exception
-    '% active players × % base = % seats, but the segment holds %. Reduce the quota to %, raise capacity to %, or deactivate % players.',
-    v_players, v_quota, v_needed, v_capacity,
-    v_capacity / v_players,
-    v_needed,
-    v_players - (v_capacity / v_quota);
+  -- The error names the numbers and the shortfall, and the ways out. A quota of
+  -- zero is not one of them — it entitles nobody to anything — so that lever is
+  -- offered only when it leaves at least one seat per player.
+  raise exception '% active player% × % base = % seats, but the segment holds %. %',
+    v_players,
+    case when v_players = 1 then '' else 's' end,
+    v_quota, v_needed, v_capacity,
+    case when v_capacity / v_players >= 1
+      then format('Reduce the quota to %s, raise capacity to %s, or deactivate %s players.',
+                  v_capacity / v_players, v_needed, v_players - (v_capacity / v_quota))
+      else format('Raise capacity to %s, or deactivate %s players.',
+                  v_needed, v_players - (v_capacity / v_quota))
+    end;
 end;
 $$;--> statement-breakpoint
 
--- Route 1 and 2: the segment's own capacity or quota changed.
+-- All of these are DEFERRABLE INITIALLY DEFERRED constraint triggers, checked
+-- once at commit rather than after each statement. That is not a performance
+-- choice, it is a correctness one: §7.7's worked example moves capacity between
+-- two segments ("player 80, public 320"), and an immediate trigger would reject
+-- the intermediate state after the first of the two UPDATEs even though the
+-- edit as a whole is valid. The same applies to lowering a quota and a capacity
+-- together. Callers make such an edit in one transaction; the guard judges the
+-- result, not the keystrokes.
+
+-- Routes 1 and 2: the segment's own capacity or quota changed.
 create or replace function tg_segment_entitlement() returns trigger
 language plpgsql as $$
 begin
@@ -317,9 +372,10 @@ begin
 end;
 $$;--> statement-breakpoint
 
-create or replace trigger show_segments_entitlement_guard
-  after insert or update of capacity, base_quota, audience_mode, deleted_at
-  on show_segments
+drop trigger if exists show_segments_entitlement_guard on show_segments;--> statement-breakpoint
+create constraint trigger show_segments_entitlement_guard
+  after insert or update on show_segments
+  deferrable initially deferred
   for each row execute function tg_segment_entitlement();--> statement-breakpoint
 
 -- Route 3: a player was added or reactivated. Every player-invited segment in
@@ -345,10 +401,145 @@ begin
 end;
 $$;--> statement-breakpoint
 
-create or replace trigger players_entitlement_guard
-  after insert or update of is_active, concert_id, deleted_at
-  on players
+drop trigger if exists players_entitlement_guard on players;--> statement-breakpoint
+create constraint trigger players_entitlement_guard
+  after insert or update on players
+  deferrable initially deferred
   for each row execute function tg_player_entitlement();--> statement-breakpoint
+
+-- Route 4: the quota was raised through the **cascade** rather than on the
+-- segment. `concerts.defaults` can supply `allocation.base_quota` for every
+-- segment that does not override it, so editing it is editing the quota up —
+-- just at a different level. Without this the cascade is a silent fourth route
+-- to an oversubscribed segment, which is exactly what §7.4 forbids.
+create or replace function tg_concert_entitlement() returns trigger
+language plpgsql as $$
+declare
+  v_segment_id bigint;
+begin
+  for v_segment_id in
+    select g.id
+      from show_segments g
+      join shows s on s.id = g.show_id
+     where s.concert_id = new.id
+       and g.audience_mode = 'PLAYER_INVITED'
+       and g.deleted_at is null
+  loop
+    perform assert_base_entitlement_fits(v_segment_id);
+  end loop;
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists concerts_entitlement_guard on concerts;--> statement-breakpoint
+create constraint trigger concerts_entitlement_guard
+  after update of defaults on concerts
+  deferrable initially deferred
+  for each row execute function tg_concert_entitlement();--> statement-breakpoint
+
+--------------------------------------------------------------------------------
+-- Segments must fit the hall, and must not shed seats people already hold
+--------------------------------------------------------------------------------
+
+-- Two invariants from spec/domain.md §5.1 and spec/allocation.md §7.7:
+--
+--   Σ segment.capacity <= show.capacity
+--   segment.capacity   >= that segment's confirmed count
+--
+-- Both are about *configuration*, not about granting, and neither is the
+-- override in §7.6 — that one lets an admin seat more people than the hall
+-- holds, deliberately and with a typed confirmation, and `claim_seats()` still
+-- enforces it at grant time. This is the different question of whether the
+-- numbers an admin typed describe a possible evening.
+--
+-- It matters beyond tidiness: `segment_pool()` sizes the extras pool from
+-- `segment.capacity`, and §7.5 draws the FCFS preselection line from that pool.
+-- A segment claiming 999 seats of a 400-seat hall does not oversell — the hall
+-- ceiling still holds — but it does invite an admin to grant 989 extras that
+-- can never be seated.
+create or replace function assert_segments_fit_hall(p_show_id bigint) returns void
+language plpgsql as $$
+declare
+  v_hall      int;
+  v_allocated int;
+  v_show      shows%rowtype;
+begin
+  select * into v_show from shows where id = p_show_id;
+  if not found or v_show.deleted_at is not null then return; end if;
+
+  v_hall := (resolve_setting('capacity', null, p_show_id)) #>> '{}';
+  -- No capacity entered yet is not a contradiction, it is an unfinished form.
+  if v_hall is null then return; end if;
+
+  select coalesce(sum(((resolve_setting('segment.capacity', g.id)) #>> '{}')::int), 0)::int
+    into v_allocated
+    from show_segments g
+   where g.show_id = p_show_id
+     and g.deleted_at is null;
+
+  if v_allocated > v_hall then
+    raise exception
+      'The segments of this show total % seats, but the hall holds %. Reduce a segment by % seats, or raise the hall capacity to %.',
+      v_allocated, v_hall, v_allocated - v_hall, v_allocated;
+  end if;
+end;
+$$;--> statement-breakpoint
+
+-- "refuses to drop a segment below its confirmed count" (§7.7). Seats already
+-- given out cannot be taken back by editing a number: those people hold tickets.
+create or replace function assert_capacity_covers_confirmed(p_segment_id bigint) returns void
+language plpgsql as $$
+declare
+  v_capacity  int;
+  v_confirmed int;
+  v_segment   show_segments%rowtype;
+begin
+  select * into v_segment from show_segments where id = p_segment_id;
+  if not found or v_segment.deleted_at is not null then return; end if;
+
+  v_capacity := (resolve_setting('segment.capacity', p_segment_id)) #>> '{}';
+  if v_capacity is null then return; end if;
+
+  v_confirmed := (segment_pool(p_segment_id) ->> 'confirmed')::int;
+
+  if v_capacity < v_confirmed then
+    raise exception
+      'Segment "%" already has % confirmed seats, so its capacity cannot drop to %. Cancel % registrations first, or move capacity from another segment.',
+      v_segment.name, v_confirmed, v_capacity, v_confirmed - v_capacity;
+  end if;
+end;
+$$;--> statement-breakpoint
+
+create or replace function tg_segment_capacity() returns trigger
+language plpgsql as $$
+begin
+  perform assert_capacity_covers_confirmed(new.id);
+  perform assert_segments_fit_hall(new.show_id);
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists show_segments_capacity_guard on show_segments;--> statement-breakpoint
+create constraint trigger show_segments_capacity_guard
+  after insert or update on show_segments
+  deferrable initially deferred
+  for each row execute function tg_segment_capacity();--> statement-breakpoint
+
+-- Lowering the hall itself is the same contradiction approached from the other
+-- side.
+create or replace function tg_show_capacity() returns trigger
+language plpgsql as $$
+begin
+  perform assert_segments_fit_hall(new.id);
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists shows_capacity_guard on shows;--> statement-breakpoint
+create constraint trigger shows_capacity_guard
+  after insert or update of capacity on shows
+  deferrable initially deferred
+  for each row execute function tg_show_capacity();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
 -- claim_seats() — spec/allocation.md §7.8
@@ -433,10 +624,13 @@ begin
   end if;
 
   select count(*)::int into v_hall_confirmed
-    from attendees
-   where show_id = v_segment.show_id
-     and status = 'CONFIRMED'
-     and deleted_at is null;
+    from attendees a
+    join registrations r on r.id = a.registration_id
+   where a.show_id = v_segment.show_id
+     and a.status = 'CONFIRMED'
+     and a.deleted_at is null
+     and r.deleted_at is null
+     and r.status <> 'CANCELLED';
 
   v_hall_headroom := greatest(0, v_hall_capacity - v_hall_confirmed);
 
@@ -462,7 +656,9 @@ begin
          and r.player_id = v_registration.player_id
          and a.allocation_type = 'BASE'
          and a.status = 'CONFIRMED'
-         and a.deleted_at is null;
+         and a.deleted_at is null
+         and r.deleted_at is null
+         and r.status <> 'CANCELLED';
 
       v_base_room := greatest(0, v_quota - v_base_claimed);
     end if;

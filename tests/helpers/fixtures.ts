@@ -13,6 +13,12 @@ import { sql } from './db';
  * never rely on driver type inference. Application code is unaffected: Drizzle
  * serialises its own timestamp columns.
  */
+/**
+ * ids come back from `postgres.js` as **strings**, because a Postgres `bigint`
+ * does not fit a JS number in general. Ours always will at this scale, so every
+ * helper coerces on the way out and the declared `Promise<number>` is true —
+ * rather than every caller having to remember that `id === 3` is false.
+ */
 const ts = (value: Date | string | null | undefined): string | null =>
   value == null ? null : typeof value === 'string' ? value : value.toISOString();
 
@@ -39,7 +45,7 @@ export async function createConcert(name = 'Test Concert'): Promise<number> {
     values (${name}, ${name.toLowerCase().replace(/\s+/g, '-')}, 'ACTIVE', 'Asia/Singapore')
     returning id
   `;
-  return row.id;
+  return Number(row.id);
 }
 
 export async function createShow(concertId: number, capacity: number | null): Promise<number> {
@@ -48,7 +54,7 @@ export async function createShow(concertId: number, capacity: number | null): Pr
     values (${concertId}, 'Test Show', 'OPEN', ${capacity}, now() + interval '30 days')
     returning id
   `;
-  return row.id;
+  return Number(row.id);
 }
 
 export async function createSegment(
@@ -79,7 +85,7 @@ export async function createSegment(
     )
     returning id
   `;
-  return row.id;
+  return Number(row.id);
 }
 
 /** N active players on one concert. Players are concert-scoped, not segment-scoped. */
@@ -100,7 +106,7 @@ export async function createPlayers(concertId: number, count: number): Promise<n
       )
       returning id
     `;
-    ids.push(row.id);
+    ids.push(Number(row.id));
   }
   return ids;
 }
@@ -124,7 +130,7 @@ export async function createRegistration(opts: {
     )
     returning id
   `;
-  return row.id;
+  return Number(row.id);
 }
 
 /**

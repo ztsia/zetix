@@ -102,7 +102,7 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
 
     await expect(
       sql`
-        update concerts set defaults = ${json({ 'allocation.base_quota': 5 })}::jsonb
+        update concerts set defaults = ${json({ 'allocation.base_quota': 5 })}::text::jsonb
          where id = ${concertId}::bigint
       `,
     ).rejects.toThrow(/82 active players × 5 base = 410 seats, but the segment holds 200/);
@@ -192,7 +192,7 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
       baseQuota: null,
     });
     await sql`
-      update concerts set defaults = ${json({ 'allocation.base_quota': 3 })}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 3 })}::text::jsonb
        where id = ${concertId}::bigint
     `;
 

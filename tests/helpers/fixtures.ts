@@ -23,9 +23,15 @@ const ts = (value: Date | string | null | undefined): string | null =>
   value == null ? null : typeof value === 'string' ? value : value.toISOString();
 
 /**
- * jsonb goes over the wire as a stringified value cast with `::jsonb`, not via
- * `sql.json()` — same Vitest realm problem as `ts()` above, which surfaces as
- * "Received an instance of Array" or "Received type number".
+ * jsonb goes over the wire as a stringified value cast with `::text::jsonb`,
+ * not via `sql.json()` — same Vitest realm problem as `ts()` above, which
+ * surfaces as "Received an instance of Array" or "Received type number".
+ *
+ * The cast goes through `text` deliberately, matching `scripts/seed-settings.ts`.
+ * A bare `::jsonb` makes `postgres.js` JSON-encode the already-serialised string
+ * and store it one level too deep. Under Vitest that happens to come out right,
+ * which is precisely the trap: a fixture that writes correctly while the
+ * shipping script writes a double-encoded blob tests nothing about production.
  */
 export const json = (value: unknown): string => JSON.stringify(value);
 
@@ -140,6 +146,10 @@ export async function createRegistration(opts: {
  * asserting that granting works. Production has no such path: every grant,
  * including a manual admin one, routes through `claim_seats()`
  * (spec/allocation.md §7.6).
+ *
+ * The database enforces that, so this has to opt out explicitly per
+ * transaction. The opt-out is deliberately noisy: if you find yourself reaching
+ * for it outside a fixture, the thing you want is `claimSeats()`.
  */
 export async function seedAttendees(opts: {
   registrationId: number;
@@ -150,7 +160,9 @@ export async function seedAttendees(opts: {
   status?: 'CONFIRMED' | 'PENDING_REVIEW' | 'WAITLIST' | 'CANCELLED';
 }): Promise<void> {
   for (let i = 0; i < opts.count; i++) {
-    await sql`
+    await sql.begin(async (tx) => {
+      await tx`select set_config('zetix.granting', 'on', true)`;
+      await tx`
       insert into attendees (
         registration_id, show_id, segment_id, full_name, name_source,
         allocation_type, status
@@ -160,12 +172,30 @@ export async function seedAttendees(opts: {
         ${opts.status ?? 'CONFIRMED'}
       )
     `;
+    });
   }
+}
+
+/**
+ * Runs `fn` in a transaction that is allowed to write `attendees` directly.
+ *
+ * The database refuses direct inserts so that every grant goes through
+ * `claim_seats()` and the §7.2 counters stay true (spec/allocation.md §7.6).
+ * Tests that arrange a starting state, or that probe a constraint the trigger
+ * would otherwise mask, opt out here — visibly, one transaction at a time.
+ */
+export function withDirectAttendeeWrites<T>(
+  fn: (tx: typeof sql) => Promise<T>,
+): Promise<T> {
+  return sql.begin(async (tx) => {
+    await tx`select set_config('zetix.granting', 'on', true)`;
+    return fn(tx as unknown as typeof sql);
+  }) as Promise<T>;
 }
 
 export async function setSystemSetting(key: string, value: unknown): Promise<void> {
   await sql`
-    insert into system_settings (key, value) values (${key}, ${json(value)}::jsonb)
+    insert into system_settings (key, value) values (${key}, ${json(value)}::text::jsonb)
     on conflict (key) do update set value = excluded.value
   `;
 }

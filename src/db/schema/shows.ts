@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -48,7 +49,20 @@ export const shows = pgTable(
      */
     capacity: integer('capacity'),
 
-    portalUnlockMode: portalUnlockMode('portal_unlock_mode'),
+    /**
+   * Show level of the cascade, mirroring `concerts.defaults`
+   * (spec/README.md §2.2).
+   *
+   * §2.2 promises every tunable is nullable "at the concert, show and segment
+   * levels", but §5.1 gives `shows` typed columns only for `capacity`,
+   * `portal_unlock_mode` and `ticket_template_id` — so a show could not carry
+   * one base-claim deadline for both its segments, which is the obvious way to
+   * configure a mixed-mode night. One jsonb bag closes that without a column
+   * per tunable.
+   */
+  defaults: jsonb('defaults'),
+
+  portalUnlockMode: portalUnlockMode('portal_unlock_mode'),
     status: showStatus('status').notNull(),
 
     /**

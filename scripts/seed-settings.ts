@@ -16,6 +16,17 @@
  * changed. Use `--force` to reset every key back to its seed.
  *
  *   pnpm tsx scripts/seed-settings.ts [--force]
+ *
+ * **The `::text::jsonb` cast below is load-bearing.** With a bare `::jsonb`,
+ * `postgres.js` infers the parameter type from the cast and JSON-encodes the
+ * string we already serialised, so every value lands one level too deep — a
+ * jsonb *string* rather than a number, boolean or object. Nothing errors:
+ * `keepalive.enabled` becomes the string "true" (still truthy),
+ * `email.max_per_dispatch` becomes "25", and `allocation.extras_policy` becomes
+ * a string that never matches the per-audience branch in `resolve_setting`, so a
+ * player segment silently auto-grants extras that decision 4 says must be held
+ * for review. Casting through `text` first sends it as text and lets Postgres
+ * parse it, which is what we meant.
  */
 import { getSql } from '../src/db/client';
 
@@ -56,13 +67,13 @@ async function main() {
     const result = force
       ? await sql`
           insert into system_settings (key, value)
-          values (${key}, ${JSON.stringify(value)}::jsonb)
+          values (${key}, ${JSON.stringify(value)}::text::jsonb)
           on conflict (key) do update set value = excluded.value
           returning key
         `
       : await sql`
           insert into system_settings (key, value)
-          values (${key}, ${JSON.stringify(value)}::jsonb)
+          values (${key}, ${JSON.stringify(value)}::text::jsonb)
           on conflict (key) do nothing
           returning key
         `;

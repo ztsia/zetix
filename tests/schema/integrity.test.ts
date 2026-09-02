@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
-import { createConcert, createRegistration, createSegment, createShow } from '../helpers/fixtures';
+import {
+  createConcert,
+  createRegistration,
+  createSegment,
+  createShow,
+  withDirectAttendeeWrites,
+} from '../helpers/fixtures';
 
 /**
  * Composite foreign keys — spec/domain.md §5.2, decision 27.
@@ -49,12 +55,14 @@ describe('composite foreign keys refuse drift', () => {
     });
 
     await expect(
-      sql`
-        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
-                               allocation_type, status)
-        values (${registrationId}::bigint, ${showOne}::bigint, ${segmentTwo}::bigint,
-                'Drifted', 'PROVIDED', 'EXTRA', 'CONFIRMED')
-      `,
+      withDirectAttendeeWrites(
+        (tx) => tx`
+          insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                                 allocation_type, status)
+          values (${registrationId}::bigint, ${showOne}::bigint, ${segmentTwo}::bigint,
+                  'Drifted', 'PROVIDED', 'EXTRA', 'CONFIRMED')
+        `,
+      ),
     ).rejects.toThrow(/attendees_registration_fk/);
   });
 
@@ -65,12 +73,14 @@ describe('composite foreign keys refuse drift', () => {
     });
 
     await expect(
-      sql`
-        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
-                               allocation_type, status)
-        values (${registrationId}::bigint, ${showTwo}::bigint, ${segmentOne}::bigint,
-                'Drifted', 'PROVIDED', 'EXTRA', 'CONFIRMED')
-      `,
+      withDirectAttendeeWrites(
+        (tx) => tx`
+          insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                                 allocation_type, status)
+          values (${registrationId}::bigint, ${showTwo}::bigint, ${segmentOne}::bigint,
+                  'Drifted', 'PROVIDED', 'EXTRA', 'CONFIRMED')
+        `,
+      ),
     ).rejects.toThrow(/attendees_registration_fk/);
   });
 
@@ -81,12 +91,14 @@ describe('composite foreign keys refuse drift', () => {
       showId: showOne,
       segmentId: segmentOne,
     });
-    await sql`
-      insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
-                             allocation_type, status)
-      values (${registrationId}::bigint, ${showOne}::bigint, ${segmentOne}::bigint,
-              'Guest', 'PROVIDED', 'EXTRA', 'CONFIRMED')
-    `;
+    await withDirectAttendeeWrites(
+      (tx) => tx`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                               allocation_type, status)
+        values (${registrationId}::bigint, ${showOne}::bigint, ${segmentOne}::bigint,
+                'Guest', 'PROVIDED', 'EXTRA', 'CONFIRMED')
+      `,
+    );
 
     const thirdSegment = await createSegment(showOne, {
       audienceMode: 'PLAYER_INVITED',

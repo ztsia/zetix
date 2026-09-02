@@ -167,6 +167,42 @@ end; $$;
 
 Contention is irrelevant at this scale; correctness is not.
 
+**Callers must run at `READ COMMITTED`.** The row lock serialises callers, but a
+caller inside a `REPEATABLE READ` or `SERIALIZABLE` transaction recomputes the pool from the
+snapshot it took *before* the lock was granted, so it reads stale counts and oversells. Nothing on
+`shows` is ever updated, so Postgres has no write conflict to detect on our behalf and there is no
+error. `claim_seats()` therefore refuses any other isolation level rather than trusting every future
+caller to know. "Read the current state, then act" inside a repeatable-read transaction is a natural
+Server Action shape, which is exactly why this is enforced rather than documented alone.
+
+**The implemented signature extends the sketch above**, additively:
+
+```sql
+claim_seats(p_segment_id bigint, p_registration_id bigint, p_requests jsonb,
+            p_override boolean default false) returns jsonb
+```
+
+- `p_requests` is the party: one object per seat, `{"full_name": …, "email": …,
+  "allocation_type": "BASE"|"EXTRA"|"HELD"|"COMP"}`. Every field is validated; a missing or unknown
+  `allocation_type` is an error rather than a default.
+- `p_override` is the deliberate admin escape hatch of §7.6. It relaxes the **capacity ceilings** —
+  the segment's and the hall's — and nothing else. It does not grant a player more base seats than
+  their quota, because decision 17 is explicit that base entitlement has no opt-out. The caller owns
+  the typed confirmation and the `audit_log` row.
+- The return carries a fifth key, `granted_other`, counting granted `HELD` and `COMP` seats. Those
+  are granted by this function but do not come out of the extras pool, so neither `granted_extra` nor
+  silence would describe them honestly.
+
+**A registration must be live.** Claiming against a `CANCELLED` or soft-deleted registration is
+refused, and the registration row is locked for the duration — cancellation touches `registrations`
+and takes no lock on `shows`, so without it a cancel committing mid-claim leaves `CONFIRMED` seats
+under a dead registration: the pool excludes them and sells them again, while the door reads
+`attendees.status` and sees valid ticket holders.
+
+**Seats are written only by this function.** `attendees` refuses a direct insert, so "manual actions
+still route through `claim_seats()`" (§7.6) is enforced rather than agreed. A fixture or fix-up
+script may opt out per transaction, deliberately and visibly.
+
 ## 7.9 Cancellation
 
 Cancelling sets `status = CANCELLED` and returns seats to that segment immediately. Admin sees "N seats

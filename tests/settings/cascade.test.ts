@@ -55,7 +55,7 @@ describe('resolve_setting() — spec/README.md §2.2', () => {
   it('prefers the segment, which is authoritative', async () => {
     await setSystemSetting('allocation.base_quota', 1);
     await sql`
-      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::text::jsonb
        where id = ${concertId}::bigint
     `;
     await sql`update show_segments set base_quota = 4 where id = ${segmentId}::bigint`;
@@ -66,7 +66,7 @@ describe('resolve_setting() — spec/README.md §2.2', () => {
   it('falls through the segment to the concert when the segment is null', async () => {
     await setSystemSetting('allocation.base_quota', 1);
     await sql`
-      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::text::jsonb
        where id = ${concertId}::bigint
     `;
 
@@ -76,6 +76,29 @@ describe('resolve_setting() — spec/README.md §2.2', () => {
   it('falls all the way through to system_settings', async () => {
     await setSystemSetting('allocation.base_quota', 1);
     expect(await resolve('allocation.base_quota', { segmentId, showId, concertId })).toBe(1);
+  });
+
+  it('reads a show-level default between the segment and the concert', async () => {
+    // spec/README.md §2.2 promises every tunable is nullable "at the concert,
+    // show and segment levels". §5.1 gives `shows` typed columns for only three
+    // keys, so `shows.defaults` carries the rest — otherwise a show could not
+    // hold one base-claim deadline for both of its segments, which is the
+    // obvious way to configure a mixed-mode night.
+    await setSystemSetting('allocation.base_quota', 1);
+    await sql`
+      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::text::jsonb
+       where id = ${concertId}::bigint
+    `;
+    await sql`
+      update shows set defaults = ${json({ 'allocation.base_quota': 6 })}::text::jsonb
+       where id = ${showId}::bigint
+    `;
+
+    expect(await resolve('allocation.base_quota', { segmentId, showId, concertId })).toBe(6);
+
+    // And the segment still wins over it.
+    await sql`update show_segments set base_quota = 4 where id = ${segmentId}::bigint`;
+    expect(await resolve('allocation.base_quota', { segmentId, showId, concertId })).toBe(4);
   });
 
   it('resolves the hall capacity at show level', async () => {

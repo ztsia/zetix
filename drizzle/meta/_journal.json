@@ -15,6 +15,13 @@
       "when": 1788340731780,
       "tag": "0001_allocation_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788347909014,
+      "tag": "0002_foamy_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

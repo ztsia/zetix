@@ -143,6 +143,13 @@ begin
       else null
     end;
     if v_value is not null then return v_value; end if;
+
+    -- The show's own `defaults` bag, so a show can carry one deadline or quota
+    -- for all of its segments. Without this the walk jumps straight from the
+    -- segment to the concert, and §2.2's "nullable at the concert, show and
+    -- segment levels" is only true for the three keys that have typed columns.
+    v_value := v_show.defaults -> p_key;
+    if v_value is not null and jsonb_typeof(v_value) <> 'null' then return v_value; end if;
   end if;
 
   -- Level 3: the concert — its typed columns first, then its `defaults` bag,
@@ -584,6 +591,36 @@ create constraint trigger shows_capacity_guard
   for each row execute function tg_show_capacity();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
+-- Seats are written by claim_seats(), not by hand
+--------------------------------------------------------------------------------
+
+-- CLAUDE.md and §7.6: "Manual actions still route through `claim_seats()` so
+-- counters stay consistent." Every other invariant on this branch was pushed
+-- into Postgres precisely so no route can bypass it; this one was convention
+-- alone, and eight downstream sessions write to this table.
+--
+-- `claim_seats()` sets a transaction-local flag, and this refuses inserts made
+-- without it. It is a wall against forgetting, not against determination: a
+-- fix-up script may set the flag deliberately, and the test fixtures do so when
+-- arranging a starting state. That is the point — a bypass becomes explicit and
+-- greppable instead of silent.
+create or replace function tg_attendee_via_claim_seats() returns trigger
+language plpgsql as $$
+begin
+  if coalesce(current_setting('zetix.granting', true), '') <> 'on' then
+    raise exception 'attendees are written by claim_seats(), not inserted directly'
+      using hint = 'Call claim_seats() so the §7.2 counters stay true. To arrange fixture state deliberately, set_config(''zetix.granting'', ''on'', true) first.';
+  end if;
+  return new;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists attendees_via_claim_seats on attendees;--> statement-breakpoint
+create trigger attendees_via_claim_seats
+  before insert on attendees
+  for each row execute function tg_attendee_via_claim_seats();--> statement-breakpoint
+
+--------------------------------------------------------------------------------
 -- qr_token is immutable for the life of the attendee
 --------------------------------------------------------------------------------
 
@@ -724,9 +761,26 @@ begin
     raise exception 'segment % does not exist', p_segment_id;
   end if;
 
-  select * into v_registration from registrations where id = p_registration_id;
+  -- `for update` on the registration as well as the show. The show lock alone
+  -- does not serialise against cancellation, which touches `registrations` and
+  -- takes no lock on `shows` — so a cancel could commit while a claim was in
+  -- flight, and the claim would write CONFIRMED seats under a registration that
+  -- no longer exists. The pool excludes them, so the same seats are sold again;
+  -- the door reads `attendees.status` and sees valid ticket holders. Three
+  -- different answers to "who is coming".
+  select * into v_registration from registrations where id = p_registration_id for update;
   if not found then
     raise exception 'registration % does not exist', p_registration_id;
+  end if;
+
+  -- The same end state is reachable with no race at all, by claiming against an
+  -- already-cancelled registration. Seats belong to a live booking or to
+  -- nobody.
+  if v_registration.status = 'CANCELLED' or v_registration.deleted_at is not null then
+    raise exception 'registration % is %, so it cannot be given seats',
+      p_registration_id,
+      case when v_registration.deleted_at is not null then 'deleted' else 'cancelled' end
+      using hint = 'Restore it, or create a new registration (spec/allocation.md §7.9).';
   end if;
   if v_registration.segment_id <> p_segment_id then
     raise exception 'registration % belongs to segment %, not %',
@@ -859,6 +913,10 @@ begin
     end if;
   end if;
 
+  -- Transaction-local, so it cannot leak to another statement on this
+  -- connection once this one commits or rolls back.
+  perform set_config('zetix.granting', 'on', true);
+
   for v_request in select * from jsonb_array_elements(p_requests)
   loop
     v_type := v_request ->> 'allocation_type';
@@ -944,6 +1002,8 @@ begin
       v_status
     );
   end loop;
+
+  perform set_config('zetix.granting', 'off', true);
 
   return jsonb_build_object(
     'granted_base',  v_granted_base,

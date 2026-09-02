@@ -12,7 +12,14 @@ import { getDb } from './client';
  *
  * **Every grant routes through `claimSeats`**, including manual and
  * admin-created registrations (§7.6). A path that inserts an `attendees` row
- * directly is a bug: the counters stop meaning anything.
+ * directly is a bug: the counters stop meaning anything — and the database
+ * refuses it outright, so such a path fails loudly rather than quietly.
+ *
+ * **Callers must be at `READ COMMITTED`**, which is the default. Inside a
+ * `REPEATABLE READ` transaction the snapshot predates the row lock, so the
+ * engine would recompute the pool from stale counts and oversell with no error;
+ * `claim_seats()` refuses rather than allowing that. Do not wrap these calls in
+ * a transaction that raises the isolation level.
  */
 
 export type AllocationType = 'BASE' | 'EXTRA' | 'HELD' | 'COMP';

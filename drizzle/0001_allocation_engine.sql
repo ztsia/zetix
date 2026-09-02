@@ -584,6 +584,69 @@ create constraint trigger shows_capacity_guard
   for each row execute function tg_show_capacity();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
+-- qr_token is immutable for the life of the attendee
+--------------------------------------------------------------------------------
+
+-- Decision 28 and CLAUDE.md: "`qr_token` is immutable for the life of an
+-- attendee — reissuing re-renders the PDF, never the token." A guest who kept
+-- the printed first copy must still get through the door.
+--
+-- Nothing on this branch mutates it, but `modules.md` §4 freezes the schema when
+-- F1 merges, and module D — which mints tokens and implements reissue — would
+-- need a separate schema PR to add this afterwards. It costs three lines here.
+--
+-- Setting it once (null → value, at issue time) is allowed; changing or
+-- clearing it afterwards is not.
+create or replace function tg_qr_token_immutable() returns trigger
+language plpgsql as $$
+begin
+  if old.qr_token is not null and new.qr_token is distinct from old.qr_token then
+    raise exception 'qr_token is immutable for the life of an attendee (attendee %)', old.id
+      using hint = 'Reissuing re-renders the PDF and may repin the template version; it never mints a new token.';
+  end if;
+  return new;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists attendees_qr_token_immutable on attendees;--> statement-breakpoint
+create trigger attendees_qr_token_immutable
+  before update of qr_token on attendees
+  for each row execute function tg_qr_token_immutable();--> statement-breakpoint
+
+--------------------------------------------------------------------------------
+-- Cancelling a registration cancels its seats
+--------------------------------------------------------------------------------
+
+-- §7.9: "Cancelling sets status = CANCELLED and returns seats to that segment
+-- immediately." `segment_pool()` already treats a cancelled registration's seats
+-- as returned — but the attendee rows stayed CONFIRMED, and the door builds its
+-- manifest from `attendees.status`. That disagreement shows a cancelled party a
+-- green scan instead of "cancelled — refer to desk" (`checkin.md` §12.1).
+--
+-- Module B owns the cancellation *action*; this keeps the two tables from
+-- contradicting each other however B implements it. It never clears
+-- `ticket_sent_at`: a ticket that was delivered was delivered, and the door
+-- needs to know the code exists so it can say "cancelled" rather than "not
+-- found" (§7.9).
+create or replace function tg_registration_cancel_cascade() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'CANCELLED' and old.status is distinct from 'CANCELLED' then
+    update attendees
+       set status = 'CANCELLED'
+     where registration_id = new.id
+       and status <> 'CANCELLED';
+  end if;
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists registrations_cancel_cascade on registrations;--> statement-breakpoint
+create trigger registrations_cancel_cascade
+  after update of status on registrations
+  for each row execute function tg_registration_cancel_cascade();--> statement-breakpoint
+
+--------------------------------------------------------------------------------
 -- claim_seats() — spec/allocation.md §7.8
 --------------------------------------------------------------------------------
 
@@ -633,6 +696,21 @@ declare
   v_pending        int := 0;
   v_waitlisted     int := 0;
 begin
+  -- `for update of s` serialises callers, but a caller inside a REPEATABLE READ
+  -- or SERIALIZABLE transaction recomputes the pool from the snapshot it took
+  -- *before* the lock was granted, so it re-reads stale counts and oversells
+  -- with no error at all. Nothing on `shows` is ever updated, so there is no
+  -- write conflict for Postgres to detect on our behalf.
+  --
+  -- "Read current state, then act" inside a repeatable-read transaction is a
+  -- natural Server Action shape, so this refuses rather than trusting every
+  -- future caller to know.
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception 'claim_seats must run at READ COMMITTED, not %',
+      current_setting('transaction_isolation')
+      using hint = 'The show row lock cannot protect a caller whose snapshot predates it.';
+  end if;
+
   -- Serialise per hall. Everything below reads counts and then writes rows;
   -- without this lock two callers read the same figures and both write.
   perform 1
@@ -670,6 +748,18 @@ begin
       using hint = 'A null or bare value in the array would silently mint a seat nobody asked for.';
   end if;
 
+  -- A JSON null `allocation_type` would otherwise reach `coalesce(…, 'EXTRA')`
+  -- and be granted a confirmed seat under a type nobody asked for; an unknown
+  -- one would fail deep inside the INSERT and print the whole function body.
+  if exists (
+    select 1 from jsonb_array_elements(p_requests) e
+     where e ->> 'allocation_type' is null
+        or e ->> 'allocation_type' not in ('BASE', 'EXTRA', 'HELD', 'COMP')
+  ) then
+    raise exception 'every seat request needs an allocation_type of BASE, EXTRA, HELD or COMP'
+      using hint = 'A missing one is not EXTRA by default — say which kind of seat this is.';
+  end if;
+
   -- Recompute from the database under the lock. Never trust a figure the caller
   -- read before it was taken.
   v_pool := segment_pool(p_segment_id);
@@ -705,6 +795,21 @@ begin
 
   v_quota   := (resolve_setting('allocation.base_quota', p_segment_id)) #>> '{}';
   v_policy  := (resolve_setting('allocation.extras_policy', p_segment_id)) #>> '{}';
+  -- An unresolved policy must not mean AUTO_FCFS. §6: "a missing value is a
+  -- validation error at save time, not a silent fallback" — and this is the
+  -- value that decides whether seats are handed out on submission or held for
+  -- the §7.5 review. Falling back to the permissive branch would auto-grant
+  -- every extras request in a player segment and leave the review screen with
+  -- nothing to review, which is discovered only after the seats are gone.
+  --
+  -- `allow_partial_grant` below is deliberately not treated this way: its
+  -- absence withholds seats rather than giving them away, and §7.5 describes
+  -- partial granting as something a segment opts into.
+  if v_policy is null then
+    raise exception 'segment % has no extras policy set, and there is no default for one',
+      p_segment_id
+      using hint = 'Set it on the segment, or seed allocation.extras_policy (pnpm db:seed).';
+  end if;
   v_partial := (resolve_setting('allocation.allow_partial_grant', p_segment_id)) #>> '{}';
 
   -- Base entitlement is counted per *player*, across every registration they
@@ -738,7 +843,7 @@ begin
   -- grants in batch after the deadline (§7.4).
   v_extra_wanted := (
     select count(*)::int from jsonb_array_elements(p_requests) e
-     where coalesce(e ->> 'allocation_type', 'EXTRA') = 'EXTRA'
+     where e ->> 'allocation_type' = 'EXTRA'
   );
 
   if p_override then
@@ -756,7 +861,7 @@ begin
 
   for v_request in select * from jsonb_array_elements(p_requests)
   loop
-    v_type := coalesce(v_request ->> 'allocation_type', 'EXTRA');
+    v_type := v_request ->> 'allocation_type';
 
     if v_type = 'BASE' then
       -- `p_override` relaxes the **capacity ceilings** and nothing else. §7.6
@@ -781,7 +886,16 @@ begin
       end if;
 
     elsif v_type = 'EXTRA' then
-      if v_extra_grantable > 0 then
+      -- Both the policy budget **and** the live room are required. The budget
+      -- is computed once before the loop, from the pool as it stood then; the
+      -- BASE and HELD/COMP branches below spend `v_segment_room` and
+      -- `v_hall_headroom` as they go. Checking only the budget lets one party
+      -- spend the same seat twice — a party of 1 BASE + 1 EXTRA into a single
+      -- open seat took both, with no override and no error, and it scaled with
+      -- the party. That is the ordinary shape of a player's registration after
+      -- the base deadline: one base seat plus guests.
+      if v_extra_grantable > 0
+         and (p_override or (v_segment_room > 0 and v_hall_headroom > 0)) then
         v_status := 'CONFIRMED';
         v_extra_grantable := v_extra_grantable - 1;
         v_segment_room := greatest(0, v_segment_room - 1);

@@ -440,10 +440,7 @@ describe('claim_seats() — a full segment is full for every allocation type', (
     expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(4);
   });
 
-  it('gives a player no private reserve once the deadline has passed', async () => {
-    // §7.9: after the deadline the freed seats belong to the extras queue, and
-    // "the player does not get a private second chance after everyone else's
-    // window has closed."
+  it('waitlists a BASE seat after the deadline too, when the segment is full', async () => {
     await sql`
       update show_segments set base_claim_deadline = now() - interval '1 hour'
        where id = ${segmentId}::bigint
@@ -531,5 +528,155 @@ describe('claim_seats() — hostile input', () => {
     ).rejects.toThrow(/every seat request must be an object/);
 
     expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(0);
+  });
+});
+
+describe('claim_seats() — what the base deadline does and does not do', () => {
+  let showId: number;
+  let segmentId: number;
+  let playerIds: number[];
+
+  /**
+   * The spec settles this less directly than it looks, so it is worth stating.
+   *
+   * §7.2 says the deadline stops `unclaimed_base` being subtracted from the
+   * pool — it releases the **reservation**. §7.4 grants a BASE seat whenever
+   * `base_claimed(p) < base_quota(p)` and `open_seats > 0`, with no mention of
+   * the deadline. §7.9's "no private second chance" is specifically about where
+   * a *cancelled* base seat goes.
+   *
+   * Taken together: after the deadline a player may still claim their base
+   * allocation if seats remain, but those seats are no longer held for them —
+   * they compete with the extras queue for whatever is left. That is what these
+   * two tests pin down, because the earlier test named for it passed for an
+   * unrelated reason and would have gone on passing if the behaviour changed.
+   */
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 100);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 20,
+      baseQuota: 2,
+      baseClaimDeadline: new Date(Date.now() - 3600 * 1000),
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    playerIds = await createPlayers(concertId, 5);
+  });
+
+  it('still grants an unclaimed base seat while the segment has room', async () => {
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+    expect((await claim(segmentId, registrationId, seats(2, 'BASE'))).granted_base).toBe(2);
+  });
+
+  it('no longer holds seats back for players who have not claimed', async () => {
+    // Before the deadline the pool would be 20 − (5 × 2) = 10. After it, the
+    // whole segment is available to the extras queue, and a stranger can take
+    // seats that were reserved an hour ago.
+    const registrationId = await createRegistration({ showId, segmentId });
+    expect((await claim(segmentId, registrationId, seats(20, 'EXTRA'))).granted_extra).toBe(20);
+
+    // And now a player claiming base finds nothing left — no private reserve.
+    const late = await createRegistration({ showId, segmentId, playerId: playerIds[0] });
+    expect((await claim(segmentId, late, seats(1, 'BASE'))).waitlisted).toBe(1);
+  });
+});
+
+describe('claim_seats() — a party of mixed allocation types', () => {
+  let showId: number;
+  let segmentId: number;
+  let playerIds: number[];
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 10);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 10,
+      baseQuota: 2,
+      // Past: post-deadline is where the two budgets both draw on the same
+      // seats, because `extras_pool` becomes `open_seats`.
+      baseClaimDeadline: new Date(Date.now() - 3600 * 1000),
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    playerIds = await createPlayers(concertId, 3);
+  });
+
+  it('cannot spend the same seat twice across BASE and EXTRA', async () => {
+    // Fill to 9 of 10, leaving exactly one seat.
+    const filler = await createRegistration({ showId, segmentId });
+    expect((await claim(segmentId, filler, seats(9, 'EXTRA'))).granted_extra).toBe(9);
+
+    // The ordinary shape of a player's registration: their own base seat plus a
+    // guest. Two requests, one seat.
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+    const outcome = await claim(segmentId, registrationId, [
+      { full_name: 'Player guest', allocation_type: 'BASE' },
+      { full_name: 'Extra guest', allocation_type: 'EXTRA' },
+    ]);
+
+    expect(outcome.granted_base + outcome.granted_extra).toBe(1);
+    expect(outcome.waitlisted).toBe(1);
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(10);
+  });
+
+  it('scales: a large mixed party cannot exceed the seats that exist', async () => {
+    const filler = await createRegistration({ showId, segmentId });
+    expect((await claim(segmentId, filler, seats(7, 'EXTRA'))).granted_extra).toBe(7);
+
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+    const outcome = await claim(segmentId, registrationId, [
+      ...seats(3, 'BASE'),
+      ...seats(3, 'EXTRA'),
+    ]);
+
+    // Three seats remain; six were asked for.
+    expect(outcome.granted_base + outcome.granted_extra).toBe(3);
+    expect(outcome.waitlisted).toBe(3);
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(10);
+  });
+
+  it('cannot spend the same seat twice across HELD and EXTRA either', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const publicShow = await createShow(concertId, 5);
+    const publicSegment = await createSegment(publicShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 5,
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+
+    const filler = await createRegistration({ showId: publicShow, segmentId: publicSegment });
+    expect((await claim(publicSegment, filler, seats(4, 'EXTRA'))).granted_extra).toBe(4);
+
+    const registrationId = await createRegistration({
+      showId: publicShow,
+      segmentId: publicSegment,
+    });
+    const outcome = await claim(publicSegment, registrationId, [
+      { full_name: 'Guest of honour', allocation_type: 'HELD' },
+      { full_name: 'Ordinary', allocation_type: 'EXTRA' },
+    ]);
+
+    expect(outcome.granted_other + outcome.granted_extra).toBe(1);
+    expect(outcome.waitlisted).toBe(1);
+    expect(await countAttendees(publicSegment, 'CONFIRMED')).toBe(5);
   });
 });

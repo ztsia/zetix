@@ -139,6 +139,12 @@ Three project skills in `.claude/skills/`, available to every session:
 | `uiux` | Choosing shadcn components for a screen, or auditing one. Reads its index first, then only the component docs it shortlists. All 61 components are already installed — never `npx shadcn add`. |
 | `database` | Designing tables, writing or reviewing SQL and RLS, adding a mutation, or auditing a handler. It encodes this project's settled architecture, which is **not** the generic Supabase-first one. |
 
+Skills are model-invoked from their descriptions — no session needs to be told to use one, and none
+of them will stop to ask a question, because most sessions here run unattended. The **superpowers**
+plugin was evaluated on 1 Sep and declined: its mandatory phases duplicate this file and the handoff
+protocol, and its worktree machinery buys nothing when every module already gets its own session.
+Worth revisiting after 19 Sep for V2.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

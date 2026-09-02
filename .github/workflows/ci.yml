@@ -4,7 +4,7 @@
 # only real if a machine enforces it, so the test job runs against a real
 # Postgres 16 rather than a mock — claim_seats() holds a row lock across a
 # read-then-write and the concurrency assertions are the whole point
-# (spec.md §7.8, §16.4).
+# (spec/allocation.md §7.8, §16.4).
 #
 # NOTE: this workflow being green does not by itself block a merge. That needs
 # a branch protection rule on `main` requiring the "ci" check.
@@ -46,7 +46,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zetix
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/zetix
       # Never a real origin: a QR rendered in CI must not be mistakable for a
-      # live ticket (spec.md §10.1).
+      # live ticket (spec/tickets.md §10.1).
       APP_URL: http://localhost:3000
 
     steps:

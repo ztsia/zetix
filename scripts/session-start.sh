@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Brings the local Postgres up so `pnpm test` works immediately in a fresh
-# session (spec.md §16.4). Never fails the session — a broken database should
+# session (spec/platform.md §16.4). Never fails the session — a broken database should
 # surface when a test runs, not as a startup error.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 0

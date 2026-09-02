@@ -5,7 +5,7 @@ import postgres, { type Sql } from 'postgres';
  * Runtime connection. Supabase's transaction pooler (port 6543) does not
  * support prepared statements, so `prepare: false` is mandatory — without it
  * you get intermittent "prepared statement already exists" under concurrency.
- * See spec.md §16.2.
+ * See spec/platform.md §16.2.
  *
  * `max: 1` because each serverless instance handles one request at a time;
  * the pooler does the multiplexing.

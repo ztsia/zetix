@@ -47,3 +47,6 @@ next-env.d.ts
 
 # local postgres
 .zetix-pgdata/
+
+# qa run artifacts (screenshots, traces, reports)
+qa-artifacts/

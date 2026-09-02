@@ -1,4 +1,4 @@
--- Extensions the schema depends on (spec.md §16.4).
+-- Extensions the schema depends on (spec/platform.md §16.4).
 -- Used by both scripts/local-db.sh and the CI workflow so the two cannot drift.
 --
 --   citext   — case-insensitive emails on players, registrations, attendees

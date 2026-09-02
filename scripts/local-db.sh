@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local Postgres 16 for development (spec.md §16.4).
+# Local Postgres 16 for development (spec/platform.md §16.4).
 #
 # The allocation engine needs a real Postgres, not a mock — claim_seats() holds
 # a row lock across a read-then-write and the concurrency tests are the point.

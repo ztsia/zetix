@@ -27,7 +27,7 @@ const eslintConfig = defineConfig([
      *
      * Scoped off here rather than disabled globally: the rule earns its keep in
      * the door scanner, where a cascading render during continuous camera
-     * scanning is a real cost (spec.md §12.1).
+     * scanning is a real cost (spec/checkin.md §12.1).
      */
     files: ["src/components/ui/**/*.tsx", "src/hooks/use-mobile.ts"],
     rules: {

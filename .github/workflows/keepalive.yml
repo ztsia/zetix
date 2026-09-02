@@ -1,4 +1,4 @@
-# Second, independent keep-alive (spec.md §17.1).
+# Second, independent keep-alive (spec/platform.md §17.1).
 #
 # The Vercel cron is the primary. This exists because its failure mode is
 # silent: if the project is renamed, the route errors, or the deployment is

@@ -252,6 +252,20 @@ An attendee can now only exist in the same segment and show as its registration,
 only in a segment that genuinely belongs to its show. Moving a registration between segments (`allocation.md` §7.6)
 updates parent and children in one transaction; the constraint is what stops it being done by half.
 
+**`attendees_registration_fk` is `deferrable initially deferred`.** With an immediate constraint that
+move is not merely awkward, it is impossible: updating the attendees first points them at a
+registration still in the old segment, updating the registration first strands the attendees, and
+re-creating them is barred because `qr_token` is immutable for life (decision 28). Deferring to commit
+is what "in one transaction" above actually requires — a half-finished move still fails, a complete one
+succeeds. Two consequences for callers: the violation surfaces at `COMMIT` rather than at the
+statement, and the move must genuinely be in one transaction.
+
+`registrations_segment_fk` stays immediate. A registration moving to another show changes `show_id`
+and `segment_id` in the same row in one statement, so it never passes through an inconsistent state.
+
+Both foreign keys target `unique` **constraints** rather than unique indexes — Postgres rejects a bare
+unique index as a foreign key target.
+
 Apply the same reasoning elsewhere: `player_allocations` is unique on `(player_id, segment_id)`,
 `check_ins` needs no segment column because it derives from the attendee, and `portal_notes` (V2)
 takes `unique (attendee_id)` to back "one note per attendee".

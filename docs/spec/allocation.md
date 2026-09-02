@@ -91,6 +91,12 @@ the segment's capacity and let the extras pool absorb the difference. A "knowing
 buys nothing that those two do not, and costs a code path, a UI, a warning banner and a permanent
 ambiguity about which promise is in force.
 
+**BASE seats are granted seat by seat, not whole-party.** A player owed two seats who asks for two
+when one remains gets that one confirmed and the other waitlisted. The whole-party rule below is
+written about *extras* requests — where the pool decides an ordering between competing strangers and
+cutting a party in half is a worse answer than making it wait. A player's base allocation is a promise
+to that player rather than a place in a queue, so giving them as much of it as exists is right.
+
 **EXTRA seats** follow the segment's `extras_policy`:
 
 - **`REVIEW` (default for player segments).** Requests are created as `PENDING_REVIEW` with
@@ -167,6 +173,42 @@ end; $$;
 
 Contention is irrelevant at this scale; correctness is not.
 
+**Callers must run at `READ COMMITTED`.** The row lock serialises callers, but a
+caller inside a `REPEATABLE READ` or `SERIALIZABLE` transaction recomputes the pool from the
+snapshot it took *before* the lock was granted, so it reads stale counts and oversells. Nothing on
+`shows` is ever updated, so Postgres has no write conflict to detect on our behalf and there is no
+error. `claim_seats()` therefore refuses any other isolation level rather than trusting every future
+caller to know. "Read the current state, then act" inside a repeatable-read transaction is a natural
+Server Action shape, which is exactly why this is enforced rather than documented alone.
+
+**The implemented signature extends the sketch above**, additively:
+
+```sql
+claim_seats(p_segment_id bigint, p_registration_id bigint, p_requests jsonb,
+            p_override boolean default false) returns jsonb
+```
+
+- `p_requests` is the party: one object per seat, `{"full_name": …, "email": …,
+  "allocation_type": "BASE"|"EXTRA"|"HELD"|"COMP"}`. Every field is validated; a missing or unknown
+  `allocation_type` is an error rather than a default.
+- `p_override` is the deliberate admin escape hatch of §7.6. It relaxes the **capacity ceilings** —
+  the segment's and the hall's — and nothing else. It does not grant a player more base seats than
+  their quota, because decision 17 is explicit that base entitlement has no opt-out. The caller owns
+  the typed confirmation and the `audit_log` row.
+- The return carries a fifth key, `granted_other`, counting granted `HELD` and `COMP` seats. Those
+  are granted by this function but do not come out of the extras pool, so neither `granted_extra` nor
+  silence would describe them honestly.
+
+**A registration must be live.** Claiming against a `CANCELLED` or soft-deleted registration is
+refused, and the registration row is locked for the duration — cancellation touches `registrations`
+and takes no lock on `shows`, so without it a cancel committing mid-claim leaves `CONFIRMED` seats
+under a dead registration: the pool excludes them and sells them again, while the door reads
+`attendees.status` and sees valid ticket holders.
+
+**Seats are written only by this function.** `attendees` refuses a direct insert, so "manual actions
+still route through `claim_seats()`" (§7.6) is enforced rather than agreed. A fixture or fix-up
+script may opt out per transaction, deliberately and visibly.
+
 ## 7.9 Cancellation
 
 Cancelling sets `status = CANCELLED` and returns seats to that segment immediately. Admin sees "N seats
@@ -184,6 +226,17 @@ than needing their own rule:
 
 No branch in code implements this; it is what the two formulas in §7.2 already say. State it here so
 nobody later "fixes" it into a special case.
+
+**A player claiming base *for the first time* after the deadline is still granted it, if seats
+remain.** The deadline releases the *reservation* — §7.2 stops subtracting `unclaimed_base`, so those
+seats become available to the extras queue — but §7.4's grant rule carries no deadline qualifier, and
+nothing in the system tells a player their allocation has expired. So a late claimant competes for
+whatever is left rather than holding seats back, and takes nothing that the queue has already taken.
+The "private second chance" §7.9 rules out is the narrower case above: a seat *cancelled* after the
+deadline goes to the queue rather than back to the player who released it.
+
+*(This is the behaviour as implemented. It is the one place where §7.4 and §7.9 can be read against
+each other, so it is written down rather than left to whoever reads them next.)*
 
 Cancellation also **cancels any `QUEUED` or `DRAFT` outbox rows** for that registration, and never
 clears `ticket_sent_at` — a ticket that was delivered was delivered, and the door needs to know the

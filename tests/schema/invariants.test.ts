@@ -1,0 +1,573 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { newConnection, resetDb, sql } from '../helpers/db';
+import {
+  createConcert,
+  createRegistration,
+  createSegment,
+  createShow,
+  withDirectAttendeeWrites,
+} from '../helpers/fixtures';
+
+/**
+ * Database-level invariants that no application path may break, because eight
+ * parallel modules will each write their own paths (spec/modules.md §4).
+ */
+
+describe('qr_token is immutable for life — decision 28, spec/tickets.md §10.1', () => {
+  let attendeeId: number;
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 20 });
+    const registrationId = await createRegistration({ showId, segmentId });
+    const row = await withDirectAttendeeWrites(async (tx) => {
+      const [inserted] = await tx<{ id: number }[]>`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                               allocation_type, status, qr_token, ticket_code)
+        values (${registrationId}::bigint, ${showId}::bigint, ${segmentId}::bigint, 'Holder',
+                'PROVIDED', 'EXTRA', 'CONFIRMED', 'originaltoken0000abcd', 'ORC-7K4Q')
+        returning id
+      `;
+      return inserted;
+    });
+    attendeeId = Number(row.id);
+  });
+
+  it('refuses to change a token that has been issued', async () => {
+    // A guest who kept the printed first copy must still get through the door.
+    await expect(
+      sql`update attendees set qr_token = 'rewritten' where id = ${attendeeId}::bigint`,
+    ).rejects.toThrow(/qr_token is immutable for the life of an attendee/);
+  });
+
+  it('refuses to clear it', async () => {
+    await expect(
+      sql`update attendees set qr_token = null where id = ${attendeeId}::bigint`,
+    ).rejects.toThrow(/qr_token is immutable/);
+  });
+
+  it('allows a reissue to repin the template and re-render, leaving the token alone', async () => {
+    // §10.5: reissuing re-renders the PDF and may repin the version. It never
+    // mints a new token.
+    await sql`
+      update attendees
+         set ticket_template_version = 4, needs_reissue = false, ticket_sent_at = null
+       where id = ${attendeeId}::bigint
+    `;
+    const [row] = await sql<{ qr_token: string }[]>`
+      select qr_token from attendees where id = ${attendeeId}::bigint
+    `;
+    expect(row.qr_token).toBe('originaltoken0000abcd');
+  });
+
+  it('allows the first issue, when the token is set for the first time', async () => {
+    const [fresh] = await sql<{ id: number }[]>`
+      select id from attendees where qr_token is null limit 1
+    `;
+    if (!fresh) {
+      const row = await withDirectAttendeeWrites(async (tx) => {
+        const [inserted] = await tx<{ id: number }[]>`
+          insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                                 allocation_type, status)
+          select registration_id, show_id, segment_id, 'Unissued', 'PROVIDED', 'EXTRA', 'CONFIRMED'
+            from attendees where id = ${attendeeId}::bigint
+          returning id
+        `;
+        return inserted;
+      });
+      await sql`update attendees set qr_token = 'firstissue00000abcde' where id = ${row.id}::bigint`;
+      const [check] = await sql<{ qr_token: string }[]>`
+        select qr_token from attendees where id = ${row.id}::bigint
+      `;
+      expect(check.qr_token).toBe('firstissue00000abcde');
+    }
+  });
+});
+
+describe('cancelling a registration cancels its seats — spec/allocation.md §7.9', () => {
+  it('leaves the door reading CANCELLED rather than CONFIRMED', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 20 });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await withDirectAttendeeWrites(
+      (tx) => tx`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                               allocation_type, status, ticket_sent_at, ticket_sent_source)
+        select ${registrationId}::bigint, ${showId}::bigint, ${segmentId}::bigint,
+               'Guest ' || i, 'PROVIDED', 'EXTRA', 'CONFIRMED', now(), 'EMAIL'
+          from generate_series(1, 3) as i
+      `,
+    );
+
+    await sql`
+      update registrations set status = 'CANCELLED' where id = ${registrationId}::bigint
+    `;
+
+    // The scanner manifest is built from attendees.status. If these stayed
+    // CONFIRMED the door would scan a cancelled party green instead of showing
+    // "cancelled — refer to desk" (spec/checkin.md §12.1).
+    const [row] = await sql<{ cancelled: number; sent: number }[]>`
+      select count(*) filter (where status = 'CANCELLED')::int as cancelled,
+             count(*) filter (where ticket_sent_at is not null)::int as sent
+        from attendees where registration_id = ${registrationId}::bigint
+    `;
+    expect(row.cancelled).toBe(3);
+    // Never cleared: a ticket that was delivered was delivered, and the door
+    // needs to know the code exists so it can say "cancelled", not "not found".
+    expect(row.sent).toBe(3);
+  });
+});
+
+describe('claim_seats() refuses an isolation level its lock cannot protect', () => {
+  it('raises under REPEATABLE READ rather than overselling silently', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 10);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    const conn = newConnection();
+    try {
+      await expect(
+        conn.begin('isolation level repeatable read', async (tx) => {
+          await tx`
+            select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                               ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb,
+                               false)
+          `;
+        }),
+      ).rejects.toThrow(/must run at READ COMMITTED/);
+    } finally {
+      await conn.end();
+    }
+  });
+});
+
+describe('claim_seats() names bad allocation types', () => {
+  let segmentId: number;
+  let registrationId: number;
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    registrationId = await createRegistration({ showId, segmentId });
+  });
+
+  const claimRaw = (requests: string) => sql`
+    select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                       ${requests}::text::jsonb, false)
+  `;
+
+  it('rejects an unknown type instead of leaking the enum error', async () => {
+    await expect(claimRaw('[{"full_name":"A","allocation_type":"FREEBIE"}]')).rejects.toThrow(
+      /allocation_type of BASE, EXTRA, HELD or COMP/,
+    );
+  });
+
+  it('rejects a null type instead of quietly making it an EXTRA', async () => {
+    await expect(claimRaw('[{"full_name":"A","allocation_type":null}]')).rejects.toThrow(
+      /allocation_type of BASE, EXTRA, HELD or COMP/,
+    );
+    await expect(claimRaw('[{"full_name":"A"}]')).rejects.toThrow(
+      /allocation_type of BASE, EXTRA, HELD or COMP/,
+    );
+
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from attendees where segment_id = ${segmentId}::bigint
+    `;
+    expect(row.n).toBe(0);
+  });
+});
+
+describe('an unresolved extras policy is an error, not a permissive guess', () => {
+  it('refuses rather than auto-granting what should have been reviewed', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    // No policy on the segment, and system_settings is empty — the seed is a
+    // separate step (docs/local.md §4).
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 20,
+      baseQuota: 2,
+      extrasPolicy: null,
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    await expect(
+      sql`
+        select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                           ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+      `,
+    ).rejects.toThrow(/has no extras policy set, and there is no default for one/);
+  });
+
+  it('resolves from the seeded system default once seeded', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 20,
+      baseQuota: 2,
+      extrasPolicy: null,
+    });
+    // Decision 4's defaults live in system_settings as data, keyed by audience
+    // mode — not as a literal in code.
+    await sql`
+      insert into system_settings (key, value)
+      values ('allocation.extras_policy',
+              ${'{"PLAYER_INVITED":"REVIEW","PUBLIC":"AUTO_FCFS"}'}::text::jsonb)
+    `;
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    const [row] = await sql<{ claim_seats: { pending: number } }[]>`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+    expect(row.claim_seats.pending).toBe(1);
+  });
+});
+
+describe('seats belong to a live registration — spec/allocation.md §7.9', () => {
+  it('refuses to grant against a cancelled registration', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      status: 'CANCELLED',
+    });
+
+    await expect(
+      sql`
+        select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                           ${'[{"full_name":"Ghost","allocation_type":"EXTRA"}]'}::text::jsonb,
+                           false)
+      `,
+    ).rejects.toThrow(/is cancelled, so it cannot be given seats/);
+  });
+
+  it('refuses to grant against a soft-deleted registration', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await sql`update registrations set deleted_at = now() where id = ${registrationId}::bigint`;
+
+    await expect(
+      sql`
+        select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                           ${'[{"full_name":"Ghost","allocation_type":"EXTRA"}]'}::text::jsonb,
+                           false)
+      `,
+    ).rejects.toThrow(/is deleted, so it cannot be given seats/);
+  });
+
+  it('serialises against a cancellation racing the claim', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    // A cancellation committing mid-claim must not leave CONFIRMED seats under
+    // a CANCELLED registration: the pool would exclude them and sell the same
+    // seats again, while the door showed their holders as valid.
+    const canceller = newConnection({ statement_timeout: '2s' });
+    try {
+      await Promise.all([
+        sql`
+          select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                             ${'[{"full_name":"A","allocation_type":"EXTRA"},{"full_name":"B","allocation_type":"EXTRA"}]'}::text::jsonb,
+                             false)
+        `.catch(() => undefined),
+        canceller`
+          update registrations set status = 'CANCELLED' where id = ${registrationId}::bigint
+        `.catch(() => undefined),
+      ]);
+    } finally {
+      await canceller.end().catch(() => {});
+    }
+
+    const [row] = await sql<{ disagreeing: number }[]>`
+      select count(*)::int as disagreeing
+        from attendees a
+        join registrations r on r.id = a.registration_id
+       where a.registration_id = ${registrationId}::bigint
+         and a.status = 'CONFIRMED'
+         and (r.status = 'CANCELLED' or r.deleted_at is not null)
+    `;
+    expect(row.disagreeing).toBe(0);
+  });
+});
+
+describe('every grant routes through claim_seats() — spec/allocation.md §7.6', () => {
+  it('refuses a direct insert into attendees', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    // Without this the rule is convention, and eight downstream sessions write
+    // to this table. A seat inserted behind the engine's back makes every
+    // count in §7.2 wrong, silently.
+    await expect(
+      sql`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                               allocation_type, status)
+        values (${registrationId}::bigint, ${showId}::bigint, ${segmentId}::bigint,
+                'Smuggled', 'PROVIDED', 'EXTRA', 'CONFIRMED')
+      `,
+    ).rejects.toThrow(/attendees are written by claim_seats\(\), not inserted directly/);
+  });
+
+  it('lets claim_seats() write, and does not leak permission to the next statement', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"Proper","allocation_type":"EXTRA"}]'}::text::jsonb,
+                         false)
+    `;
+
+    // The flag is transaction-local, so the very next statement on the same
+    // connection is refused again.
+    await expect(
+      sql`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source,
+                               allocation_type, status)
+        values (${registrationId}::bigint, ${showId}::bigint, ${segmentId}::bigint,
+                'After', 'PROVIDED', 'EXTRA', 'CONFIRMED')
+      `,
+    ).rejects.toThrow(/not inserted directly/);
+
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from attendees where segment_id = ${segmentId}::bigint
+    `;
+    expect(row.n).toBe(1);
+  });
+});
+
+describe('a seat is confirmed by the engine, not by an UPDATE', () => {
+  it('refuses to promote a waitlisted seat by hand', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"},{"full_name":"B","allocation_type":"EXTRA"}]'}::text::jsonb,
+                         false)
+    `;
+
+    // One confirmed, one waitlisted. Flipping the waitlisted row by hand would
+    // take a seat without passing any ceiling — the same hole as a direct
+    // insert, and it needs the same wall.
+    await expect(
+      sql`
+        update attendees set status = 'CONFIRMED'
+         where segment_id = ${segmentId}::bigint and status = 'WAITLIST'
+      `,
+    ).rejects.toThrow(/a seat is confirmed by claim_seats\(\), not by updating its status/);
+  });
+
+  it('still allows cancelling, which frees a seat rather than taking one', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 5,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    await sql`
+      update attendees set status = 'CANCELLED' where segment_id = ${segmentId}::bigint
+    `;
+    const [row] = await sql<{ segment_pool: { confirmed: number } }[]>`
+      select segment_pool(${segmentId}::bigint)
+    `;
+    expect(row.segment_pool.confirmed).toBe(0);
+  });
+});
+
+describe('soft delete frees seats the same way cancellation does — decision 7, §7.9', () => {
+  let showId: number;
+  let segmentId: number;
+  let registrationId: number;
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 1);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    registrationId = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+  });
+
+  it('cancels and soft-deletes the seats, so the resold seat is not double-booked', async () => {
+    // Soft delete is the documented delete mechanism (decision 7), so leaving
+    // it out of the cascade was the larger of the two holes: the pool stops
+    // counting the registration either way, and a seat left CONFIRMED is sold
+    // again while the door still holds a valid ticket for it.
+    await sql`update registrations set deleted_at = now() where id = ${registrationId}::bigint`;
+
+    const [seats] = await sql<{ live: number }[]>`
+      select count(*)::int as live from attendees
+       where registration_id = ${registrationId}::bigint
+         and status = 'CONFIRMED' and deleted_at is null
+    `;
+    expect(seats.live).toBe(0);
+
+    // The seat really is free, and selling it again yields exactly one holder.
+    const next = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${next}::bigint,
+                         ${'[{"full_name":"B","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    const [total] = await sql<{ n: number }[]>`
+      select count(*)::int as n from attendees a
+       join registrations r on r.id = a.registration_id
+       where a.show_id = ${showId}::bigint and a.status = 'CONFIRMED'
+         and a.deleted_at is null and r.deleted_at is null
+    `;
+    expect(total.n).toBe(1);
+  });
+});
+
+describe('a moved registration must fit where it lands — spec/allocation.md §7.6', () => {
+  it('refuses a move that would overfill the destination hall', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const bigShow = await createShow(concertId, 20);
+    const tinyShow = await createShow(concertId, 1);
+    const bigSegment = await createSegment(bigShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const tinySegment = await createSegment(tinyShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+
+    const party = await createRegistration({ showId: bigShow, segmentId: bigSegment });
+    await sql`
+      select claim_seats(${bigSegment}::bigint, ${party}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"},{"full_name":"B","allocation_type":"EXTRA"},{"full_name":"C","allocation_type":"EXTRA"}]'}::text::jsonb,
+                         false)
+    `;
+
+    // §5.2's composite keys make parent and children move together; nothing
+    // checked whether the destination had room, so a party of three landed in a
+    // one-seat hall with no override and no audit entry.
+    await expect(
+      sql.begin(async (tx) => {
+        await tx`
+          update attendees set show_id = ${tinyShow}::bigint, segment_id = ${tinySegment}::bigint
+           where registration_id = ${party}::bigint
+        `;
+        await tx`
+          update registrations set show_id = ${tinyShow}::bigint, segment_id = ${tinySegment}::bigint
+           where id = ${party}::bigint
+        `;
+      }),
+    ).rejects.toThrow(/already has 3 confirmed seats|would hold 3 confirmed seats/);
+  });
+
+  it('allows a move the destination can hold', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 20);
+    const from = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const to = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+
+    const party = await createRegistration({ showId, segmentId: from });
+    await sql`
+      select claim_seats(${from}::bigint, ${party}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    await sql.begin(async (tx) => {
+      await tx`update attendees set segment_id = ${to}::bigint where registration_id = ${party}::bigint`;
+      await tx`update registrations set segment_id = ${to}::bigint where id = ${party}::bigint`;
+    });
+
+    const [row] = await sql<{ segment_pool: { confirmed: number } }[]>`
+      select segment_pool(${to}::bigint)
+    `;
+    expect(row.segment_pool.confirmed).toBe(1);
+  });
+});

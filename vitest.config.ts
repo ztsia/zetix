@@ -1,4 +1,12 @@
 import { defineConfig } from 'vitest/config';
+import { config } from 'dotenv';
+
+// Vitest runs outside Next, and Next is what loads `.env.local` automatically.
+// Without this, a local run falls back to postgres.js's default of
+// localhost:5432 and fails with ECONNREFUSED. CI passes DATABASE_URL as a real
+// environment variable and dotenv never overrides those, so this is a no-op
+// there — as it is in the cloud container, where the file does not exist.
+config({ path: '.env.local' });
 
 // The session-start hook brings up the local Postgres (spec/platform.md §16.4) but
 // cannot export into the shell that later runs `pnpm test`, so a fresh session

@@ -1,5 +1,10 @@
 import { defineConfig } from 'drizzle-kit';
-import 'dotenv/config';
+import { config } from 'dotenv';
+
+// `.env.local` first, then `.env`. dotenv does not overwrite a variable that
+// is already set, so CI and any exported shell value still win over both.
+config({ path: '.env.local' });
+config();
 
 /**
  * Migrations run against DIRECT_URL — the session pooler on port 5432.

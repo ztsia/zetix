@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { sql } from '@/db/client';
+import { getSql } from '@/db/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [row] = await sql<{ now: Date }[]>`select now() as now`;
+    const [row] = await getSql()<{ now: Date }[]>`select now() as now`;
     return NextResponse.json({ ok: true, db: row.now });
   } catch (error) {
     return NextResponse.json(

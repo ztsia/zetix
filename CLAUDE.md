@@ -44,9 +44,10 @@ Scaffold only — no schema, no domain code yet. `pnpm dev`, `pnpm test`, `pnpm 
 **Next task**, per the non-negotiable below: the schema, then `claim_seats()` — with the `docs/spec/allocation.md` §7.3
 three-row worked example written as tests *before* the implementation.
 
-Deployment state: Supabase project live (public sign-ups off, email confirmation on); `main` is
-branch-protected requiring `ci`. What is still outstanding, and who must do it, is in
-`docs/local.md`.
+Deployment state: Supabase project live (public sign-ups off, email confirmation on, all three
+extensions installed); Vercel project `zetix` live in `sin1` with the GitHub repo connected and
+Production env vars set; `main` is branch-protected requiring `ci`. What is still outstanding, and who
+must do it, is in `docs/local.md`.
 
 ## Non-negotiables
 

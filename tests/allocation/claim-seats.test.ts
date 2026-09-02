@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
 import {
   createConcert,
+  json,
   createPlayers,
   createRegistration,
   createSegment,
@@ -38,7 +39,7 @@ async function claim(
     select claim_seats(
       ${segmentId}::bigint,
       ${registrationId}::bigint,
-      ${sql.json(requests as never)}::jsonb,
+      ${json(requests)}::jsonb,
       ${override}::boolean
     )
   `;

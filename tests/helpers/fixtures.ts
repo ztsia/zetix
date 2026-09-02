@@ -17,6 +17,13 @@ const ts = (value: Date | string | null | undefined): string | null =>
   value == null ? null : typeof value === 'string' ? value : value.toISOString();
 
 /**
+ * jsonb goes over the wire as a stringified value cast with `::jsonb`, not via
+ * `sql.json()` — same Vitest realm problem as `ts()` above, which surfaces as
+ * "Received an instance of Array" or "Received type number".
+ */
+export const json = (value: unknown): string => JSON.stringify(value);
+
+/**
  * Fixtures for the allocation tests.
  *
  * **Every number is a parameter, never a default.** These helpers deliberately
@@ -78,7 +85,13 @@ export async function createSegment(
 /** N active players on one concert. Players are concert-scoped, not segment-scoped. */
 export async function createPlayers(concertId: number, count: number): Promise<number[]> {
   const ids: number[] = [];
-  for (let i = 0; i < count; i++) {
+  // Continue from however many already exist: players are unique on
+  // (concert_id, email), and a test that tops up a roster must not collide with
+  // the players it already created.
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from players where concert_id = ${concertId}
+  `;
+  for (let i = n; i < n + count; i++) {
     const [row] = await sql<{ id: number }[]>`
       insert into players (concert_id, full_name, email, invite_token, is_active)
       values (
@@ -146,7 +159,7 @@ export async function seedAttendees(opts: {
 
 export async function setSystemSetting(key: string, value: unknown): Promise<void> {
   await sql`
-    insert into system_settings (key, value) values (${key}, ${sql.json(value as never)})
+    insert into system_settings (key, value) values (${key}, ${json(value)}::jsonb)
     on conflict (key) do update set value = excluded.value
   `;
 }

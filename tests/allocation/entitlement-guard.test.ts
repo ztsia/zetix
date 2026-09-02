@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
-import { createConcert, createPlayers, createSegment, createShow } from '../helpers/fixtures';
+import {
+  createConcert,
+  createPlayers,
+  createSegment,
+  createShow,
+  json,
+} from '../helpers/fixtures';
 
 /**
  * The base-entitlement guard — spec/allocation.md §7.4, decision 17.
@@ -137,7 +143,7 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
       baseQuota: null,
     });
     await sql`
-      update concerts set defaults = ${sql.json({ 'allocation.base_quota': 3 } as never)}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 3 })}::jsonb
        where id = ${concertId}::bigint
     `;
 

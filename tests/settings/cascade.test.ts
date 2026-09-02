@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
-import { createConcert, createSegment, createShow, setSystemSetting } from '../helpers/fixtures';
+import {
+  createConcert,
+  createSegment,
+  createShow,
+  json,
+  setSystemSetting,
+} from '../helpers/fixtures';
 
 /**
  * The four-level configuration cascade — spec/README.md §2.2, spec/domain.md §6.
@@ -49,7 +55,7 @@ describe('resolve_setting() — spec/README.md §2.2', () => {
   it('prefers the segment, which is authoritative', async () => {
     await setSystemSetting('allocation.base_quota', 1);
     await sql`
-      update concerts set defaults = ${sql.json({ 'allocation.base_quota': 2 } as never)}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::jsonb
        where id = ${concertId}::bigint
     `;
     await sql`update show_segments set base_quota = 4 where id = ${segmentId}::bigint`;
@@ -60,7 +66,7 @@ describe('resolve_setting() — spec/README.md §2.2', () => {
   it('falls through the segment to the concert when the segment is null', async () => {
     await setSystemSetting('allocation.base_quota', 1);
     await sql`
-      update concerts set defaults = ${sql.json({ 'allocation.base_quota': 2 } as never)}::jsonb
+      update concerts set defaults = ${json({ 'allocation.base_quota': 2 })}::jsonb
        where id = ${concertId}::bigint
     `;
 

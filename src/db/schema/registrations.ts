@@ -24,7 +24,7 @@ import { appUsers, players } from './people';
 import { importBatches } from './imports';
 import { shows, showSegments } from './shows';
 import { ticketTemplates } from './tickets';
-import { createdAt, fk, pk, timestamps } from './columns';
+import { fk, pk, timestamps } from './columns';
 
 /**
  * `registration_forms` — one active form per round, per segment

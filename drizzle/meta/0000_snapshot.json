@@ -1,5 +1,5 @@
 {
-  "id": "c34874ce-ec92-4c04-85cd-f0cfd019310f",
+  "id": "0223b1d8-1c0c-47a6-9faf-88ae51a4dbf0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1463,6 +1463,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "defaults": {
+          "name": "defaults",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "portal_unlock_mode": {
           "name": "portal_unlock_mode",
           "type": "portal_unlock_mode",
@@ -2076,7 +2082,7 @@
           "name": "full_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "name_source": {
           "name": "name_source",

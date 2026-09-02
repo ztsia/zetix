@@ -1,6 +1,6 @@
 {
-  "id": "12e18c8c-e481-4763-abfa-a225755da5f6",
-  "prevId": "c34874ce-ec92-4c04-85cd-f0cfd019310f",
+  "id": "4ef9bf45-acd3-4f92-b737-307daf978a27",
+  "prevId": "0223b1d8-1c0c-47a6-9faf-88ae51a4dbf0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1463,6 +1463,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "defaults": {
+          "name": "defaults",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "portal_unlock_mode": {
           "name": "portal_unlock_mode",
           "type": "portal_unlock_mode",
@@ -2076,7 +2082,7 @@
           "name": "full_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "name_source": {
           "name": "name_source",

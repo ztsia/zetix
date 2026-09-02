@@ -458,6 +458,10 @@ begin
   loop
     perform assert_base_entitlement_fits(v_segment_id);
   end loop;
+
+  -- `capacity` and `segment.capacity` resolve through this level too.
+  perform assert_segments_fit_hall(s.id)
+     from shows s where s.concert_id = new.id and s.deleted_at is null;
   return null;
 end;
 $$;--> statement-breakpoint
@@ -467,6 +471,73 @@ create constraint trigger concerts_entitlement_guard
   after update of defaults on concerts
   deferrable initially deferred
   for each row execute function tg_concert_entitlement();--> statement-breakpoint
+
+-- Routes 6 and 7: the remaining levels of the cascade. `resolve_setting` reads
+-- `allocation.base_quota` from the segment, then the show, then the concert,
+-- then `system_settings` — so every one of those is a way to raise the quota,
+-- and a guard that watches only some of them is a guard with a back door. The
+-- same argument that added route 4 finishes here.
+--
+-- Both also re-check the hall arithmetic, because `capacity` and
+-- `segment.capacity` resolve through the same levels: lowering the hall through
+-- `defaults` would otherwise leave the segments overflowing it.
+create or replace function tg_show_defaults_guard() returns trigger
+language plpgsql as $$
+declare
+  v_segment_id bigint;
+begin
+  for v_segment_id in
+    select g.id from show_segments g
+     where g.show_id = new.id
+       and g.audience_mode = 'PLAYER_INVITED'
+       and g.deleted_at is null
+  loop
+    perform assert_base_entitlement_fits(v_segment_id);
+  end loop;
+  perform assert_segments_fit_hall(new.id);
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists shows_defaults_guard on shows;--> statement-breakpoint
+create constraint trigger shows_defaults_guard
+  after update of defaults on shows
+  deferrable initially deferred
+  for each row execute function tg_show_defaults_guard();--> statement-breakpoint
+
+-- `system_settings` is the root, so a change there reaches every segment that
+-- does not override it. There are a few dozen segments in a concert's life;
+-- checking all of them on a settings edit costs nothing and closes the last
+-- route.
+create or replace function tg_system_settings_guard() returns trigger
+language plpgsql as $$
+declare
+  v_segment_id bigint;
+  v_show_id    bigint;
+begin
+  if new.key not in ('allocation.base_quota', 'segment.capacity', 'capacity') then
+    return null;
+  end if;
+
+  for v_segment_id in
+    select g.id from show_segments g
+     where g.audience_mode = 'PLAYER_INVITED' and g.deleted_at is null
+  loop
+    perform assert_base_entitlement_fits(v_segment_id);
+  end loop;
+
+  for v_show_id in select id from shows where deleted_at is null loop
+    perform assert_segments_fit_hall(v_show_id);
+  end loop;
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists system_settings_guard on system_settings;--> statement-breakpoint
+create constraint trigger system_settings_guard
+  after insert or update on system_settings
+  deferrable initially deferred
+  for each row execute function tg_system_settings_guard();--> statement-breakpoint
 
 -- Route 5: a per-player quota override. `player_allocations` is the one place a
 -- single player can be promised more than the segment quota, and it was the
@@ -619,6 +690,30 @@ drop trigger if exists attendees_via_claim_seats on attendees;--> statement-brea
 create trigger attendees_via_claim_seats
   before insert on attendees
   for each row execute function tg_attendee_via_claim_seats();--> statement-breakpoint
+
+-- Promoting a seat to CONFIRMED is a grant, whoever writes it. A WAITLIST or
+-- PENDING_REVIEW row flipped by a bare UPDATE takes a seat without passing any
+-- ceiling, which is the same hole as a direct insert and needs the same wall.
+--
+-- §7.5's review commit legitimately moves granted rows to CONFIRMED: it opts out
+-- through the same transaction-local flag, deliberately and visibly, and owes
+-- the capacity check itself.
+create or replace function tg_attendee_promotion() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'CONFIRMED' and old.status is distinct from 'CONFIRMED'
+     and coalesce(current_setting('zetix.granting', true), '') <> 'on' then
+    raise exception 'a seat is confirmed by claim_seats(), not by updating its status'
+      using hint = 'Grant through claim_seats() so the ceilings are checked, or set_config(''zetix.granting'', ''on'', true) to take responsibility for them.';
+  end if;
+  return new;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists attendees_promotion_guard on attendees;--> statement-breakpoint
+create trigger attendees_promotion_guard
+  before update of status on attendees
+  for each row execute function tg_attendee_promotion();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
 -- qr_token is immutable for the life of the attendee
@@ -1027,9 +1122,16 @@ begin
       p_registration_id,
       v_registration.show_id,
       p_segment_id,
-      v_request ->> 'full_name',
-      -- An attendee with no name is not an error: it tickets as a placeholder
-      -- (decision 32, spec/v2.md §8.2.1).
+      -- An attendee with no name is not an error, and the placeholder is a
+      -- **generated name**, not a null: "Guest of {contact_name}" (decision 32,
+      -- spec/v2.md §8.2.1). The door searches on this string, and a party that
+      -- registered together arrives together — "Guest of Alice Tan" finding all
+      -- four of them is the useful behaviour, and a null finds nobody. The
+      -- renderer prints it too, so a null would print a blank ticket.
+      coalesce(
+        nullif(trim(coalesce(v_request ->> 'full_name', '')), ''),
+        'Guest of ' || v_registration.contact_name
+      ),
       case when nullif(trim(coalesce(v_request ->> 'full_name', '')), '') is null
            then 'PLACEHOLDER'::name_source else 'PROVIDED'::name_source end,
       v_request ->> 'email',

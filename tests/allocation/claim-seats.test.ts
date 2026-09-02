@@ -845,3 +845,58 @@ describe('claim_seats() — a deleted segment or show holds no event', () => {
     );
   });
 });
+
+describe('claim_seats() — an attendee with no name still gets a ticket', () => {
+  let showId: number;
+  let segmentId: number;
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 50);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+  });
+
+  it('generates "Guest of {contact_name}", not a null', async () => {
+    // decision 32 and spec/v2.md §8.2.1. The door searches this string and the
+    // renderer prints it: "Guest of Alice Tan" finding all four of a party is
+    // the useful behaviour, and a null finds nobody and prints a blank ticket.
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      contactName: 'Alice Tan',
+    });
+
+    await claim(segmentId, registrationId, [
+      { allocation_type: 'EXTRA' },
+      { full_name: null, allocation_type: 'EXTRA' },
+      { full_name: '   ', allocation_type: 'EXTRA' },
+      { full_name: 'Bob Lim', allocation_type: 'EXTRA' },
+    ]);
+
+    const rows = await sql<{ full_name: string; name_source: string }[]>`
+      select full_name, name_source from attendees
+       where segment_id = ${segmentId}::bigint order by id
+    `;
+    expect(rows.map((r) => [r.full_name, r.name_source])).toEqual([
+      ['Guest of Alice Tan', 'PLACEHOLDER'],
+      ['Guest of Alice Tan', 'PLACEHOLDER'],
+      ['Guest of Alice Tan', 'PLACEHOLDER'],
+      ['Bob Lim', 'PROVIDED'],
+    ]);
+  });
+
+  it('never writes a null name at all', async () => {
+    const registrationId = await createRegistration({ showId, segmentId });
+    await claim(segmentId, registrationId, [{ allocation_type: 'EXTRA' }]);
+
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from attendees where full_name is null
+    `;
+    expect(row.n).toBe(0);
+  });
+});

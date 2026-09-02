@@ -201,3 +201,78 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
     ).rejects.toThrow(/82 active players × 3 base = 246 seats, but the segment holds 100/);
   });
 });
+
+describe('the guard watches every level of the cascade — spec/README.md §2.2, §7.4', () => {
+  let concertId: number;
+  let showId: number;
+  let segmentId: number;
+
+  /**
+   * `resolve_setting` reads `allocation.base_quota` from the segment, then the
+   * show, then the concert, then `system_settings`. Every one of those is a way
+   * to raise the quota, so a guard watching only some of them is a guard with a
+   * back door — and the failure is silent until an active player is refused the
+   * base seat §7.4 promises can never be refused.
+   */
+  beforeEach(async () => {
+    await resetDb();
+    concertId = await createConcert();
+    showId = await createShow(concertId, 100);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 100,
+      // No quota of its own: it comes from the cascade.
+      baseQuota: null,
+      baseClaimDeadline: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      extrasPolicy: 'REVIEW',
+    });
+    await createPlayers(concertId, 80);
+  });
+
+  it('blocks a quota raised through shows.defaults', async () => {
+    await expect(
+      sql`
+        update shows set defaults = ${json({ 'allocation.base_quota': 2 })}::text::jsonb
+         where id = ${showId}::bigint
+      `,
+    ).rejects.toThrow(/80 active players × 2 base = 160 seats, but the segment holds 100/);
+  });
+
+  it('blocks a quota raised through system_settings, the root of the cascade', async () => {
+    await expect(
+      sql`
+        insert into system_settings (key, value)
+        values ('allocation.base_quota', ${'3'}::text::jsonb)
+      `,
+    ).rejects.toThrow(/80 active players × 3 base = 240 seats, but the segment holds 100/);
+  });
+
+  it('allows a quota the segment can actually honour', async () => {
+    await sql`
+      update shows set defaults = ${json({ 'allocation.base_quota': 1 })}::text::jsonb
+       where id = ${showId}::bigint
+    `;
+    const [row] = await sql<{ segment_pool: { unclaimed_base: number } }[]>`
+      select segment_pool(${segmentId}::bigint)
+    `;
+    expect(row.segment_pool.unclaimed_base).toBe(80);
+  });
+
+  it('blocks lowering the hall through the cascade, not just the column', async () => {
+    // §7.7: "The edit is validated against the hall total." The hall resolves
+    // through the same levels as everything else, so lowering it via `defaults`
+    // must be refused exactly as lowering the column is.
+    await sql`update shows set capacity = 200 where id = ${showId}::bigint`;
+    await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 100 });
+
+    // Drop the show's own column so the hall resolves upward instead.
+    await sql`update shows set capacity = null where id = ${showId}::bigint`;
+
+    await expect(
+      sql`
+        update concerts set defaults = ${json({ capacity: 150 })}::text::jsonb
+         where id = ${concertId}::bigint
+      `,
+    ).rejects.toThrow(/total 200 seats, but the hall holds 150/);
+  });
+});

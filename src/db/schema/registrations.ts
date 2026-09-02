@@ -185,7 +185,13 @@ export const attendees = pgTable(
     showId: fk('show_id').notNull(),
     segmentId: fk('segment_id').notNull(),
 
-    fullName: text('full_name'),
+    /**
+     * Not null: §5.1 marks only `email` as nullable here, and an unnamed
+     * attendee gets the generated placeholder "Guest of {contact_name}" rather
+     * than a null (decision 32, spec/v2.md §8.2.1). The door searches this
+     * string and the renderer prints it; a null finds nobody and prints blank.
+     */
+    fullName: text('full_name').notNull(),
     nameSource: nameSource('name_source').notNull(),
     email: citext('email'),
 

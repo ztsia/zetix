@@ -5,22 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1788340093814,
-      "tag": "0000_violet_dragon_lord",
+      "when": 1788362057912,
+      "tag": "0000_workable_gauntlet",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1788340731780,
+      "when": 1788362059291,
       "tag": "0001_allocation_engine",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1788347909014,
-      "tag": "0002_foamy_thunderbolt",
       "breakpoints": true
     }
   ]

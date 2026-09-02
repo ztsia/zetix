@@ -91,6 +91,12 @@ the segment's capacity and let the extras pool absorb the difference. A "knowing
 buys nothing that those two do not, and costs a code path, a UI, a warning banner and a permanent
 ambiguity about which promise is in force.
 
+**BASE seats are granted seat by seat, not whole-party.** A player owed two seats who asks for two
+when one remains gets that one confirmed and the other waitlisted. The whole-party rule below is
+written about *extras* requests — where the pool decides an ordering between competing strangers and
+cutting a party in half is a worse answer than making it wait. A player's base allocation is a promise
+to that player rather than a place in a queue, so giving them as much of it as exists is right.
+
 **EXTRA seats** follow the segment's `extras_policy`:
 
 - **`REVIEW` (default for player segments).** Requests are created as `PENDING_REVIEW` with

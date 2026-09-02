@@ -390,3 +390,58 @@ describe('every grant routes through claim_seats() — spec/allocation.md §7.6'
     expect(row.n).toBe(1);
   });
 });
+
+describe('a seat is confirmed by the engine, not by an UPDATE', () => {
+  it('refuses to promote a waitlisted seat by hand', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"},{"full_name":"B","allocation_type":"EXTRA"}]'}::text::jsonb,
+                         false)
+    `;
+
+    // One confirmed, one waitlisted. Flipping the waitlisted row by hand would
+    // take a seat without passing any ceiling — the same hole as a direct
+    // insert, and it needs the same wall.
+    await expect(
+      sql`
+        update attendees set status = 'CONFIRMED'
+         where segment_id = ${segmentId}::bigint and status = 'WAITLIST'
+      `,
+    ).rejects.toThrow(/a seat is confirmed by claim_seats\(\), not by updating its status/);
+  });
+
+  it('still allows cancelling, which frees a seat rather than taking one', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 5,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    await sql`
+      update attendees set status = 'CANCELLED' where segment_id = ${segmentId}::bigint
+    `;
+    const [row] = await sql<{ segment_pool: { confirmed: number } }[]>`
+      select segment_pool(${segmentId}::bigint)
+    `;
+    expect(row.segment_pool.confirmed).toBe(0);
+  });
+});

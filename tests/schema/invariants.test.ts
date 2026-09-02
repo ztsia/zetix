@@ -445,3 +445,129 @@ describe('a seat is confirmed by the engine, not by an UPDATE', () => {
     expect(row.segment_pool.confirmed).toBe(0);
   });
 });
+
+describe('soft delete frees seats the same way cancellation does — decision 7, §7.9', () => {
+  let showId: number;
+  let segmentId: number;
+  let registrationId: number;
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 1);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    registrationId = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+  });
+
+  it('cancels and soft-deletes the seats, so the resold seat is not double-booked', async () => {
+    // Soft delete is the documented delete mechanism (decision 7), so leaving
+    // it out of the cascade was the larger of the two holes: the pool stops
+    // counting the registration either way, and a seat left CONFIRMED is sold
+    // again while the door still holds a valid ticket for it.
+    await sql`update registrations set deleted_at = now() where id = ${registrationId}::bigint`;
+
+    const [seats] = await sql<{ live: number }[]>`
+      select count(*)::int as live from attendees
+       where registration_id = ${registrationId}::bigint
+         and status = 'CONFIRMED' and deleted_at is null
+    `;
+    expect(seats.live).toBe(0);
+
+    // The seat really is free, and selling it again yields exactly one holder.
+    const next = await createRegistration({ showId, segmentId });
+    await sql`
+      select claim_seats(${segmentId}::bigint, ${next}::bigint,
+                         ${'[{"full_name":"B","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    const [total] = await sql<{ n: number }[]>`
+      select count(*)::int as n from attendees a
+       join registrations r on r.id = a.registration_id
+       where a.show_id = ${showId}::bigint and a.status = 'CONFIRMED'
+         and a.deleted_at is null and r.deleted_at is null
+    `;
+    expect(total.n).toBe(1);
+  });
+});
+
+describe('a moved registration must fit where it lands — spec/allocation.md §7.6', () => {
+  it('refuses a move that would overfill the destination hall', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const bigShow = await createShow(concertId, 20);
+    const tinyShow = await createShow(concertId, 1);
+    const bigSegment = await createSegment(bigShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const tinySegment = await createSegment(tinyShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 1,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+
+    const party = await createRegistration({ showId: bigShow, segmentId: bigSegment });
+    await sql`
+      select claim_seats(${bigSegment}::bigint, ${party}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"},{"full_name":"B","allocation_type":"EXTRA"},{"full_name":"C","allocation_type":"EXTRA"}]'}::text::jsonb,
+                         false)
+    `;
+
+    // §5.2's composite keys make parent and children move together; nothing
+    // checked whether the destination had room, so a party of three landed in a
+    // one-seat hall with no override and no audit entry.
+    await expect(
+      sql.begin(async (tx) => {
+        await tx`
+          update attendees set show_id = ${tinyShow}::bigint, segment_id = ${tinySegment}::bigint
+           where registration_id = ${party}::bigint
+        `;
+        await tx`
+          update registrations set show_id = ${tinyShow}::bigint, segment_id = ${tinySegment}::bigint
+           where id = ${party}::bigint
+        `;
+      }),
+    ).rejects.toThrow(/already has 3 confirmed seats|would hold 3 confirmed seats/);
+  });
+
+  it('allows a move the destination can hold', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 20);
+    const from = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const to = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+
+    const party = await createRegistration({ showId, segmentId: from });
+    await sql`
+      select claim_seats(${from}::bigint, ${party}::bigint,
+                         ${'[{"full_name":"A","allocation_type":"EXTRA"}]'}::text::jsonb, false)
+    `;
+
+    await sql.begin(async (tx) => {
+      await tx`update attendees set segment_id = ${to}::bigint where registration_id = ${party}::bigint`;
+      await tx`update registrations set segment_id = ${to}::bigint where id = ${party}::bigint`;
+    });
+
+    const [row] = await sql<{ segment_pool: { confirmed: number } }[]>`
+      select segment_pool(${to}::bigint)
+    `;
+    expect(row.segment_pool.confirmed).toBe(1);
+  });
+});

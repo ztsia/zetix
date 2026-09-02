@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { getDb } from './client';
+import { rethrowDbError } from './errors';
 
 /**
  * The four-level configuration cascade (spec/README.md §2.2, spec/domain.md §6).
@@ -35,15 +36,19 @@ export async function resolveSetting<T = unknown>(
   key: string,
   ctx: SettingContext = {},
 ): Promise<T | null> {
-  const rows = await getDb().execute<{ resolve_setting: T | null }>(sql`
-    select resolve_setting(
-      ${key}::text,
-      ${ctx.segmentId ?? null}::bigint,
-      ${ctx.showId ?? null}::bigint,
-      ${ctx.concertId ?? null}::bigint
-    )
-  `);
-  return rows[0]?.resolve_setting ?? null;
+  try {
+    const rows = await getDb().execute<{ resolve_setting: T | null }>(sql`
+      select resolve_setting(
+        ${key}::text,
+        ${ctx.segmentId ?? null}::bigint,
+        ${ctx.showId ?? null}::bigint,
+        ${ctx.concertId ?? null}::bigint
+      )
+    `);
+    return rows[0]?.resolve_setting ?? null;
+  } catch (error) {
+    rethrowDbError(error);
+  }
 }
 
 /** Resolution failure, carrying the key so the admin UI can name the field. */

@@ -227,6 +227,17 @@ than needing their own rule:
 No branch in code implements this; it is what the two formulas in §7.2 already say. State it here so
 nobody later "fixes" it into a special case.
 
+**A player claiming base *for the first time* after the deadline is still granted it, if seats
+remain.** The deadline releases the *reservation* — §7.2 stops subtracting `unclaimed_base`, so those
+seats become available to the extras queue — but §7.4's grant rule carries no deadline qualifier, and
+nothing in the system tells a player their allocation has expired. So a late claimant competes for
+whatever is left rather than holding seats back, and takes nothing that the queue has already taken.
+The "private second chance" §7.9 rules out is the narrower case above: a seat *cancelled* after the
+deadline goes to the queue rather than back to the player who released it.
+
+*(This is the behaviour as implemented. It is the one place where §7.4 and §7.9 can be read against
+each other, so it is written down rather than left to whoever reads them next.)*
+
 Cancellation also **cancels any `QUEUED` or `DRAFT` outbox rows** for that registration, and never
 clears `ticket_sent_at` — a ticket that was delivered was delivered, and the door needs to know the
 code exists so it can show *"cancelled — refer to desk"* (`checkin.md` §12.1) rather than *"not found"*.

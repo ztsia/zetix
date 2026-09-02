@@ -54,6 +54,17 @@ const SYSTEM_SEEDS: Record<string, unknown> = {
    * AUTO_FCFS. Stored as an object keyed by audience mode so the default stays
    * data — a literal in a `.tsx` file would be the same bug as a hardcoded
    * capacity. `resolve_setting` picks the branch from the segment.
+   *
+   * §6 lists this key in its *operational* table, whose preamble says the
+   * system "ships with no **numeric** default for any of them". This one is not
+   * numeric, and decision 4 states its defaults outright — so seeding it is how
+   * that decision is expressed as data rather than as a constant in a form.
+   * The alternative reading, that it must never be seeded, would leave
+   * decision 4's defaults living nowhere at all.
+   *
+   * Note what this does *not* soften: `claim_seats()` still raises when the key
+   * resolves to nothing, so a database seeded by hand and missing it fails loudly
+   * rather than auto-granting what should have been reviewed.
    */
   'allocation.extras_policy': { PLAYER_INVITED: 'REVIEW', PUBLIC: 'AUTO_FCFS' },
 };

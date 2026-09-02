@@ -276,3 +276,33 @@ describe('the guard watches every level of the cascade — spec/README.md §2.2,
     ).rejects.toThrow(/total 200 seats, but the hall holds 150/);
   });
 });
+
+describe('removing a per-player override raises the entitlement too — §7.4', () => {
+  it('refuses a DELETE that would oversubscribe the segment', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 100);
+    // Start roomy enough to hold ten players at the full quota, so the roster
+    // can be built before the override is what makes the numbers fit.
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 20,
+      baseQuota: 2,
+      extrasPolicy: 'REVIEW',
+    });
+    const players = await createPlayers(concertId, 10);
+
+    // 9 players at 2 plus one held down to 1 = 19, so the segment can shrink.
+    await sql`
+      insert into player_allocations (player_id, segment_id, base_quota_override)
+      values (${players[9]}::bigint, ${segmentId}::bigint, 1)
+    `;
+    await sql`update show_segments set capacity = 19 where id = ${segmentId}::bigint`;
+
+    // Deleting the override reads like housekeeping and is not: that player
+    // goes back to the segment quota and the total becomes 20.
+    await expect(
+      sql`delete from player_allocations where segment_id = ${segmentId}::bigint`,
+    ).rejects.toThrow(/10 active players × 2 base = 20 seats, but the segment holds 19/);
+  });
+});

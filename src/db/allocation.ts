@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { getDb } from './client';
+import { dbErrorMessage, rethrowDbError } from './errors';
 
 /**
  * The typed doorway to the allocation engine (spec/allocation.md §7).
@@ -89,23 +90,33 @@ export async function claimSeats(
     allocation_type: r.allocationType,
   }));
 
-  const rows = await getDb().execute<{ claim_seats: ClaimOutcome }>(sql`
-    select claim_seats(
-      ${segmentId}::bigint,
-      ${registrationId}::bigint,
-      ${JSON.stringify(payload)}::jsonb,
-      ${options.override ?? false}::boolean
-    )
-  `);
-  return rows[0].claim_seats;
+  try {
+    const rows = await getDb().execute<{ claim_seats: ClaimOutcome }>(sql`
+      select claim_seats(
+        ${segmentId}::bigint,
+        ${registrationId}::bigint,
+        ${JSON.stringify(payload)}::text::jsonb,
+        ${options.override ?? false}::boolean
+      )
+    `);
+    return rows[0].claim_seats;
+  } catch (error) {
+    // The engine's refusals are written for a person to read; do not let
+    // Drizzle's "Failed query: …" wrapper be what reaches the screen.
+    rethrowDbError(error);
+  }
 }
 
 /** The live §7.2 figures for one segment — the extras review header reads these (§7.5). */
 export async function segmentPool(segmentId: number): Promise<SegmentPool> {
-  const rows = await getDb().execute<{ segment_pool: SegmentPool }>(sql`
-    select segment_pool(${segmentId}::bigint)
-  `);
-  return rows[0].segment_pool;
+  try {
+    const rows = await getDb().execute<{ segment_pool: SegmentPool }>(sql`
+      select segment_pool(${segmentId}::bigint)
+    `);
+    return rows[0].segment_pool;
+  } catch (error) {
+    rethrowDbError(error);
+  }
 }
 
 /**
@@ -123,6 +134,7 @@ export async function checkBaseEntitlement(
     await getDb().execute(sql`select assert_base_entitlement_fits(${segmentId}::bigint)`);
     return { ok: true };
   } catch (error) {
-    return { ok: false, message: (error as Error).message };
+    // The whole point of this function is the sentence the database raised.
+    return { ok: false, message: dbErrorMessage(error) };
   }
 }

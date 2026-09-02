@@ -546,14 +546,17 @@ create constraint trigger system_settings_guard
 create or replace function tg_player_allocation_entitlement() returns trigger
 language plpgsql as $$
 begin
-  perform assert_base_entitlement_fits(new.segment_id);
+  perform assert_base_entitlement_fits(coalesce(new.segment_id, old.segment_id));
   return null;
 end;
 $$;--> statement-breakpoint
 
 drop trigger if exists player_allocations_entitlement_guard on player_allocations;--> statement-breakpoint
+-- `or delete` as well: an override can be *below* the segment quota, so
+-- removing it raises that player's entitlement back to the segment value. The
+-- delete case is the one that reads like housekeeping and is not.
 create constraint trigger player_allocations_entitlement_guard
-  after insert or update on player_allocations
+  after insert or update or delete on player_allocations
   deferrable initially deferred
   for each row execute function tg_player_allocation_entitlement();--> statement-breakpoint
 
@@ -614,6 +617,8 @@ declare
   v_confirmed int;
   v_segment   show_segments%rowtype;
 begin
+  if coalesce(current_setting('zetix.granting', true), '') = 'on' then return; end if;
+
   select * into v_segment from show_segments where id = p_segment_id;
   if not found or v_segment.deleted_at is not null then return; end if;
 
@@ -716,6 +721,70 @@ create trigger attendees_promotion_guard
   for each row execute function tg_attendee_promotion();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
+-- A moved registration must fit where it lands
+--------------------------------------------------------------------------------
+
+-- §7.6 supports moving a registration between segments and shows, and §5.2's
+-- composite foreign keys make sure parent and children move together. Neither
+-- checks that the destination has room: a party of six moved into a one-seat
+-- hall committed with no override, no typed confirmation and no `audit_log`
+-- row. Every other ceiling on this branch is enforced in Postgres so no route
+-- can bypass it; this route had no guard at any layer.
+--
+-- Deferred, because a move is several statements: the registration and its
+-- attendees both change, and the intermediate states are meaningless.
+--
+-- An admin who really means to overfill can set `zetix.granting`, the same
+-- deliberate opt-out the insert and promotion guards use — §7.6 allows
+-- exceeding capacity, but only on purpose.
+create or replace function assert_hall_covers_confirmed(p_show_id bigint) returns void
+language plpgsql as $$
+declare
+  v_hall      int;
+  v_confirmed int;
+begin
+  if coalesce(current_setting('zetix.granting', true), '') = 'on' then return; end if;
+  if not exists (select 1 from shows where id = p_show_id and deleted_at is null) then return; end if;
+
+  v_hall := (resolve_setting('capacity', null, p_show_id)) #>> '{}';
+  if v_hall is null then return; end if;
+
+  select count(*)::int into v_confirmed
+    from attendees a
+    join registrations r on r.id = a.registration_id
+   where a.show_id = p_show_id
+     and a.status = 'CONFIRMED'
+     and a.deleted_at is null
+     and r.deleted_at is null
+     and r.status <> 'CANCELLED';
+
+  if v_confirmed > v_hall then
+    raise exception 'This show would hold % confirmed seats, but the hall holds %.',
+      v_confirmed, v_hall
+      using hint = 'Move fewer seats, raise the hall capacity, or take responsibility for the overfill deliberately (spec/allocation.md §7.6).';
+  end if;
+end;
+$$;--> statement-breakpoint
+
+create or replace function tg_attendee_moved() returns trigger
+language plpgsql as $$
+begin
+  if new.segment_id is distinct from old.segment_id
+     or new.show_id is distinct from old.show_id then
+    perform assert_capacity_covers_confirmed(new.segment_id);
+    perform assert_hall_covers_confirmed(new.show_id);
+  end if;
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists attendees_move_guard on attendees;--> statement-breakpoint
+create constraint trigger attendees_move_guard
+  after update of segment_id, show_id on attendees
+  deferrable initially deferred
+  for each row execute function tg_attendee_moved();--> statement-breakpoint
+
+--------------------------------------------------------------------------------
 -- qr_token is immutable for the life of the attendee
 --------------------------------------------------------------------------------
 
@@ -763,19 +832,35 @@ create trigger attendees_qr_token_immutable
 create or replace function tg_registration_cancel_cascade() returns trigger
 language plpgsql as $$
 begin
+  -- Cancellation and soft delete are the same event as far as the seats are
+  -- concerned. `segment_pool()` stops counting a registration on either, so if
+  -- the attendees are left CONFIRMED and undeleted the seat is resold while the
+  -- door — which reads `attendees` — still holds a valid ticket for it. Soft
+  -- delete is the *documented* delete mechanism (decision 7,
+  -- spec/README.md §2.5), so leaving it out of this cascade was the larger hole
+  -- of the two.
   if new.status = 'CANCELLED' and old.status is distinct from 'CANCELLED' then
     update attendees
        set status = 'CANCELLED'
      where registration_id = new.id
        and status <> 'CANCELLED';
   end if;
+
+  if new.deleted_at is not null and old.deleted_at is null then
+    update attendees
+       set status = 'CANCELLED',
+           deleted_at = new.deleted_at
+     where registration_id = new.id
+       and deleted_at is null;
+  end if;
+
   return null;
 end;
 $$;--> statement-breakpoint
 
 drop trigger if exists registrations_cancel_cascade on registrations;--> statement-breakpoint
 create trigger registrations_cancel_cascade
-  after update of status on registrations
+  after update of status, deleted_at on registrations
   for each row execute function tg_registration_cancel_cascade();--> statement-breakpoint
 
 --------------------------------------------------------------------------------

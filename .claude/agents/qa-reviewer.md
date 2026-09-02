@@ -277,9 +277,6 @@ pnpm exec playwright test          # starts `pnpm dev` on :3100 against zetix_qa
 Chromium 141 is preinstalled and `@playwright/test` is pinned to 1.56.1 to match it.
 **Never run `playwright install`** — it downloads a second copy and may not match.
 
-`pnpm build` throws `DATABASE_URL is not set` unless you export one — that is deliberate, and CI sets
-it. Export `QA_DATABASE_URL` into it and the build passes; it is not a finding.
-
 There is no network route to Supabase and you never need one. You never need the production database
 password or the service-role key; if you find yourself wanting either, you have taken a wrong turn.
 

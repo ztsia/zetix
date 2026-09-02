@@ -757,8 +757,16 @@ begin
       for update of s;
 
   select * into v_segment from show_segments where id = p_segment_id;
-  if not found then
+  if not found or v_segment.deleted_at is not null then
     raise exception 'segment % does not exist', p_segment_id;
+  end if;
+
+  -- `assert_segments_fit_hall()` ignores deleted segments when it adds up the
+  -- hall, so granting into one would put people in seats the hall arithmetic
+  -- says are not there.
+  if exists (select 1 from shows where id = v_segment.show_id and deleted_at is not null) then
+    raise exception 'show % has been deleted, so its segments cannot be given seats',
+      v_segment.show_id;
   end if;
 
   -- `for update` on the registration as well as the show. The show lock alone
@@ -870,11 +878,32 @@ begin
   -- hold — a player registering twice still holds one quota (§7.6).
   v_base_room := 0;
   if v_segment.audience_mode = 'PLAYER_INVITED' and v_registration.player_id is not null then
+    -- `is_active`, `deleted_at` and the concert must all match what
+    -- `segment_pool()` and `assert_base_entitlement_fits()` count. They both
+    -- consider only active, undeleted players of this concert; without the same
+    -- predicates here the grant path spends a seat the pool reserved for
+    -- somebody else, and an active player is refused the base allocation §7.4
+    -- promises they can never be refused before the deadline.
+    --
+    -- The concert check also closes a gap the foreign key cannot: `players` is
+    -- concert-scoped but `registrations.player_id` references it directly, so a
+    -- player of another concert could otherwise draw on this segment's quota
+    -- while `unclaimed_base` never counted them.
     select coalesce(pa.base_quota_override, v_quota) into v_quota
       from players p
+      join shows s on s.id = v_segment.show_id
       left join player_allocations pa
              on pa.player_id = p.id and pa.segment_id = p_segment_id
-     where p.id = v_registration.player_id;
+     where p.id = v_registration.player_id
+       and p.concert_id = s.concert_id
+       and p.is_active
+       and p.deleted_at is null;
+
+    -- Not found means the linked player is inactive, deleted, or belongs to
+    -- another concert: they are owed nothing here, so BASE requests waitlist.
+    if not found then
+      v_quota := null;
+    end if;
 
     if v_quota is not null then
       select count(*)::int into v_base_claimed
@@ -968,10 +997,16 @@ begin
       end if;
 
     else
-      -- HELD and COMP are placed by an admin outside the extras pool, but still
-      -- inside the segment and the hall unless overridden.
-      if p_override or (v_segment_room > 0 and v_hall_headroom > 0) then
+      -- HELD and COMP draw on the **extras pool**, not merely on `open_seats`.
+      -- Before the deadline the pool is what remains after every active player's
+      -- base entitlement, so charging them to `open_seats` alone let an admin
+      -- quietly spend seats the §7.4 guard had reserved — and the next base
+      -- claim was waitlisted before the deadline, which §7.4 forbids. An admin
+      -- who really means to take a reserved seat still can, deliberately, with
+      -- the override.
+      if p_override or (v_extras_room > 0 and v_segment_room > 0 and v_hall_headroom > 0) then
         v_status := 'CONFIRMED';
+        v_extras_room := greatest(0, v_extras_room - 1);
         v_segment_room := greatest(0, v_segment_room - 1);
         v_hall_headroom := greatest(0, v_hall_headroom - 1);
         -- Counted, and counted separately. Reporting a granted HELD seat as

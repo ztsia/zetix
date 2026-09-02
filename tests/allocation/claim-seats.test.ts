@@ -680,3 +680,168 @@ describe('claim_seats() — a party of mixed allocation types', () => {
     expect(await countAttendees(publicSegment, 'CONFIRMED')).toBe(5);
   });
 });
+
+describe('claim_seats() — who is actually owed a base seat', () => {
+  let concertId: number;
+  let showId: number;
+  let segmentId: number;
+
+  /**
+   * `segment_pool()` and `assert_base_entitlement_fits()` both count only
+   * active, undeleted players of this concert. The grant path must use exactly
+   * the same predicates, or it spends seats the pool reserved for somebody
+   * else — and §7.4 promises "a player is never refused their base allocation
+   * before the deadline".
+   */
+  beforeEach(async () => {
+    await resetDb();
+    concertId = await createConcert();
+    showId = await createShow(concertId, 2);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 2,
+      baseQuota: 1,
+      baseClaimDeadline: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      extrasPolicy: 'REVIEW',
+    });
+  });
+
+  it('refuses a deactivated player, so the seats stay with the active ones', async () => {
+    const [activeOne, activeTwo] = await createPlayers(concertId, 2);
+    const [dormant] = await sql<{ id: number }[]>`
+      insert into players (concert_id, full_name, email, invite_token, is_active)
+      values (${concertId}::bigint, 'Left the orchestra', 'gone@example.test', 'tok-gone', false)
+      returning id
+    `;
+
+    const ghost = await createRegistration({
+      showId,
+      segmentId,
+      playerId: Number(dormant.id),
+    });
+    expect((await claim(segmentId, ghost, seats(1, 'BASE'))).granted_base).toBe(0);
+
+    // Both seats were reserved for the two active players, and both get one.
+    const first = await createRegistration({ showId, segmentId, playerId: activeOne });
+    const second = await createRegistration({ showId, segmentId, playerId: activeTwo });
+    expect((await claim(segmentId, first, seats(1, 'BASE'))).granted_base).toBe(1);
+    expect((await claim(segmentId, second, seats(1, 'BASE'))).granted_base).toBe(1);
+  });
+
+  it('refuses a soft-deleted player', async () => {
+    const [playerId] = await createPlayers(concertId, 1);
+    await sql`update players set deleted_at = now() where id = ${playerId}::bigint`;
+
+    const registrationId = await createRegistration({ showId, segmentId, playerId });
+    expect((await claim(segmentId, registrationId, seats(1, 'BASE'))).granted_base).toBe(0);
+  });
+
+  it('refuses a player belonging to another concert', async () => {
+    // `players` is concert-scoped but `registrations.player_id` references it
+    // directly, so no foreign key can catch this. Without the check, an
+    // outsider draws on this segment's quota while `unclaimed_base` never
+    // counted them, and grant and pool disagree about who is entitled.
+    await createPlayers(concertId, 2);
+    const otherConcert = await createConcert('Other Concert');
+    const [outsider] = await createPlayers(otherConcert, 1);
+
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: outsider,
+    });
+    expect((await claim(segmentId, registrationId, seats(1, 'BASE'))).granted_base).toBe(0);
+  });
+});
+
+describe('claim_seats() — HELD and COMP respect the base reservation', () => {
+  let showId: number;
+  let segmentId: number;
+  let playerIds: number[];
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 2);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 2,
+      baseQuota: 1,
+      baseClaimDeadline: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    playerIds = await createPlayers(concertId, 2);
+  });
+
+  it('will not quietly spend seats the guard reserved for active players', async () => {
+    // Both seats are owed to the two players, so the extras pool is zero.
+    const admin = await createRegistration({ showId, segmentId });
+    const outcome = await claim(segmentId, admin, [
+      { full_name: 'Guest of honour', allocation_type: 'COMP' },
+      { full_name: 'Press', allocation_type: 'COMP' },
+    ]);
+    expect(outcome.granted_other).toBe(0);
+    expect(outcome.waitlisted).toBe(2);
+
+    // And the player is not refused the seat §7.4 promises them.
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+    expect((await claim(segmentId, registrationId, seats(1, 'BASE'))).granted_base).toBe(1);
+  });
+
+  it('lets an admin take a reserved seat deliberately, with the override', async () => {
+    const admin = await createRegistration({ showId, segmentId });
+    expect(
+      (
+        await claim(
+          segmentId,
+          admin,
+          [{ full_name: 'Guest of honour', allocation_type: 'COMP' }],
+          true,
+        )
+      ).granted_other,
+    ).toBe(1);
+  });
+});
+
+describe('claim_seats() — a deleted segment or show holds no event', () => {
+  it('refuses a claim into a soft-deleted segment', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await sql`update show_segments set deleted_at = now() where id = ${segmentId}::bigint`;
+
+    // The hall arithmetic ignores deleted segments, so granting into one seats
+    // people the hall total says are not there.
+    await expect(claim(segmentId, registrationId, seats(1, 'EXTRA'))).rejects.toThrow(
+      /segment .* does not exist/,
+    );
+  });
+
+  it('refuses a claim into a segment of a soft-deleted show', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+    await sql`update shows set deleted_at = now() where id = ${showId}::bigint`;
+
+    await expect(claim(segmentId, registrationId, seats(1, 'EXTRA'))).rejects.toThrow(
+      /has been deleted, so its segments cannot be given seats/,
+    );
+  });
+});

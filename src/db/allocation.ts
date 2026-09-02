@@ -48,7 +48,16 @@ export type SegmentPool = {
   /** The segment's slice of the hall. */
   sellable: number;
   confirmed: number;
-  /** Σ over active players of max(0, quota − claimed). Reported after the deadline too. */
+  /**
+   * Σ over active players of max(0, quota − claimed).
+   *
+   * Still reported after the deadline, matching the §7.3 table, which shows
+   * "18 (released)" in this column once the deadline has passed. It is no
+   * longer *subtracted* — `extras_pool` equals `open_seats` then, and
+   * `base_released` says so — but the review header wants to show what was
+   * released. Read `extras_pool` for what is available; read this only to
+   * explain it.
+   */
   unclaimed_base: number;
   /** `sellable − confirmed`. Signed: negative means an override went over. */
   open_seats: number;

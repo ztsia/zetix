@@ -108,6 +108,40 @@ describe('base entitlement guard — spec/allocation.md §7.4', () => {
     ).rejects.toThrow(/82 active players × 5 base = 410 seats, but the segment holds 200/);
   });
 
+  it('route 5 — blocks a per-player override that would breach the entitlement', async () => {
+    // `player_allocations` is the one place a single player can be promised
+    // more than the segment quota (decision 2). `segment_pool()` honours the
+    // override, so if the guard used only the flat quota the two would disagree
+    // — and the disagreement is an oversubscription nobody is warned about.
+    const [player] = await sql<{ id: number }[]>`
+      select id from players where concert_id = ${concertId}::bigint order by id limit 1
+    `;
+
+    await expect(
+      sql`
+        insert into player_allocations (player_id, segment_id, base_quota_override)
+        values (${player.id}::bigint, ${segmentId}::bigint, 100)
+      `,
+    ).rejects.toThrow(/promised 262 seats between them \(1 with a per-player override\)/);
+  });
+
+  it('allows an override that still fits, and counts it as what it really is', async () => {
+    const [player] = await sql<{ id: number }[]>`
+      select id from players where concert_id = ${concertId}::bigint order by id limit 1
+    `;
+    // 81 players at 2 plus one at 20 = 182, inside the segment's 200.
+    await sql`
+      insert into player_allocations (player_id, segment_id, base_quota_override)
+      values (${player.id}::bigint, ${segmentId}::bigint, 20)
+    `;
+
+    // And the pool agrees with the guard about what is owed.
+    const [row] = await sql<{ segment_pool: { unclaimed_base: number } }[]>`
+      select segment_pool(${segmentId}::bigint)
+    `;
+    expect(row.segment_pool.unclaimed_base).toBe(182);
+  });
+
   it('allows the two honest levers — lowering the quota and raising capacity', async () => {
     await sql`update show_segments set base_quota = 1 where id = ${segmentId}::bigint`;
     await sql`update show_segments set capacity = 100 where id = ${segmentId}::bigint`;

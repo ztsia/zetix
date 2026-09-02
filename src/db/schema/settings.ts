@@ -7,7 +7,8 @@ import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
  * Key/value rather than one wide row, because the set of tunables grows and a
  * new tunable must not be a migration. `value` is jsonb so a key can hold a
  * number, a string, a boolean, or — for `allocation.extras_policy` — an object
- * keyed by audience mode (see `src/db/settings/registry.ts`).
+ * keyed by audience mode, which `resolve_setting()` picks from using the
+ * segment's own mode.
  *
  * Two populations live here, and they behave differently on a missing value
  * (spec/domain.md §6):

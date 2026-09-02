@@ -25,6 +25,8 @@ type Request = {
 type Outcome = {
   granted_base: number;
   granted_extra: number;
+  /** HELD and COMP: granted by this function, outside the extras pool. */
+  granted_other: number;
   pending: number;
   waitlisted: number;
 };
@@ -380,5 +382,154 @@ describe('claim_seats() — cancellation returns seats, spec/allocation.md §7.9
     // §7.2 formulas rather than being implemented anywhere.
     const again = await createRegistration({ showId, segmentId, playerId });
     expect((await claim(segmentId, again, seats(1, 'BASE'))).granted_base).toBe(1);
+  });
+});
+
+describe('claim_seats() — a full segment is full for every allocation type', () => {
+  let showId: number;
+  let segmentId: number;
+  let playerIds: number[];
+
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    // The hall is far larger than the segment, so only the segment's own
+    // capacity can stop a grant. That is the case §7.4's `open_seats > 0`
+    // exists for, and the one a hall-only check misses entirely.
+    showId = await createShow(concertId, 500);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 4,
+      baseQuota: 2,
+      baseClaimDeadline: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: true,
+    });
+    playerIds = await createPlayers(concertId, 2);
+
+    // Fill the segment exactly, through the engine. This uses the admin
+    // override deliberately: before the deadline the two players are owed all
+    // four seats, so the extras pool is legitimately zero and an ordinary EXTRA
+    // request would — correctly — grant nothing. An admin seating people is how
+    // a player segment actually reaches full while base is still reserved.
+    const filler = await createRegistration({ showId, segmentId });
+    expect((await claim(segmentId, filler, seats(4, 'EXTRA'), true)).granted_extra).toBe(4);
+  });
+
+  it('waitlists a BASE seat rather than pushing the segment over', async () => {
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+
+    const outcome = await claim(segmentId, registrationId, seats(2, 'BASE'));
+    expect(outcome.granted_base).toBe(0);
+    expect(outcome.waitlisted).toBe(2);
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(4);
+  });
+
+  it('waitlists HELD and COMP seats too', async () => {
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    const outcome = await claim(segmentId, registrationId, [
+      { full_name: 'Guest of honour', allocation_type: 'HELD' },
+      { full_name: 'Press', allocation_type: 'COMP' },
+    ]);
+    expect(outcome.waitlisted).toBe(2);
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(4);
+  });
+
+  it('gives a player no private reserve once the deadline has passed', async () => {
+    // §7.9: after the deadline the freed seats belong to the extras queue, and
+    // "the player does not get a private second chance after everyone else's
+    // window has closed."
+    await sql`
+      update show_segments set base_claim_deadline = now() - interval '1 hour'
+       where id = ${segmentId}::bigint
+    `;
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+
+    expect((await claim(segmentId, registrationId, seats(1, 'BASE'))).granted_base).toBe(0);
+  });
+});
+
+describe('claim_seats() — HELD and COMP are reported, not silently written', () => {
+  it('counts them separately from extras, which do come out of the pool', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    const outcome = await claim(segmentId, registrationId, [
+      { full_name: 'Guest of honour', allocation_type: 'HELD' },
+      { full_name: 'Press', allocation_type: 'COMP' },
+      { full_name: 'Ordinary', allocation_type: 'EXTRA' },
+    ]);
+
+    // Reporting a granted HELD seat as nothing at all tells the caller the
+    // request vanished while the row exists.
+    expect(outcome).toMatchObject({ granted_other: 2, granted_extra: 1, waitlisted: 0 });
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(3);
+  });
+});
+
+describe('claim_seats() — the override relaxes capacity, not entitlement', () => {
+  it('will not grant a player more BASE seats than their quota', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 500);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 100,
+      baseQuota: 2,
+      baseClaimDeadline: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      extrasPolicy: 'REVIEW',
+    });
+    const [playerId] = await createPlayers(concertId, 1);
+    const registrationId = await createRegistration({ showId, segmentId, playerId });
+
+    // §7.6 authorises overriding the hall ceiling. Decision 17 is explicit that
+    // base entitlement has no opt-out: the honest levers are raising the quota
+    // or the capacity, both of which are recorded config changes.
+    const outcome = await claim(segmentId, registrationId, seats(5, 'BASE'), true);
+    expect(outcome.granted_base).toBe(2);
+    expect(outcome.waitlisted).toBe(3);
+  });
+});
+
+describe('claim_seats() — hostile input', () => {
+  it('names the bad argument instead of failing inside jsonb_array_elements', async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 50);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 20,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    await expect(
+      sql`select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                             ${'{"allocation_type":"EXTRA"}'}::jsonb, false)`,
+    ).rejects.toThrow(/expects an array of seat requests, got object/);
+
+    // A null element would otherwise mint a CONFIRMED seat nobody asked for.
+    await expect(
+      sql`select claim_seats(${segmentId}::bigint, ${registrationId}::bigint,
+                             ${'[null]'}::jsonb, false)`,
+    ).rejects.toThrow(/every seat request must be an object/);
+
+    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(0);
   });
 });

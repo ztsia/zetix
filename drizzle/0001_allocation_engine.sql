@@ -308,11 +308,12 @@ $$;--> statement-breakpoint
 create or replace function assert_base_entitlement_fits(p_segment_id bigint)
 returns void language plpgsql as $$
 declare
-  v_segment  show_segments%rowtype;
-  v_players  int;
-  v_quota    int;
-  v_capacity int;
-  v_needed   int;
+  v_segment    show_segments%rowtype;
+  v_players    int;
+  v_quota      int;
+  v_capacity   int;
+  v_needed     int;
+  v_overridden int;
 begin
   select * into v_segment from show_segments where id = p_segment_id;
   if not found or v_segment.deleted_at is not null then return; end if;
@@ -324,19 +325,39 @@ begin
   v_capacity := (resolve_setting('segment.capacity', p_segment_id)) #>> '{}';
 
   -- Nothing promised, or no capacity entered yet: nothing to contradict.
-  if v_quota is null or v_capacity is null or v_quota = 0 then return; end if;
+  if v_capacity is null then return; end if;
 
-  select count(*)::int into v_players
+  -- §7.4 writes the check as `base_quota × count(active players)`, which is
+  -- exact only while every player is on the segment quota. `player_allocations`
+  -- can raise an individual player above it (decision 2), and `segment_pool()`
+  -- resolves the quota **per player** — so the literal formula and the pool
+  -- disagree the moment an override exists, and the disagreement is an
+  -- oversubscription nobody is warned about.
+  --
+  -- Summing the resolved per-player entitlement is the same number as the spec
+  -- formula whenever no override exists, and the true entitlement when one does.
+  select
+      count(*)::int,
+      coalesce(sum(coalesce(pa.base_quota_override, v_quota)), 0)::int,
+      count(pa.base_quota_override)::int
+    into v_players, v_needed, v_overridden
     from players p
     join shows s on s.id = v_segment.show_id
+    left join player_allocations pa
+           on pa.player_id = p.id and pa.segment_id = p_segment_id
    where p.concert_id = s.concert_id
      and p.is_active
      and p.deleted_at is null;
 
-  if v_players = 0 then return; end if;
+  if v_players = 0 or v_needed = 0 or v_needed <= v_capacity then return; end if;
 
-  v_needed := v_players * v_quota;
-  if v_needed <= v_capacity then return; end if;
+  -- With overrides in play the "N players × Q base" phrasing would be a lie, so
+  -- the message says what is actually promised instead.
+  if v_overridden > 0 then
+    raise exception
+      'Those % active players are promised % seats between them (% with a per-player override), but the segment holds %. Raise capacity to %, or lower an override.',
+      v_players, v_needed, v_overridden, v_capacity, v_needed;
+  end if;
 
   -- The error names the numbers and the shortfall, and the ways out. A quota of
   -- zero is not one of them — it entitles nobody to anything — so that lever is
@@ -346,10 +367,13 @@ begin
     case when v_players = 1 then '' else 's' end,
     v_quota, v_needed, v_capacity,
     case when v_capacity / v_players >= 1
-      then format('Reduce the quota to %s, raise capacity to %s, or deactivate %s players.',
-                  v_capacity / v_players, v_needed, v_players - (v_capacity / v_quota))
-      else format('Raise capacity to %s, or deactivate %s players.',
-                  v_needed, v_players - (v_capacity / v_quota))
+      then format('Reduce the quota to %s, raise capacity to %s, or deactivate %s player%s.',
+                  v_capacity / v_players, v_needed,
+                  v_players - (v_capacity / v_quota),
+                  case when v_players - (v_capacity / v_quota) = 1 then '' else 's' end)
+      else format('Raise capacity to %s, or deactivate %s player%s.',
+                  v_needed, v_players - (v_capacity / v_quota),
+                  case when v_players - (v_capacity / v_quota) = 1 then '' else 's' end)
     end;
 end;
 $$;--> statement-breakpoint
@@ -436,6 +460,24 @@ create constraint trigger concerts_entitlement_guard
   after update of defaults on concerts
   deferrable initially deferred
   for each row execute function tg_concert_entitlement();--> statement-breakpoint
+
+-- Route 5: a per-player quota override. `player_allocations` is the one place a
+-- single player can be promised more than the segment quota, and it was the
+-- last unguarded way to oversubscribe: the pool honours the override, so
+-- without this the guard and the pool disagree and nothing objects.
+create or replace function tg_player_allocation_entitlement() returns trigger
+language plpgsql as $$
+begin
+  perform assert_base_entitlement_fits(new.segment_id);
+  return null;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists player_allocations_entitlement_guard on player_allocations;--> statement-breakpoint
+create constraint trigger player_allocations_entitlement_guard
+  after insert or update on player_allocations
+  deferrable initially deferred
+  for each row execute function tg_player_allocation_entitlement();--> statement-breakpoint
 
 --------------------------------------------------------------------------------
 -- Segments must fit the hall, and must not shed seats people already hold
@@ -574,6 +616,7 @@ declare
   v_hall_confirmed int;
   v_hall_headroom  int;
   v_extras_room    int;
+  v_segment_room   int;
   v_quota          int;
   v_base_claimed   int;
   v_base_room      int;
@@ -586,6 +629,7 @@ declare
   v_extra_grantable int;
   v_granted_base   int := 0;
   v_granted_extra  int := 0;
+  v_granted_other  int := 0;
   v_pending        int := 0;
   v_waitlisted     int := 0;
 begin
@@ -611,10 +655,35 @@ begin
       p_registration_id, v_registration.segment_id, p_segment_id;
   end if;
 
+  -- The party must be an array of seat objects. Postgres would otherwise fail
+  -- inside `jsonb_array_elements` with "cannot extract elements from an object",
+  -- which tells the caller nothing about which argument was wrong.
+  if p_requests is null or jsonb_typeof(p_requests) <> 'array' then
+    raise exception 'claim_seats expects an array of seat requests, got %',
+      coalesce(jsonb_typeof(p_requests), 'null')
+      using hint = 'One object per seat, e.g. [{"full_name": "Ada", "allocation_type": "BASE"}].';
+  end if;
+
+  if exists (select 1 from jsonb_array_elements(p_requests) e
+              where jsonb_typeof(e) <> 'object') then
+    raise exception 'every seat request must be an object'
+      using hint = 'A null or bare value in the array would silently mint a seat nobody asked for.';
+  end if;
+
   -- Recompute from the database under the lock. Never trust a figure the caller
   -- read before it was taken.
   v_pool := segment_pool(p_segment_id);
   v_extras_room := (v_pool ->> 'extras_pool')::int;
+
+  -- §7.4 grants a BASE seat when the player is still owed one **and**
+  -- `open_seats > 0` *in that segment*. The hall having room is a separate,
+  -- weaker condition: a segment can be full inside a hall that is not.
+  -- `extras_pool` already sits below this figure, so EXTRA was bounded; BASE,
+  -- HELD and COMP were not, and could push a full segment past its capacity
+  -- with no override and no error.
+  -- Floored at zero: an earlier override can leave `open_seats` negative
+  -- (§7.2), and a negative must not read as "room for more".
+  v_segment_room := greatest(0, (v_pool ->> 'open_seats')::int);
 
   v_hall_capacity := (resolve_setting('capacity', p_segment_id)) #>> '{}';
   if v_hall_capacity is null then
@@ -677,7 +746,7 @@ begin
   elsif v_policy = 'REVIEW' then
     v_extra_grantable := 0;
   else
-    v_extra_grantable := least(v_extras_room, v_hall_headroom, v_extra_wanted);
+    v_extra_grantable := least(v_extras_room, v_segment_room, v_hall_headroom, v_extra_wanted);
     -- Strict order, never best-fit: a party that does not fit waits whole
     -- unless partial grants are allowed (§7.5).
     if v_extra_grantable < v_extra_wanted and coalesce(v_partial, false) is not true then
@@ -690,15 +759,23 @@ begin
     v_type := coalesce(v_request ->> 'allocation_type', 'EXTRA');
 
     if v_type = 'BASE' then
-      if p_override or (v_base_room > 0 and v_hall_headroom > 0) then
+      -- `p_override` relaxes the **capacity ceilings** and nothing else. §7.6
+      -- authorises overriding the hall; §7.5 lets an admin grant past the pool.
+      -- Neither authorises inventing base entitlement: decision 17 is explicit
+      -- that there is no opt-out from the promise made to players, and the two
+      -- honest levers are raising the quota or raising capacity.
+      if v_base_room > 0 and (p_override or (v_segment_room > 0 and v_hall_headroom > 0)) then
         v_status := 'CONFIRMED';
         v_base_room := greatest(0, v_base_room - 1);
+        v_segment_room := greatest(0, v_segment_room - 1);
         v_hall_headroom := greatest(0, v_hall_headroom - 1);
         v_granted_base := v_granted_base + 1;
       else
         -- A player is never refused their base allocation before the deadline
-        -- (§7.4); reaching here means the quota is spent or the hall is full,
-        -- and the seat waits rather than being invented.
+        -- (§7.4); reaching here means the quota is spent, or the segment or hall
+        -- is full, and the seat waits rather than being invented. The §7.4 guard
+        -- is what makes the full-segment case rare — it is not a licence to skip
+        -- the check.
         v_status := 'WAITLIST';
         v_waitlisted := v_waitlisted + 1;
       end if;
@@ -707,6 +784,7 @@ begin
       if v_extra_grantable > 0 then
         v_status := 'CONFIRMED';
         v_extra_grantable := v_extra_grantable - 1;
+        v_segment_room := greatest(0, v_segment_room - 1);
         v_hall_headroom := greatest(0, v_hall_headroom - 1);
         v_granted_extra := v_granted_extra + 1;
       elsif v_policy = 'REVIEW' and not p_override then
@@ -718,11 +796,17 @@ begin
       end if;
 
     else
-      -- HELD and COMP are placed by an admin outside the pool, but still
-      -- inside the hall unless overridden.
-      if p_override or v_hall_headroom > 0 then
+      -- HELD and COMP are placed by an admin outside the extras pool, but still
+      -- inside the segment and the hall unless overridden.
+      if p_override or (v_segment_room > 0 and v_hall_headroom > 0) then
         v_status := 'CONFIRMED';
+        v_segment_room := greatest(0, v_segment_room - 1);
         v_hall_headroom := greatest(0, v_hall_headroom - 1);
+        -- Counted, and counted separately. Reporting a granted HELD seat as
+        -- nothing at all tells the caller the request vanished while the row
+        -- exists; folding it into `granted_extra` would tell them a seat came
+        -- out of the extras pool, which it did not.
+        v_granted_other := v_granted_other + 1;
       else
         v_status := 'WAITLIST';
         v_waitlisted := v_waitlisted + 1;
@@ -750,6 +834,9 @@ begin
   return jsonb_build_object(
     'granted_base',  v_granted_base,
     'granted_extra', v_granted_extra,
+    -- Beyond §7.8's four keys, because HELD and COMP seats are granted by this
+    -- function and the four named keys cannot describe them.
+    'granted_other', v_granted_other,
     'pending',       v_pending,
     'waitlisted',    v_waitlisted
   );

@@ -27,6 +27,12 @@ export type SeatRequest = {
 export type ClaimOutcome = {
   granted_base: number;
   granted_extra: number;
+  /**
+   * HELD and COMP seats granted. Separate from `granted_extra` because they do
+   * not come out of the extras pool — §7.8 names four keys and cannot describe
+   * them, but writing rows the caller is never told about is worse.
+   */
+  granted_other: number;
   pending: number;
   waitlisted: number;
 };

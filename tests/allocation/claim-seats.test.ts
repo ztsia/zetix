@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, sql } from '../helpers/db';
+import { newConnection, resetDb, sql } from '../helpers/db';
 import {
   createConcert,
   json,
@@ -332,25 +332,42 @@ describe('claim_seats() — concurrency, spec/allocation.md §7.8', () => {
     });
 
     const registrationIds: number[] = [];
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 20; i++) {
       registrationIds.push(
         await createRegistration({ showId, segmentId, contactName: `Party ${i + 1}` }),
       );
     }
 
-    // 25 parties of one seat racing for 10 seats, issued together on separate
-    // connections. Without the row lock on the show, several would read the
-    // same `confirmed` count and all write.
-    const outcomes = await Promise.all(
-      registrationIds.map((id) => claim(segmentId, id, seats(1, 'EXTRA'))),
-    );
+    // **One connection per party**, not a shared pool.
+    //
+    // This test used to run 25 parties through a pool capped at four, which
+    // serialises them four at a time — so with the row lock removed it caught
+    // the resulting oversell only about one run in three. A test named for
+    // oversell that notices an oversell a third of the time is worse than no
+    // test: it makes the property look covered. Twenty real connections all
+    // issuing at once is the contention the lock exists for.
+    const connections = Array.from({ length: registrationIds.length }, () => newConnection());
+    try {
+      const outcomes = await Promise.all(
+        connections.map((conn, i) =>
+          conn<{ claim_seats: Outcome }[]>`
+            select claim_seats(${segmentId}::bigint, ${registrationIds[i]}::bigint,
+                               ${JSON.stringify([
+                                 { full_name: 'Guest', allocation_type: 'EXTRA' },
+                               ])}::text::jsonb, false)
+          `.then((rows) => rows[0].claim_seats),
+        ),
+      );
 
-    const granted = outcomes.reduce((sum, o) => sum + o.granted_extra, 0);
-    const waitlisted = outcomes.reduce((sum, o) => sum + o.waitlisted, 0);
+      const granted = outcomes.reduce((sum, o) => sum + o.granted_extra, 0);
+      const waitlisted = outcomes.reduce((sum, o) => sum + o.waitlisted, 0);
 
-    expect(granted).toBe(10);
-    expect(waitlisted).toBe(15);
-    expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(10);
+      expect(granted).toBe(10);
+      expect(waitlisted).toBe(10);
+      expect(await countAttendees(segmentId, 'CONFIRMED')).toBe(10);
+    } finally {
+      await Promise.all(connections.map((conn) => conn.end().catch(() => {})));
+    }
   });
 });
 
@@ -898,5 +915,89 @@ describe('claim_seats() — an attendee with no name still gets a ticket', () =>
       select count(*)::int as n from attendees where full_name is null
     `;
     expect(row.n).toBe(0);
+  });
+});
+
+describe('claim_seats() — the whole-party rule holds for a mixed party too', () => {
+  let showId: number;
+  let segmentId: number;
+  let playerIds: number[];
+
+  /**
+   * §7.5: the boundary request "is granted in part when `allow_partial_grant`
+   * is on, **otherwise skipped whole**".
+   *
+   * That held for a party made entirely of extras, and not for a mixed one: the
+   * extras budget was sized before the BASE seat was decided, so the BASE seat
+   * then spent room the budget had already counted and the extras were granted
+   * until the room ran out — cutting the party in half with partial grants off.
+   * One base seat plus guests is the ordinary shape of a player's registration
+   * after the deadline, so this was the common case, not an edge.
+   */
+  beforeEach(async () => {
+    await resetDb();
+    const concertId = await createConcert();
+    showId = await createShow(concertId, 3);
+    segmentId = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 3,
+      baseQuota: 1,
+      baseClaimDeadline: new Date(Date.now() - 3600 * 1000),
+      extrasPolicy: 'AUTO_FCFS',
+      allowPartialGrant: false,
+    });
+    playerIds = await createPlayers(concertId, 1);
+  });
+
+  it('waitlists the extras whole when the base seat leaves too little room', async () => {
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+
+    const outcome = await claim(segmentId, registrationId, [
+      { full_name: 'Pat', allocation_type: 'BASE' },
+      ...seats(3, 'EXTRA'),
+    ]);
+
+    // The player's own seat is theirs; the three guests do not fit in the two
+    // that remain, so they wait together rather than two of them going in.
+    expect(outcome.granted_base).toBe(1);
+    expect(outcome.granted_extra).toBe(0);
+    expect(outcome.waitlisted).toBe(3);
+  });
+
+  it('grants the extras in part when the segment allows partial grants', async () => {
+    await sql`
+      update show_segments set allow_partial_grant = true where id = ${segmentId}::bigint
+    `;
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      playerId: playerIds[0],
+    });
+
+    const outcome = await claim(segmentId, registrationId, [
+      { full_name: 'Pat', allocation_type: 'BASE' },
+      ...seats(3, 'EXTRA'),
+    ]);
+    expect(outcome.granted_base).toBe(1);
+    expect(outcome.granted_extra).toBe(2);
+    expect(outcome.waitlisted).toBe(1);
+  });
+
+  it('holds a REVIEW segment for review even under the override', async () => {
+    // The override relaxes capacity ceilings, not the review itself: confirming
+    // an extras request at intake would empty the §7.5 screen it exists for.
+    await sql`
+      update show_segments set extras_policy = 'REVIEW' where id = ${segmentId}::bigint
+    `;
+    const registrationId = await createRegistration({ showId, segmentId });
+
+    expect(await claim(segmentId, registrationId, seats(2, 'EXTRA'), true)).toMatchObject({
+      granted_extra: 0,
+      pending: 2,
+    });
   });
 });

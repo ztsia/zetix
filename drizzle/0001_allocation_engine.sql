@@ -491,8 +491,12 @@ create or replace function tg_system_settings_guard() returns trigger
 language plpgsql as $$
 declare
   v_show_id bigint;
+  v_key     text := coalesce(new.key, old.key);
 begin
-  if new.key not in ('allocation.base_quota', 'segment.capacity', 'capacity') then
+  -- `or delete` as well: removing the row that supplies a resolved value is an
+  -- edit to that value, and can leave a segment below its confirmed count or
+  -- with no capacity at any level.
+  if v_key not in ('allocation.base_quota', 'segment.capacity', 'capacity') then
     return null;
   end if;
 
@@ -505,7 +509,7 @@ $$;--> statement-breakpoint
 
 drop trigger if exists system_settings_guard on system_settings;--> statement-breakpoint
 create constraint trigger system_settings_guard
-  after insert or update on system_settings
+  after insert or update or delete on system_settings
   deferrable initially deferred
   for each row execute function tg_system_settings_guard();--> statement-breakpoint
 
@@ -593,9 +597,30 @@ begin
   if not found or v_segment.deleted_at is not null then return; end if;
 
   v_capacity := (resolve_setting('segment.capacity', p_segment_id)) #>> '{}';
-  if v_capacity is null then return; end if;
 
-  v_confirmed := (segment_pool(p_segment_id) ->> 'confirmed')::int;
+  select count(*)::int into v_confirmed
+    from attendees a
+    join registrations r on r.id = a.registration_id
+   where a.segment_id = p_segment_id
+     and a.status = 'CONFIRMED'
+     and a.deleted_at is null
+     and r.deleted_at is null
+     and r.status <> 'CANCELLED';
+
+  -- No capacity at any level is an unfinished form while the segment is empty,
+  -- and a contradiction once it holds people: it says the seats those people
+  -- are sitting in do not exist, and every later `segment_pool()` call raises.
+  -- Removing the row that *supplied* a resolved capacity is the usual way to
+  -- arrive here.
+  if v_capacity is null then
+    if v_confirmed > 0 then
+      raise exception
+        'Segment "%" holds % confirmed seats, so it cannot be left with no capacity at any level.',
+        (select name from show_segments where id = p_segment_id), v_confirmed
+        using hint = 'Set a capacity on the segment, or restore the value it was resolving through (spec/README.md §2.2).';
+    end if;
+    return;
+  end if;
 
   if v_capacity < v_confirmed then
     raise exception
@@ -820,6 +845,37 @@ create constraint trigger attendees_move_guard
   deferrable initially deferred
   for each row execute function tg_attendee_moved();--> statement-breakpoint
 
+-- A hard DELETE is a door as well as an UPDATE, and on these tables it is the
+-- more destructive one: `registrations_segment_fk` and
+-- `attendees_registration_fk` both cascade, so deleting a segment or a show
+-- silently takes its confirmed attendees with it. Soft delete was guarded and
+-- this was not, which is the same one-door-of-four mistake in a different shape.
+create or replace function tg_segment_delete_guard() returns trigger
+language plpgsql as $$
+begin
+  perform assert_nothing_confirmed_here(p_segment_id => old.id);
+  return old;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists show_segments_delete_guard on show_segments;--> statement-breakpoint
+create trigger show_segments_delete_guard
+  before delete on show_segments
+  for each row execute function tg_segment_delete_guard();--> statement-breakpoint
+
+create or replace function tg_show_delete_guard() returns trigger
+language plpgsql as $$
+begin
+  perform assert_nothing_confirmed_here(p_show_id => old.id);
+  return old;
+end;
+$$;--> statement-breakpoint
+
+drop trigger if exists shows_delete_guard on shows;--> statement-breakpoint
+create trigger shows_delete_guard
+  before delete on shows
+  for each row execute function tg_show_delete_guard();--> statement-breakpoint
+
 --------------------------------------------------------------------------------
 -- qr_token is immutable for the life of the attendee
 --------------------------------------------------------------------------------
@@ -939,6 +995,8 @@ declare
   v_policy         text;
   v_partial        boolean;
   v_request        jsonb;
+  v_index          int;
+  v_decisions      text[];
   v_type           text;
   v_status         booking_status;
   v_extra_wanted   int;
@@ -1145,10 +1203,58 @@ begin
      where e ->> 'allocation_type' = 'EXTRA'
   );
 
-  if p_override then
-    v_extra_grantable := v_extra_wanted;
-  elsif v_policy = 'REVIEW' then
+  -- **Two passes over the party, not one.**
+  --
+  -- BASE, HELD and COMP seats spend the same `v_segment_room` the extras draw
+  -- on, so an extras budget computed before they are decided is a budget for
+  -- seats that are already gone. With one pass, a party of 1 BASE + 3 EXTRA into
+  -- three free seats had its extras granted two-at-a-time until the room ran
+  -- out — cutting the party in half with `allow_partial_grant` off, which §7.5
+  -- says must be "skipped whole". That is the ordinary shape of a player's
+  -- post-deadline registration: their own seat plus guests.
+  --
+  -- So: decide the entitlement seats first, then size the extras budget against
+  -- what is genuinely left, then apply the whole-party rule to that.
+  v_decisions := array_fill(null::text, array[coalesce(jsonb_array_length(p_requests), 0)]);
+
+  for v_index, v_request in
+    select ordinality, value from jsonb_array_elements(p_requests) with ordinality
+  loop
+    v_type := v_request ->> 'allocation_type';
+
+    if v_type = 'BASE' then
+      if v_base_room > 0 and (p_override or (v_segment_room > 0 and v_hall_headroom > 0)) then
+        v_decisions[v_index] := 'CONFIRMED';
+        v_base_room := greatest(0, v_base_room - 1);
+        v_segment_room := greatest(0, v_segment_room - 1);
+        v_hall_headroom := greatest(0, v_hall_headroom - 1);
+        v_granted_base := v_granted_base + 1;
+      else
+        v_decisions[v_index] := 'WAITLIST';
+        v_waitlisted := v_waitlisted + 1;
+      end if;
+
+    elsif v_type in ('HELD', 'COMP') then
+      if p_override or (v_extras_room > 0 and v_segment_room > 0 and v_hall_headroom > 0) then
+        v_decisions[v_index] := 'CONFIRMED';
+        v_extras_room := greatest(0, v_extras_room - 1);
+        v_segment_room := greatest(0, v_segment_room - 1);
+        v_hall_headroom := greatest(0, v_hall_headroom - 1);
+        v_granted_other := v_granted_other + 1;
+      else
+        v_decisions[v_index] := 'WAITLIST';
+        v_waitlisted := v_waitlisted + 1;
+      end if;
+    end if;
+  end loop;
+
+  if v_policy = 'REVIEW' then
+    -- The override relaxes capacity ceilings, not the review itself: an extras
+    -- request in a REVIEW segment is held for the §7.5 batch grant however it
+    -- arrives. Confirming it at intake would empty the screen it exists for.
     v_extra_grantable := 0;
+  elsif p_override then
+    v_extra_grantable := v_extra_wanted;
   else
     v_extra_grantable := least(v_extras_room, v_segment_room, v_hall_headroom, v_extra_wanted);
     -- Strict order, never best-fit: a party that does not fit waits whole
@@ -1162,41 +1268,19 @@ begin
   -- connection once this one commits or rolls back.
   perform set_config('zetix.granting', 'on', true);
 
-  for v_request in select * from jsonb_array_elements(p_requests)
+  for v_index, v_request in
+    select ordinality, value from jsonb_array_elements(p_requests) with ordinality
   loop
     v_type := v_request ->> 'allocation_type';
 
-    if v_type = 'BASE' then
-      -- `p_override` relaxes the **capacity ceilings** and nothing else. §7.6
-      -- authorises overriding the hall; §7.5 lets an admin grant past the pool.
-      -- Neither authorises inventing base entitlement: decision 17 is explicit
-      -- that there is no opt-out from the promise made to players, and the two
-      -- honest levers are raising the quota or raising capacity.
-      if v_base_room > 0 and (p_override or (v_segment_room > 0 and v_hall_headroom > 0)) then
-        v_status := 'CONFIRMED';
-        v_base_room := greatest(0, v_base_room - 1);
-        v_segment_room := greatest(0, v_segment_room - 1);
-        v_hall_headroom := greatest(0, v_hall_headroom - 1);
-        v_granted_base := v_granted_base + 1;
-      else
-        -- A player is never refused their base allocation before the deadline
-        -- (§7.4); reaching here means the quota is spent, or the segment or hall
-        -- is full, and the seat waits rather than being invented. The §7.4 guard
-        -- is what makes the full-segment case rare — it is not a licence to skip
-        -- the check.
-        v_status := 'WAITLIST';
-        v_waitlisted := v_waitlisted + 1;
-      end if;
+    if v_type <> 'EXTRA' then
+      -- Decided in the first pass, above.
+      v_status := v_decisions[v_index]::booking_status;
 
-    elsif v_type = 'EXTRA' then
-      -- Both the policy budget **and** the live room are required. The budget
-      -- is computed once before the loop, from the pool as it stood then; the
-      -- BASE and HELD/COMP branches below spend `v_segment_room` and
-      -- `v_hall_headroom` as they go. Checking only the budget lets one party
-      -- spend the same seat twice — a party of 1 BASE + 1 EXTRA into a single
-      -- open seat took both, with no override and no error, and it scaled with
-      -- the party. That is the ordinary shape of a player's registration after
-      -- the base deadline: one base seat plus guests.
+    else
+      -- Both the budget and the live room are required. The budget was sized
+      -- against the room left *after* the entitlement seats were decided, and
+      -- this second check is what stops a party spending the same seat twice.
       if v_extra_grantable > 0
          and (p_override or (v_segment_room > 0 and v_hall_headroom > 0)) then
         v_status := 'CONFIRMED';
@@ -1204,7 +1288,7 @@ begin
         v_segment_room := greatest(0, v_segment_room - 1);
         v_hall_headroom := greatest(0, v_hall_headroom - 1);
         v_granted_extra := v_granted_extra + 1;
-      elsif v_policy = 'REVIEW' and not p_override then
+      elsif v_policy = 'REVIEW' then
         v_status := 'PENDING_REVIEW';
         v_pending := v_pending + 1;
       else
@@ -1212,28 +1296,6 @@ begin
         v_waitlisted := v_waitlisted + 1;
       end if;
 
-    else
-      -- HELD and COMP draw on the **extras pool**, not merely on `open_seats`.
-      -- Before the deadline the pool is what remains after every active player's
-      -- base entitlement, so charging them to `open_seats` alone let an admin
-      -- quietly spend seats the §7.4 guard had reserved — and the next base
-      -- claim was waitlisted before the deadline, which §7.4 forbids. An admin
-      -- who really means to take a reserved seat still can, deliberately, with
-      -- the override.
-      if p_override or (v_extras_room > 0 and v_segment_room > 0 and v_hall_headroom > 0) then
-        v_status := 'CONFIRMED';
-        v_extras_room := greatest(0, v_extras_room - 1);
-        v_segment_room := greatest(0, v_segment_room - 1);
-        v_hall_headroom := greatest(0, v_hall_headroom - 1);
-        -- Counted, and counted separately. Reporting a granted HELD seat as
-        -- nothing at all tells the caller the request vanished while the row
-        -- exists; folding it into `granted_extra` would tell them a seat came
-        -- out of the extras pool, which it did not.
-        v_granted_other := v_granted_other + 1;
-      else
-        v_status := 'WAITLIST';
-        v_waitlisted := v_waitlisted + 1;
-      end if;
     end if;
 
     insert into attendees (

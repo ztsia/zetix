@@ -18,6 +18,7 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     environment: 'node',
+    setupFiles: ['tests/helpers/setup.ts'],
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     // claim_seats() tests run against a real local Postgres and take a row
     // lock; running files in parallel would make the concurrency assertions

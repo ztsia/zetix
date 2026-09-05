@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
 
@@ -21,11 +22,22 @@ import { resetDb, sql } from '../helpers/db';
  * path. So this spawns the real script.
  */
 
+// Spawn tsx's own CLI on the current Node rather than `pnpm tsx`. `pnpm` on
+// Windows is `pnpm.cmd`, which execFileSync cannot execute without a shell, so
+// the whole file failed there with ENOENT while passing on Linux CI. Resolving
+// the binary keeps the point of the test — it still runs the shipping script,
+// as a real process — on every platform.
+const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'));
+
 function runSeed(args: string[] = []): string {
-  return execFileSync('pnpm', ['tsx', 'scripts/seed-settings.ts', ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL },
-  });
+  return execFileSync(
+    process.execPath,
+    [TSX_CLI, 'scripts/seed-settings.ts', ...args],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL },
+    },
+  );
 }
 
 describe('scripts/seed-settings.ts', () => {

@@ -119,15 +119,43 @@ the network.
 
   **The manifest is the attendee roster, so its endpoint is the security boundary that matters.**
   `GET /api/checkin/manifest?showId=` must verify an `operator_show_assignments` row for the caller
-  before returning a single byte, and reject with 403 otherwise. An operator who can request any
-  `showId` can download the full name list of every show, which defeats the point of scoping. Enforce
-  it in the handler *and* as a Supabase RLS policy — the handler is the contract, RLS is what survives
-  a mistake in the handler.
+  before returning a single byte. An operator who can request any `showId` can download the full name
+  list of every show, which defeats the point of scoping.
+
+  **Two independent layers, and the second one is in the database** (decision 20):
+
+  1. **The handler**, which is the contract: `canAccessShow()` from `src/lib/auth/show-access.ts`.
+     Reject with **404, not 403** — probing ids must not tell "not yours" from "not there"
+     (`../modules.md` §5.2.1).
+  2. **`manifest_for_show()`**, a `security definer` Postgres function reached by `supabase-js`
+     `.rpc('manifest_for_show', { p_show_id })`. It resolves the caller from the JWT subject, checks
+     `operator_show_assignments` itself, and returns **zero rows** — never an error — for an
+     unassigned operator, a deactivated one, an unknown subject, an absent claim, or a show that does
+     not exist. This is what survives a mistake in the handler.
+
+  It is a function rather than an RLS policy on `attendees`, and that is decision **20b**, which
+  amends decision 20's original wording. The short version: a policy is only reachable if
+  `authenticated` has been *granted* the table, and that grant publishes the roster at
+  `/rest/v1/attendees` to anyone holding the publishable key. `execute` on one function opens no such
+  door. The function is `drizzle/0003_manifest_rls.sql`; its contract is fixed by
+  `tests/auth/manifest-rpc.test.ts`.
+
+  **The route may not read the roster any other way.** An `eslint` `no-restricted-imports` rule and
+  `tests/auth/manifest-call-site.test.ts` both refuse a manifest route that imports `@/db/client` or
+  the `attendees` schema — because the mechanism's one weakness is that its coverage is opt-in, and a
+  route reading Drizzle instead would pass every test written about the function while having no
+  second layer at all.
 - Scans validate locally and enqueue.
 - Online, each scan also POSTs immediately. Offline, the queue drains on reconnect, preserving the
   original `scanned_at` with `source = OFFLINE_SYNC`. The check-in endpoint re-verifies assignment on
   every write, including on delayed offline sync — an assignment revoked mid-event takes effect on the
   next sync rather than being trusted from the client.
+
+  **The write path stays handler-only** — `canAccessShow()`, not `.rpc()` (decision 20b). A scan write
+  is one row in an append-only, revertible log (decision 7), keyed by a token the operator is
+  physically holding; its failure mode is a bad row someone reverts, not the disclosure of four
+  hundred names. Routing a batch drain through PostgREST would buy a second layer on the cheaper of
+  the two risks.
 - Duplicates across two offline devices resolve only on sync. The server accepts both and flags the
   attendee as multi-scanned. Do not attempt distributed locking.
 - Manifest expires at show start + `checkin.manifest_ttl_hours`.

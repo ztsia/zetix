@@ -195,6 +195,43 @@ early — the wave is a dependency, not a date.
 A wave-2 module that finds itself wanting another wave-2 module's output has found a boundary error in
 this file. Say so rather than building it twice.
 
+### 5.2.1 What `F2` hands you, and the rules that come with it
+
+| Import | For |
+|---|---|
+| `getSessionUser()` — `src/lib/auth/session.ts` | the signed-in user **and** their `app_users` role |
+| `requireAdmin()`, `requireScannerUser()`, `hasRole()` — `src/lib/auth/guards.ts` | protecting a page |
+| `canAccessShow()` — `src/lib/auth/show-access.ts` | may this user act on this show |
+| `DataTable` and parts — `src/components/data-table` | every admin table |
+| `writeAuditLog()` — `src/lib/audit.ts` | recording an override |
+| `toCsv()`, `toXlsx()`, `exportFilename()`, `formatInZone()` — `src/lib/export/` | exports |
+| `operatorEmail()` / `operatorSlug()` — `src/lib/auth/operator-slug.ts` | the synthetic operator address |
+| `CONCERT_NAV` — `src/app/(admin)/admin/nav.ts` | the console's route list |
+
+**Put the authorization check in your layout or handler, never in the proxy.** `src/proxy.ts`
+refreshes the session and bounces signed-out visitors, but it never reads the database, so it cannot
+know a role. `/api` is excluded from its matcher entirely so an auth outage cannot take the keep-alive
+down — **a Route Handler is unprotected until it calls `getSessionUser()` itself** and returns 401/403.
+`src/app/api/export/xlsx/route.ts` is the worked example.
+
+**`G` and `H`: the manifest is the attendee roster.** Verify assignment with `canAccessShow()` before
+returning any data (decision 20), and 404 rather than 403 so probing ids cannot tell "not yours" from
+"not there".
+
+**`H` must import `operatorEmail()`** when provisioning. A second implementation of that slug is an
+usher who cannot sign in, with nothing in the logs to say why.
+
+**Nobody rebuilds `DataTable`** (§4). It is generic over the row type. Pass `getRowId` whenever rows
+carry a database id, or selection is keyed by array index and follows position when the table
+re-sorts. It has two modes: client by default, and `server` for paging, sorting and searching in
+Postgres — `/admin/concerts` is the reference implementation. Use server mode for registrations,
+attendees and the scan log. The three move together on purpose: a server-paged table that filtered in
+the browser would search only the rows on screen.
+
+**Export columns are declared separately from table columns**, because a table column renders React
+and a spreadsheet cell cannot. Always pass the concert's `timeZone` — both export paths render
+timestamps in it, never the viewer's.
+
 ### 5.3 Against the calendar
 
 `context.md` §5 sets the deadlines: ticket pipeline **13 Sep**, scanner **18 Sep**, concert **19 Sep**.

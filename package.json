@@ -16,19 +16,22 @@
     "db:local": "./scripts/local-db.sh start",
     "db:local:reset": "./scripts/local-db.sh reset",
     "db:seed": "tsx scripts/seed-settings.ts",
-    "db:seed:dev": "tsx scripts/seed-dev.ts"
+    "db:seed:dev": "tsx scripts/seed-dev.ts",
+    "bootstrap-admin": "tsx scripts/bootstrap-admin.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@shadcn/react": "^0.3.1",
     "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.112.4",
+    "@tanstack/react-table": "^9.2.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "embla-carousel-react": "^8.6.0",
+    "exceljs": "^4.4.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^1.38.0",
     "next": "16.3.4",
@@ -38,6 +41,7 @@
     "react-dom": "19.2.8",
     "react-resizable-panels": "^4.12.3",
     "recharts": "3.8.0",
+    "server-only": "^0.0.1",
     "shadcn": "^4.19.1",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.5.4"

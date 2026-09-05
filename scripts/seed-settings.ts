@@ -28,6 +28,7 @@
  * for review. Casting through `text` first sends it as text and lets Postgres
  * parse it, which is what we meant.
  */
+import './load-env';
 import { getSql } from '../src/db/client';
 
 /** Straight from the "System values — seeded, rarely changed" table in §6. */

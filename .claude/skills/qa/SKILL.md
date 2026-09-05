@@ -42,6 +42,18 @@ Run it in the background and keep working; it takes a while and does not need su
 The agent returns a verdict and a findings table. The subagent's report is not shown to the user,
 so relay what matters — verdict, counts, and every Blocker and Major in full.
 
+**Then publish the report.** The agent leaves `qa-artifacts/<branch>/report.html`, a self-contained
+page with every screenshot inlined at the flow step it was taken on. Publish it with the `Artifact`
+tool and give the user the link — the container is ephemeral and `qa-artifacts/` is gitignored, so an
+unpublished report is gone with the session. Title it for the module (`Module F2 QA`), and keep the
+same artifact URL when a re-run replaces it, so the link a reader saved still resolves.
+
+If the agent could not write `results.json`, render it yourself once it exists:
+
+```bash
+node scripts/qa-report.mjs qa-artifacts/<branch>
+```
+
 - **Blocker** — a `CLAUDE.md` non-negotiable is violated. Fix it and re-run the QA pass. Do not open
   the PR, and do not downgrade it because the schedule is tight; these are the failures that end the
   concert on 19 Sep.

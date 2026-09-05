@@ -15,6 +15,48 @@ import postgres from 'postgres';
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is not set — run `pnpm db:local`');
 
+/**
+ * The suite refuses to run against anything but a local host.
+ *
+ * `resetDb()` truncates all 21 tables. On a developer machine `.env.local`
+ * points DATABASE_URL at the real Supabase project, because that is where every
+ * service is real (local.md §6) — so without this guard `pnpm test` there is
+ * indistinguishable from wiping production, including the shared ADMIN account
+ * that can only be recreated with the service-role key.
+ *
+ * Every environment that is *meant* to run the suite is already local: CI uses
+ * a `postgres:16` service on localhost, the cloud container uses
+ * localhost:55432, and a developer machine should use `.env.test.local`. So
+ * this rejects nothing legitimate. Set DATABASE_URL, do not weaken the check.
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'postgres']);
+
+/**
+ * Exported so it can be tested against hostile hostnames directly.
+ *
+ * The match is on the parsed hostname and is **exact**, never a substring: a
+ * `url.includes('localhost')` check would wave through
+ * `localhost.attacker.example`, and the difference between that and this is the
+ * difference between a guard and a comment.
+ */
+export function assertLocalDatabase(candidate: string): void {
+  let host: string;
+  try {
+    host = new URL(candidate).hostname;
+  } catch {
+    throw new Error(`DATABASE_URL is not a URL: ${candidate}`);
+  }
+  if (LOCAL_HOSTS.has(host)) return;
+  throw new Error(
+    `Refusing to run tests against a non-local database: ${host}. ` +
+      'resetDb() truncates every table. Point DATABASE_URL at a local ' +
+      'Postgres 16 — put it in `.env.test.local`, which vitest.config.ts loads ' +
+      'ahead of `.env.local` for exactly this reason (local.md §6.1).',
+  );
+}
+
+assertLocalDatabase(url);
+
 export const sql = postgres(url, { prepare: false, max: 4 });
 export const db = drizzle(sql);
 
@@ -48,7 +90,8 @@ export async function resetDb(): Promise<void> {
       audit_log, check_ins, portal_notes, email_outbox, attendees, registrations,
       form_responses, registration_forms, import_batches, mapping_profiles,
       player_allocations, players, operator_show_assignments, app_users,
-      booklets, show_segments, shows, ticket_templates, concerts, system_settings
+      booklets, show_segments, shows, ticket_templates, concerts, system_settings,
+      auth_failures
     restart identity cascade
   `;
 }

@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    /**
+     * QA run output — screenshots, traces, the rendered report. Generated, not
+     * authored, and gitignored. Without this, `pnpm lint` fails for anyone who
+     * has run the QA suite locally, which trains people to ignore lint.
+     */
+    "qa-artifacts/**",
   ]),
   {
     /**
@@ -32,6 +38,46 @@ const eslintConfig = defineConfig([
     files: ["src/components/ui/**/*.tsx", "src/hooks/use-mobile.ts"],
     rules: {
       "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    /**
+     * The check-in manifest is the full attendee roster, and decision 20 wants
+     * two independent layers on it: the handler check, and `manifest_for_show()`
+     * in the database (decision 20b, `drizzle/0003_manifest_rls.sql`).
+     *
+     * The second layer is opt-in by construction — it protects reads that call
+     * it. A manifest route that reads `attendees` through Drizzle instead would
+     * pass every test written about the function and have no second layer at
+     * all, which is precisely the shape of bug two QA passes already found on
+     * this branch: a test that covers the function but not the call site.
+     *
+     * So the route is denied the tools to do it. This is deliberately scoped to
+     * the manifest and not to the whole scanner surface: `/scan` legitimately
+     * reads `shows` over Drizzle to render a picker, and the scan-write path
+     * legitimately writes `check_ins` (see decision 20b on why writes stay
+     * handler-only). Widening this to `(scanner)/**` would only teach people to
+     * add exceptions.
+     */
+    files: ["src/app/api/checkin/manifest/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/db/client",
+              message:
+                "The manifest must come from .rpc('manifest_for_show'), not from Drizzle — that call is the second layer decision 20 requires. See drizzle/0003_manifest_rls.sql.",
+            },
+            {
+              name: "@/db/schema/registrations",
+              message:
+                "Reading attendees or registrations here bypasses manifest_for_show(), leaving the roster with only the handler check. See decision 20b.",
+            },
+          ],
+        },
+      ],
     },
   },
 ]);

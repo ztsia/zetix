@@ -21,3 +21,4 @@ export * from './email';
 export * from './checkin';
 export * from './portal';
 export * from './audit';
+export * from './auth';

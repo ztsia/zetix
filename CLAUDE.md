@@ -35,19 +35,27 @@ Scaffold only — no schema, no domain code yet. `pnpm dev`, `pnpm test`, `pnpm 
 
 | Done | Not started |
 |---|---|
-| Next.js 16 + Tailwind 4 + all 61 shadcn components | **Drizzle schema** (`src/db/schema/`) |
-| Drizzle/postgres.js wiring, two pooler URLs | **`claim_seats()`** and its tests — the next task |
-| `src/lib/env.ts`, `/api/health` keep-alive | Everything in `docs/spec/README.md` §4.1 beyond those |
+| Next.js 16 + Tailwind 4 + all 61 shadcn components | **All eight wave-2 modules** — `A`–`I` (`docs/modules.md` §3) |
+| `F1`: Drizzle schema, settings cascade, `claim_seats()` — merged | `D` ticket render, then `F` outbox — the critical path |
+| `F2`: auth, admin shell, `DataTable`, and the manifest authorization boundary | The rendered `/login` console, never yet watched by anyone (`docs/local.md` §5) |
 | CI: typecheck/lint/test/build on a real Postgres 16 | |
-| Route groups for the four surfaces | |
+| Schema, seed and admin account live on Supabase | |
 
-**Next task**, per the non-negotiable below: the schema, then `claim_seats()` — with the `docs/spec/allocation.md` §7.3
-three-row worked example written as tests *before* the implementation.
+**Next task**: wave 2 opens the moment `F2` merges — eight branches that touch different route groups
+and share only `DataTable` and the schema (`docs/modules.md` §5.1). Start `D`; it is the longest chain
+to the 13 Sep ticket deadline and `F` cannot begin until it lands.
 
-Deployment state: Supabase project live (public sign-ups off, email confirmation on, all three
-extensions installed); Vercel project `zetix` live in `sin1` with the GitHub repo connected and
-Production env vars set; `main` is branch-protected requiring `ci`. What is still outstanding, and who
-must do it, is in `docs/local.md`.
+Deployment state: Supabase project live and **the schema is now on it** — migrations `0000`–`0004`
+applied 5 Sep, system settings seeded, the shared `ADMIN` account created, and the manifest
+authorization boundary verified from outside with the publishable key and with a real signed-in
+session (`docs/local.md` §5a). Public sign-ups off, email confirmation on, all three extensions
+installed. Vercel project `zetix` live in `sin1` with the GitHub repo connected and Production
+env vars set; `main` is branch-protected requiring `ci`. What is still outstanding, and who must do
+it, is in `docs/local.md`.
+
+**`pnpm test` must never point at Supabase.** The suite truncates all 21 tables. Put the local
+Postgres URL in `.env.test.local`, which vitest loads ahead of `.env.local`; `tests/helpers/db.ts`
+refuses a non-local hostname outright (`docs/local.md` §6.1).
 
 ## Non-negotiables
 

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { config } from 'dotenv';
 
@@ -6,6 +7,15 @@ import { config } from 'dotenv';
 // localhost:5432 and fails with ECONNREFUSED. CI passes DATABASE_URL as a real
 // environment variable and dotenv never overrides those, so this is a no-op
 // there — as it is in the cloud container, where the file does not exist.
+// `.env.test.local` first, deliberately. On a developer machine `.env.local`
+// points DATABASE_URL at the real Supabase project (local.md §6), and
+// `resetDb()` below truncates all 21 tables — so a plain `pnpm test` there
+// would empty production. dotenv never overrides a variable that is already
+// set, so whatever `.env.test.local` defines wins over `.env.local`, and a real
+// environment variable (CI) still wins over both. `tests/helpers/db.ts` refuses
+// a non-local host outright; this is what makes the local run succeed rather
+// than merely fail safely.
+config({ path: '.env.test.local' });
 config({ path: '.env.local' });
 
 // The session-start hook brings up the local Postgres (spec/platform.md §16.4) but
@@ -15,7 +25,18 @@ config({ path: '.env.local' });
 process.env.DATABASE_URL ??= 'postgresql://postgres@localhost:55432/zetix';
 
 export default defineConfig({
-  resolve: { tsconfigPaths: true },
+  resolve: {
+    tsconfigPaths: true,
+    alias: {
+      // `server-only` throws unless the bundler picks its `react-server`
+      // condition, which Vitest does not. Without this, importing any guarded
+      // server module fails at import time rather than running its tests.
+      // See tests/helpers/server-only-stub.ts.
+      'server-only': fileURLToPath(
+        new URL('./tests/helpers/server-only-stub.ts', import.meta.url),
+      ),
+    },
+  },
   test: {
     environment: 'node',
     setupFiles: ['tests/helpers/setup.ts'],

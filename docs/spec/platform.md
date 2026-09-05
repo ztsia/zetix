@@ -17,7 +17,7 @@ See [`../modules.md`](../modules.md) for what each label owns and when it runs.
 | Framework | Next.js 16, App Router, TypeScript | Server Actions for mutations, RSC for admin tables |
 | UI | shadcn/ui + Tailwind | |
 | DB / Auth / Storage | **Supabase** | One service for all three; the idle pause is handled by a keep-alive cron (§17.1) |
-| Data access | Drizzle + `postgres.js` | Typed migrations; allocation logic is a raw SQL function. Two connection URLs — §16.2 |
+| Data access | Drizzle + `postgres.js`, **and one `supabase-js` `.rpc()` call** | Typed migrations; allocation logic is a raw SQL function. Two connection URLs — §16.2. Drizzle is not the *only* data path: the check-in manifest goes through PostgREST so the show-scope check runs in the database as well as in the handler (decision 20b, `checkin.md` §12.3, `drizzle/0003_manifest_rls.sql`). That is the one exception, and it is deliberately one |
 | Email | **`nodemailer` + Gmail SMTP** | Node runtime, `maxDuration = 60` (`email.md` §11.1) |
 | Spreadsheet | `sheetjs` | Client preview and server commit |
 | QR generate / scan | `qrcode` / `@zxing/browser` | `BarcodeDetector` as an optional fast path — §16.3 |
@@ -95,6 +95,25 @@ deployed preview rather than locally.
 
 A useful consequence: the development environment never needs the production database password or the
 service-role key.
+
+### 16.5 Version facts that cost an hour each
+
+The libraries here are recent enough that their published documentation, and most training data,
+describes a previous major. Each of these was found the expensive way while building `F2`.
+
+| Fact | Why it bites |
+|---|---|
+| **`middleware.ts` is `proxy.ts` in Next 16.** Same behaviour, new file and export name. | The old name is silently inert — no error, no route protection. |
+| **These are Base UI components, not Radix.** `Checkbox` takes a separate `indeterminate` prop, not `checked="indeterminate"`. Triggers take `render={<Button/>}` where Radix took `asChild`. | A three-state checkbox renders as plain unchecked. |
+| **`DropdownMenuLabel` is Base UI's `Menu.GroupLabel` and throws unless wrapped in a `DropdownMenuGroup`.** | The whole menu renders empty, with the error only in the browser console — it looks like a click that does nothing. |
+| **TanStack Table is v9, not the v8 the shadcn docs describe.** Features, row models and sort/filter functions are composed statically via `tableFeatures({…})`; `getState()` is gone — read `table.state`. A `/legacy` shim exists; do not reach for it. | v8 examples typecheck-fail in confusing ways, or compile and do nothing. |
+| **A `'use server'` file may export only async functions.** A plain constant beside the actions fails the build, pointing at the wrong line. | Costs a build cycle to locate. |
+| **`server-only` throws under Vitest**, which does not select the `react-server` condition. It is aliased to a stub in `vitest.config.ts`. It also throws under `tsx`, so a script importing a guarded module cannot use it. | Every test importing a guarded server module fails at import. |
+| **Drizzle's `asc()` cannot wrap `nulls last`** — it emits `order by … nulls last asc`, which Postgres rejects at runtime while typecheck and build both pass. Write the whole sort spec in `` sql`` ``. | A 500 that no static check catches. |
+| **A browser download needs its anchor in the document.** A detached `<a download>` click is ignored by Chromium: no file, no error. | An export button that appears to do nothing. |
+| **Read `cookies()` before asserting on the environment** in any module a page reaches during render. Reading it is what marks the render dynamic; throwing first aborts `next build`'s prerender pass instead of bailing out to dynamic. | The build fails wherever Supabase variables are absent — CI among them. |
+| **Postgres grants `execute` on a new function to `PUBLIC` by default.** A `security definer` function is callable by `anon` — the publishable key — until you `revoke all … from public`. | The function *is* the security boundary, and it ships open. |
+| **`sha256()` is core Postgres; `digest()` is pgcrypto, and on Supabase pgcrypto lives in the `extensions` schema.** A function with `search_path` pinned to `public, pg_temp` cannot see `digest()` there, though it works locally where the extension landed in `public`. | Passes every local test, fails only in production. |
 
 ## 17. Hosting
 

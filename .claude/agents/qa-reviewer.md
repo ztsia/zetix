@@ -198,8 +198,75 @@ Put specs in `qa/e2e/*.spec.ts` — vitest only collects `*.test.ts`, so the two
 
 ## Phase 6 — report
 
-Write `qa-artifacts/<branch>/report.md` and return it as your final message. Lead with the verdict
-and the count, not with narration.
+Three outputs: a structured `results.json`, the rendered `report.html`, and the message you return.
+
+### 6a — `qa-artifacts/<branch>/results.json`
+
+The run's findings as data, so the report can be rendered rather than retyped. **Write this before
+the prose** — filling it is what forces every criterion and flow to carry a real status.
+
+```jsonc
+{
+  "module": "F2",                       // label from the branch name
+  "branch": "claude/F2-app-shell-auth",
+  "verdict": "ship | fix first | blocked",
+  "generatedAt": "2026-09-03 00:40 UTC",
+  "phases": "1-5",
+  "headline": "One or two sentences. What a reader needs before the detail.",
+  "summary":  { "criteria": 43, "pass": 35, "fail": 3, "unreachable": 5 },
+  "suites":   { "unit": "200/200 pass", "e2e": "33 specs, 32 pass",
+                "typecheck": "clean", "lint": "clean", "build": "clean" },
+
+  "findings": [{
+    "id": 1,
+    "severity": "Blocker | Major | Minor | Note",
+    "title": "One line: what breaks.",
+    "detail": "Prose. Backticks and ```fences``` render.",
+    "repro":  "The exact command or click sequence.",
+    "evidence": "Real pasted output — never a summary of it.",
+    "spec": "AC-15..21, decisions.md 20",
+    "screenshots": ["FLOW-2-step-2-refused.png"]     // optional
+  }],
+
+  "probes": [{ "broke": "`requireAdmin()` role check made unreachable",
+               "caught": false, "note": "17 files, 174 tests, all passed" }],
+
+  "flows": [{
+    "id": "FLOW-1", "title": "...", "kind": "happy | sad",
+    "actor": "...", "entry": "/login",
+    "covers": ["AC-1"], "spec": "admin.md §14.3",
+    "status": "pass | fail",
+    "ends": "The end state that makes it pass.",
+    "steps": [{ "n": 1, "action": "Open `/login`",
+                "assertion": "form asks for a code only; no email field in the DOM",
+                "status": "pass", "screenshot": "FLOW-1-step-1-login.png" }]
+  }],
+
+  "criteria": [{ "id": "AC-1", "title": "...", "spec": "admin.md §14.3",
+                 "status": "pass | fail | unreachable", "evidence": "0 input[type=email] in DOM" }],
+
+  "notTested": [{ "what": "A real admin code against Supabase",
+                  "why": "no service-role key in a cloud container (local.md §7)" }]
+}
+```
+
+**Every flow step names its screenshot**, and the filename must match one in `screens/` — the report
+places each shot at the step it belongs to, so a step with no `screenshot` renders without evidence.
+Keep the `FLOW-<n>-step-<n>-<what>.png` convention from phase 5.
+
+### 6b — render it
+
+```bash
+node scripts/qa-report.mjs qa-artifacts/<branch>
+```
+
+This writes `report.html` next to `results.json` with every screenshot inlined, so the one file
+survives the container. It prints the page size; the parent session publishes it. Do not hand-write
+HTML — if the report needs something the generator cannot show, say so in your final message.
+
+### 6c — `qa-artifacts/<branch>/report.md`, and your final message
+
+Lead with the verdict and the count, not with narration.
 
 ```
 VERDICT   ship | fix first | blocked

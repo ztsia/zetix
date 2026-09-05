@@ -15,6 +15,27 @@
       "when": 1788362059291,
       "tag": "0001_allocation_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788388434647,
+      "tag": "0002_auth_failures",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788388434648,
+      "tag": "0003_manifest_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788388434649,
+      "tag": "0004_lock_down_public_grants",
+      "breakpoints": true
     }
   ]
 }

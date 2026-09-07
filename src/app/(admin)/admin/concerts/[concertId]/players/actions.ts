@@ -416,7 +416,11 @@ export async function commitPlayerImportAction(
   concertId: number,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  // Captured rather than discarded — see the note on `moveCapacityAction`.
+  // The audit row is written inside the transaction, and letting
+  // `writeAuditLog` resolve the actor itself would issue a nested query
+  // against a `max: 1` pool the transaction already holds, hanging the import.
+  const admin = await requireAdmin();
 
   let created = 0;
   let updated = 0;
@@ -480,6 +484,7 @@ export async function commitPlayerImportAction(
             updated,
             skipped: plan.counts.skip,
           },
+          actorId: admin.id,
         },
         tx,
       );

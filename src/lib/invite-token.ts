@@ -12,24 +12,33 @@ import { bytesToBase62 } from '@/lib/tickets/identifiers';
  * already tested against the properties that matter, but it is deliberately not
  * `generateQrToken()`: that function means "a ticket's token", `qr_token` is
  * immutable for the life of an attendee (decision 28), and an invite token is
- * the opposite — rotating one is a supported admin action. Sharing the name
- * would invite a future reader to assume the same rules apply to both.
+ * the opposite — rotation is a supported admin action (spec/v2.md §8.1,
+ * "Tokens are rotatable from admin"). Sharing the name would invite a future
+ * reader to assume the same rules apply to both.
+ *
+ * **There is no URL builder here on purpose.** §8.1 specifies the player URL as
+ * `/f/{form_slug}?k={token}` — a V2 native-form route, which needs a form slug
+ * V1 does not have, because registration for this concert is on Google Forms.
+ * An earlier draft invented `/invite/{token}` and offered a copy button over it,
+ * which would have handed an admin a dead link to email to eighty players. When
+ * V2 builds `/f/{slug}`, the builder belongs beside that route.
  */
 
-/** 16 bytes is 128 bits, which base62 encodes in 22 characters. */
+/** 16 bytes is 128 bits, which base62 encodes in at most 22 characters. */
 const INVITE_TOKEN_BYTES = 16;
 
-export function generateInviteToken(): string {
-  return bytesToBase62(randomBytes(INVITE_TOKEN_BYTES));
-}
-
 /**
- * Where a player goes to claim their seats.
+ * 22 characters, always.
  *
- * Built from `APP_URL` by the caller rather than read here, because the origin
- * is environment configuration and this module is used from tests and scripts
- * that have none.
+ * **The `padStart` is not cosmetic.** `bytesToBase62` encodes the bytes as one
+ * big-endian integer, so a value that happens to fall below 62^21 encodes to 21
+ * characters or fewer — several percent of tokens. `generateQrToken` pads for
+ * this reason and the padding was dropped when this borrowed its encoder, which
+ * made every fixed-length assumption downstream intermittently false and any
+ * test asserting the length flaky rather than wrong.
  */
-export function inviteUrl(token: string, appUrl: string): string {
-  return `${appUrl.replace(/\/+$/, '')}/invite/${token}`;
+export const INVITE_TOKEN_LENGTH = 22;
+
+export function generateInviteToken(): string {
+  return bytesToBase62(randomBytes(INVITE_TOKEN_BYTES)).padStart(INVITE_TOKEN_LENGTH, '0');
 }

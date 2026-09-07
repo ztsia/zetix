@@ -293,6 +293,14 @@ export async function createSegmentAction(
   if (!zone && parsed.data.baseClaimDeadline) return { error: NO_ZONE };
 
   try {
+    const [owner] = await getDb()
+      .select({ id: shows.id })
+      .from(shows)
+      .where(
+        and(eq(shows.id, showId), eq(shows.concertId, concertId), isNull(shows.deletedAt)),
+      );
+    if (!owner) return { error: 'That show is not part of this concert.' };
+
     const [created] = await getDb()
       .insert(showSegments)
       .values({
@@ -350,6 +358,11 @@ export async function updateSegmentAction(
 
   try {
     const db = getDb();
+    // Joined to `shows` and scoped to the concert in the URL. There is one
+    // shared ADMIN with access to every concert (decision 19), so this is not
+    // an authorization boundary — it stops a stale tab or a hand-edited id
+    // editing a segment that belongs to a different concert entirely, which
+    // would be attributed to this one in the audit log.
     const [before] = await db
       .select({
         name: showSegments.name,
@@ -358,8 +371,16 @@ export async function updateSegmentAction(
         audienceMode: showSegments.audienceMode,
       })
       .from(showSegments)
-      .where(and(eq(showSegments.id, segmentId), isNull(showSegments.deletedAt)));
-    if (!before) return { error: 'That segment no longer exists.' };
+      .innerJoin(shows, eq(shows.id, showSegments.showId))
+      .where(
+        and(
+          eq(showSegments.id, segmentId),
+          eq(shows.concertId, concertId),
+          isNull(showSegments.deletedAt),
+          isNull(shows.deletedAt),
+        ),
+      );
+    if (!before) return { error: 'That segment is not part of this concert.' };
 
     await db
       .update(showSegments)
@@ -417,7 +438,13 @@ export async function moveCapacityAction(
   moves: readonly { segmentId: number; capacity: number | null }[],
   reason: string | null,
 ): Promise<FormState> {
-  await requireAdmin();
+  // Captured, not discarded: the audit row below is written inside the
+  // transaction, and `writeAuditLog` resolves the actor with
+  // `getSessionUser()` — which issues **its own query** — unless it is given
+  // one. `src/db/client.ts` is `max: 1`, so that nested query waits for the
+  // single connection the transaction is already holding, and the request
+  // deadlocks against itself. Passing `actorId` is what stops it.
+  const admin = await requireAdmin();
 
   const parsed = z
     .object({
@@ -446,6 +473,14 @@ export async function moveCapacityAction(
 
   try {
     const db = getDb();
+
+    const [owner] = await db
+      .select({ id: shows.id })
+      .from(shows)
+      .where(
+        and(eq(shows.id, showId), eq(shows.concertId, concertId), isNull(shows.deletedAt)),
+      );
+    if (!owner) return { error: 'That show is not part of this concert.' };
 
     const before = await db
       .select({
@@ -482,6 +517,9 @@ export async function moveCapacityAction(
           before: before.map((s) => ({ id: s.id, name: s.name, capacity: s.capacity })),
           after: parsed.data.moves,
           reason: parsed.data.reason,
+          // Explicit, so the writer does not go looking for the session on a
+          // connection this transaction is holding. See the note above.
+          actorId: admin.id,
         },
         tx,
       );
@@ -514,8 +552,16 @@ export async function deleteSegmentAction(
     const [before] = await db
       .select({ name: showSegments.name, showId: showSegments.showId })
       .from(showSegments)
-      .where(and(eq(showSegments.id, segmentId), isNull(showSegments.deletedAt)));
-    if (!before) return { error: 'That segment no longer exists.' };
+      .innerJoin(shows, eq(shows.id, showSegments.showId))
+      .where(
+        and(
+          eq(showSegments.id, segmentId),
+          eq(shows.concertId, concertId),
+          isNull(showSegments.deletedAt),
+          isNull(shows.deletedAt),
+        ),
+      );
+    if (!before) return { error: 'That segment is not part of this concert.' };
 
     await db
       .update(showSegments)
@@ -585,12 +631,3 @@ function friendlySegmentError(error: unknown, mode: 'PLAYER_INVITED' | 'PUBLIC')
   return message;
 }
 
-/** Exported for the segment form, which offers only the modes still free. */
-export async function usedAudienceModesAction(showId: number): Promise<string[]> {
-  await requireAdmin();
-  const rows = await getDb()
-    .select({ audienceMode: showSegments.audienceMode })
-    .from(showSegments)
-    .where(and(eq(showSegments.showId, showId), isNull(showSegments.deletedAt)));
-  return rows.map((row) => row.audienceMode);
-}

@@ -109,6 +109,21 @@ export async function planPlayerImport(
 
   const mapping = { ...guessMapping(headers), ...overrides };
 
+  // `exceljs` decodes a CSV as UTF-8. A file saved as latin-1 — which is what
+  // Excel on Windows still produces from "Save as CSV" — decodes to U+FFFD
+  // replacement characters, and the import would otherwise commit "Jo\uFFFDo
+  // Gon\uFFFDalves" silently. That name then goes on a printed ticket, so this
+  // refuses the file rather than skipping the rows: the fix is one re-save, and
+  // a per-row skip would quietly drop exactly the players whose names have
+  // accents in them.
+  if (rows.some((row) => Object.values(row.cells).some((cell) => cell.includes('\uFFFD')))) {
+    throw new Error(
+      `${filename} is not saved as UTF-8, so accented names arrive as “\uFFFD”. ` +
+        'Re-save it as CSV UTF-8 and upload it again — importing it as it stands ' +
+        'would print those characters on the tickets.',
+    );
+  }
+
   const byEmail = new Map<string, number>();
   for (const player of existing) {
     if (player.email) byEmail.set(player.email.toLowerCase(), player.id);
@@ -145,7 +160,11 @@ export async function planPlayerImport(
       continue;
     }
 
-    if (email && !email.includes('@')) {
+    // `includes('@')` waves through `ada@`, which then becomes a player nobody
+    // can email and which no unique index catches. Deliberately loose beyond
+    // that — a local part may hold almost anything, and rejecting a real
+    // address is worse here than accepting an odd one.
+    if (email && !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) {
       planned.push({ ...base, action: 'skip', reason: `“${email}” is not an email address.` });
       continue;
     }

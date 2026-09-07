@@ -114,8 +114,12 @@ export function PlayerImportDialog({
     >
       <DialogTrigger render={trigger as React.ReactElement} />
 
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
+      {/* Capped and scrolled for the same reason as `ActionDialog`:
+          `DialogContent` sets no max-height and is centred by translate, so
+          with a preview table open this dialog runs past both edges of a
+          720px laptop and the Import button becomes unreachable. */}
+      <DialogContent className="flex max-h-[min(85dvh,48rem)] flex-col sm:max-w-3xl">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Import players</DialogTitle>
           <DialogDescription>
             A CSV or spreadsheet, one player per row. Nothing is written until you
@@ -123,7 +127,7 @@ export function PlayerImportDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form ref={formRef} className="flex flex-col gap-4">
+        <form ref={formRef} className="-mx-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1">
           <Field>
             <FieldLabel htmlFor="player-import-file">File</FieldLabel>
             <Input
@@ -171,7 +175,7 @@ export function PlayerImportDialog({
                 )}
               </div>
 
-              <ScrollArea className="h-64 rounded-md border">
+              <ScrollArea className="h-56 shrink-0 rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -227,7 +231,7 @@ export function PlayerImportDialog({
           )}
         </form>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button
             type="button"
             variant="outline"

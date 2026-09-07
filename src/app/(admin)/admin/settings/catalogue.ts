@@ -22,6 +22,19 @@ export type SettingSpec = {
   kind: SettingKind;
   description: string;
   /**
+   * Bounds for a `number`, checked at save time.
+   *
+   * Not an operational *value* — it is what makes the value meaningful at all.
+   * "−1 messages per dispatch" and "3.7 messages a day" are not tight
+   * configurations, they are nonsense the cascade would then hand to the
+   * dispatcher; a base quota of −3 is worse, because the entitlement guard
+   * multiplies it. `integer` defaults to true: every number in §6 is a count, a
+   * duration or a limit, except the one fraction below.
+   */
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  /**
    * Operational values describe the event and carry **no seed at any level**; a
    * missing one is a validation error at save time (§6, decision 18). System
    * values describe the runtime and are seeded at install.
@@ -39,6 +52,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
     settings: [
       {
         key: 'capacity',
+        min: 0,
         label: 'Hall capacity',
         kind: 'number',
         description:
@@ -48,6 +62,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'segment.capacity',
+        min: 0,
         label: 'Segment capacity',
         kind: 'number',
         description:
@@ -57,6 +72,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'allocation.base_quota',
+        min: 0,
         label: 'Base quota per player',
         kind: 'number',
         description:
@@ -93,6 +109,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'form.max_tickets_per_response',
+        min: 0,
         label: 'Max tickets per response',
         kind: 'number',
         description: 'Party size cap.',
@@ -101,6 +118,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'form.extra_rows_max',
+        min: 0,
         label: 'Extra request rows',
         kind: 'number',
         description: 'Rows in the "request extras" repeater.',
@@ -124,6 +142,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.max_per_dispatch',
+        min: 1,
         label: 'Messages per dispatch',
         kind: 'number',
         description: 'Sized to stay inside the function timeout.',
@@ -132,6 +151,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.max_per_day',
+        min: 1,
         label: 'Messages per day',
         kind: 'number',
         description:
@@ -141,6 +161,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.inter_message_delay_ms',
+        min: 0,
         label: 'Delay between messages (ms)',
         kind: 'number',
         description: 'Paces the dispatcher so a batch does not look like a burst.',
@@ -149,6 +170,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.max_attempts',
+        min: 1,
         label: 'Send attempts',
         kind: 'number',
         description: 'How many times a failed message is retried before it stays failed.',
@@ -157,6 +179,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.merge_attachments_above',
+        min: 0,
         label: 'Merge attachments above',
         kind: 'number',
         description: 'Past this many tickets, merge the PDFs into one attachment.',
@@ -165,6 +188,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'email.max_attachment_mb',
+        min: 1,
         label: 'Max attachment size (MB)',
         kind: 'number',
         description: 'Gmail’s ceiling is 25MB; leave headroom.',
@@ -179,6 +203,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
     settings: [
       {
         key: 'checkin.manifest_ttl_hours',
+        min: 1,
         label: 'Offline manifest lifetime (hours)',
         kind: 'number',
         description: 'How long a downloaded manifest stays usable after the show starts.',
@@ -187,6 +212,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'checkin.scan_debounce_ms',
+        min: 0,
         label: 'Scan debounce (ms)',
         kind: 'number',
         description: 'Stops one ticket registering twice as the camera holds focus.',
@@ -195,6 +221,9 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'import.fuzzy_match_threshold',
+        min: 0,
+        max: 1,
+        integer: false,
         label: 'Player match threshold',
         kind: 'number',
         description: 'Below this, a player match needs confirmation rather than being applied.',
@@ -210,6 +239,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
     settings: [
       {
         key: 'auth.admin_max_attempts',
+        min: 1,
         label: 'Admin sign-in attempts',
         kind: 'number',
         description: 'Attempts per IP before a lockout begins.',
@@ -218,6 +248,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'auth.admin_lockout_window_min',
+        min: 1,
         label: 'Lockout window (minutes)',
         kind: 'number',
         description: 'How long those attempts are counted over.',
@@ -241,6 +272,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
     settings: [
       {
         key: 'portal.note_max_length',
+        min: 1,
         label: 'Note length limit',
         kind: 'number',
         description: 'Longest note an attendee may leave.',
@@ -249,6 +281,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'form.rate_limit_per_ip_per_min',
+        min: 1,
         label: 'Form submissions per IP per minute',
         kind: 'number',
         description: 'V2. Native registration forms only.',
@@ -257,11 +290,80 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
       {
         key: 'form.seat_indicator_exact_below',
+        min: 0,
         label: 'Show exact seats below',
         kind: 'number',
         description: 'Under this many seats left, the form shows a number instead of a band.',
         operational: false,
         level: 'system',
+      },
+    ],
+  },
+  {
+    title: 'Concert and portal defaults',
+    blurb:
+      'Every one of these is normally set on the concert, show or portal screen that owns it — a timezone belongs to a concert, an unlock mode to a show. They are listed here because §6 puts them in the cascade, and without a root there is no way to give them a fallback at all. Setting one here applies it to every concert that does not say otherwise.',
+    settings: [
+      {
+        key: 'concert.timezone',
+        label: 'Timezone',
+        kind: 'text',
+        description:
+          'IANA zone. Show times are stored UTC and rendered in it, never the viewer’s. Normally set when the concert is created, which requires one.',
+        operational: true,
+        level: 'concert',
+      },
+      {
+        key: 'portal.unlock_mode',
+        label: 'Portal unlock',
+        kind: 'text',
+        description: 'ON_ADMISSION, OPEN_TO_ALL or CLOSED. Normally set per show.',
+        operational: true,
+        level: 'show',
+      },
+      {
+        key: 'ticket.default_template_id',
+        min: 1,
+        label: 'Default ticket template',
+        kind: 'number',
+        description:
+          'Resolves show → concert → the seeded global default. Normally chosen on the tickets screen; never read as a raw column.',
+        operational: false,
+        level: 'concert',
+      },
+      {
+        key: 'portal.notes_enabled',
+        label: 'Notes enabled',
+        kind: 'boolean',
+        description: 'V2. Whether attendees may leave notes at all.',
+        operational: true,
+        level: 'concert',
+      },
+      {
+        key: 'portal.notes_close_at',
+        label: 'Notes close at',
+        kind: 'text',
+        description: 'V2. An ISO timestamp, after which no new note is accepted.',
+        operational: true,
+        level: 'concert',
+      },
+      {
+        key: 'portal.public_wall_enabled',
+        label: 'Public wall enabled',
+        kind: 'boolean',
+        description:
+          'V2. Publishing to the wall is always an explicit admin action regardless (decision 6).',
+        operational: true,
+        level: 'concert',
+      },
+      {
+        key: 'portal.public_wall_visibility',
+        label: 'Public wall visibility',
+        kind: 'text',
+        description:
+          'V2. ADMIN_ONLY or AUDIENCE. Per-player grouping is admin-only always, whatever this says.',
+        operational: true,
+        level: 'concert',
       },
     ],
   },

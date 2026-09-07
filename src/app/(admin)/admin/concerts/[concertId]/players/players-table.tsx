@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Copy, KeyRound, MoreHorizontal, Pencil, Trash2, X } from 'lucide-react';
+import { Check, KeyRound, MoreHorizontal, Pencil, Trash2, X } from 'lucide-react';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -50,12 +50,9 @@ export type PlayerRow = {
 export function PlayersTable({
   concertId,
   players,
-  appUrl,
 }: {
   concertId: number;
   players: PlayerRow[];
-  /** Null when APP_URL is unset — the copy button is hidden rather than broken. */
-  appUrl: string | null;
 }) {
   const columns: DataTableColumn<PlayerRow>[] = [
     selectionColumn<PlayerRow>(),
@@ -103,7 +100,7 @@ export function PlayersTable({
       meta: { label: 'Actions' },
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
-        <PlayerRowActions concertId={concertId} player={row.original} appUrl={appUrl} />
+        <PlayerRowActions concertId={concertId} player={row.original} />
       ),
     },
   ];
@@ -144,23 +141,26 @@ const exportColumns: ExportColumn<PlayerRow>[] = [
   { header: 'Active', value: (row) => (row.isActive ? 'yes' : 'no') },
 ];
 
+/**
+ * There is deliberately no "copy invite link" control.
+ *
+ * spec/v2.md §8.1 specifies the player URL as `/f/{form_slug}?k={token}` — a V2
+ * native-form route needing a slug V1 does not have, since registration for
+ * this concert is on Google Forms. An earlier draft invented `/invite/{token}`
+ * and offered a copy button over it, which would have handed an admin a dead
+ * link to email to eighty players. The token is still minted and still
+ * rotatable; what is missing is a destination, and it arrives with V2.
+ */
 function PlayerRowActions({
   concertId,
   player,
-  appUrl,
 }: {
   concertId: number;
   player: PlayerRow;
-  appUrl: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
-
-  const inviteUrl = appUrl
-    ? `${appUrl.replace(/\/+$/, '')}/invite/${player.inviteToken}`
-    : null;
 
   function run(action: () => Promise<{ error: string | null }>) {
     setError(null);
@@ -174,19 +174,6 @@ function PlayerRowActions({
     });
   }
 
-  async function copyInvite() {
-    if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // A clipboard write can be refused outright (no permission, an insecure
-      // origin). Saying so beats a button that silently does nothing.
-      setError('Could not reach the clipboard. Copy the link from the player’s form.');
-    }
-  }
-
   return (
     <div className="flex items-center justify-end gap-1">
       {error && (
@@ -195,17 +182,6 @@ function PlayerRowActions({
             {error}
           </AlertTitle>
         </Alert>
-      )}
-
-      {inviteUrl && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={copyInvite}
-          aria-label={`Copy invite link for ${player.fullName}`}
-        >
-          {copied ? <Check /> : <Copy />}
-        </Button>
       )}
 
       <DropdownMenu>

@@ -280,19 +280,68 @@ describe('show and segment actions', () => {
       expect(rows.map((r) => r.capacity)).toEqual([80, 320]);
     });
 
-    it('is genuinely one transaction — the same pair of edits fails run separately', async () => {
-      // This is what the single transaction buys. Raising public to 320 while
-      // the player segment still holds 100 totals 420 in a 400-seat hall, and
-      // the deferred guard rejects it at COMMIT. If `moveCapacityAction` ever
-      // stops sharing a transaction, the test above starts failing the same way.
+    it('commits a move whose first step alone would be rejected', async () => {
+      // The teeth of the transaction, and the order is the whole point.
+      //
+      // Raising public to 320 while the player segment still holds 100 totals
+      // 420 in a 400-seat hall. Run as its own statement the deferred guard
+      // rejects it at COMMIT — asserted directly below. Passing it *first* to
+      // `moveCapacityAction` therefore only succeeds if both updates share one
+      // transaction, so removing `db.transaction` turns this red.
+      //
+      // The earlier version of this test asserted the raw UPDATE alone and
+      // never called the action, which made it a test of Postgres rather than
+      // of this module. An independent QA pass caught that.
       await expect(
         sql`update show_segments set capacity = 320 where id = ${publicSegment}::bigint`,
       ).rejects.toThrow();
 
-      const rows = await sql<{ capacity: number }[]>`
-        select capacity from show_segments where show_id = ${showId}::bigint order by id
+      const result = await moveCapacityAction(
+        concertId,
+        showId,
+        [
+          { segmentId: publicSegment, capacity: 320 },
+          { segmentId: playerSegment, capacity: 80 },
+        ],
+        null,
+      );
+
+      expect(result.error).toBeNull();
+      const rows = await sql<{ id: number; capacity: number }[]>`
+        select id, capacity from show_segments where show_id = ${showId}::bigint order by id
       `;
-      expect(rows.map((r) => r.capacity)).toEqual([100, 300]);
+      expect(rows.map((r) => r.capacity)).toEqual([80, 320]);
+    });
+
+    it('returns rather than deadlocking against its own connection', async () => {
+      // `writeAuditLog` resolves the actor with `getSessionUser()` — which
+      // issues its own query — unless it is handed one. The pool is `max: 1`,
+      // so inside a transaction that nested query waits forever for the
+      // connection the transaction is holding, and the whole request hangs.
+      //
+      // The suite mocks `@/lib/auth/session`, which is exactly what hid this:
+      // the mock never touches the database. Asserting the *unmocked* writer
+      // is given an actorId is what keeps the fix in place.
+      const move = moveCapacityAction(
+        concertId,
+        showId,
+        [{ segmentId: publicSegment, capacity: 290 }],
+        null,
+      );
+
+      const outcome = await Promise.race([
+        move.then(() => 'returned' as const),
+        new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 5000)),
+      ]);
+
+      expect(outcome).toBe('returned');
+
+      const [row] = await sql<{ actor_id: string | null }[]>`
+        select actor_id from audit_log where action = 'segment.capacity_moved'
+      `;
+      // Attribution survives the fix: passing the id explicitly must not turn
+      // into passing null (decision 19 already costs us *which* admin).
+      expect(row.actor_id).not.toBeNull();
     });
 
     it('refuses a move that overflows the hall, naming the overflow', async () => {

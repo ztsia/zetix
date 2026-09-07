@@ -19,21 +19,6 @@ export const metadata: Metadata = { title: 'Players' };
 export const runtime = 'nodejs';
 
 /**
- * The origin invite links are built from, read directly rather than through
- * `src/lib/env.ts`.
- *
- * That module validates the whole environment at once, so importing it would
- * make the player roster require the Supabase keys and the Gmail credentials to
- * render — `src/lib/tickets/load.ts` reads it the same way and for the same
- * reason. Absence is tolerated here rather than fatal: an invite link is copied
- * fresh each time, so a missing origin costs one convenience button, unlike a
- * QR whose origin is baked into a PDF permanently.
- */
-function appUrl(): string | null {
-  return process.env.APP_URL ?? null;
-}
-
-/**
  * `/admin/concerts/{id}/players` — the performers (spec/admin.md §14.1).
  *
  * Players are scoped to a concert, hold no account, and consume no seat in the
@@ -102,7 +87,7 @@ export default async function PlayersPage({
         </div>
       </div>
 
-      <PlayersTable concertId={concertId} players={rows} appUrl={appUrl()} />
+      <PlayersTable concertId={concertId} players={rows} />
     </div>
   );
 }

@@ -329,7 +329,8 @@ test('FLOW-10 a move below the confirmed count is refused, nothing changes', asy
     await tx`select set_config('zetix.granting', 'on', true)`;
     await tx`insert into attendees (registration_id, show_id, segment_id, full_name, name_source, allocation_type, status, ticket_code, qr_token)
       select ${reg.id}, ${showId}, ${publicSegment}, 'Guest ' || g, 'PROVIDED', 'EXTRA', 'CONFIRMED',
-             'QA-' || lpad(g::text, 6, '0'), 'qatoken' || lpad(g::text, 15, '0')
+             'QA-' || substr(md5(random()::text), 1, 8),
+             'qa' || replace(gen_random_uuid()::text, '-', '')
         from generate_series(1, 40) g`;
   });
 
@@ -397,27 +398,29 @@ test('FLOW-11 and FLOW-12 the settings screen writes and validates', async ({ br
   await shot(page, 'FLOW-11-step-1-settings');
 
   // Happy: change a system value and confirm the database holds it.
-  const row = page.locator('form').filter({ has: page.locator('input[name="key"][value="email.max_per_dispatch"]') }).first();
-  await row.getByRole('textbox').or(row.locator('input[type="number"]')).first().fill('30');
-  await row.getByRole('button', { name: /save/i }).first().click();
+  const field = page.getByLabel('Messages per dispatch').first();
+  const row = page.locator('div').filter({ has: field }).last();
+  await field.fill('30');
+  await row.getByRole('button', { name: 'Save', exact: true }).click();
   await expect
     .poll(async () => {
       const [r] = await sql<{ value: unknown }[]>`
         select value from system_settings where key = 'email.max_per_dispatch'
       `;
       return r?.value;
-    }, { timeout: 15_000 })
+    }, { timeout: 20_000 })
     .toBe(30);
   await shot(page, 'FLOW-11-step-2-saved');
 
-  // Sad: a negative count. domain.md §6 calls this "messages per dispatch".
-  await row.getByRole('textbox').or(row.locator('input[type="number"]')).first().fill('-1');
-  await row.getByRole('button', { name: /save/i }).first().click();
-  await page.waitForTimeout(2000);
+  // Sad: a negative count. domain.md §6 calls this "messages per dispatch",
+  // and -1 is not a count of messages.
+  await field.fill('-1');
+  await row.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForTimeout(3000);
   const [after] = await sql<{ value: unknown }[]>`
     select value from system_settings where key = 'email.max_per_dispatch'
   `;
-  await shot(page, 'FLOW-12-step-1-negative');
+  await shot(page, 'FLOW-12-step-1-negative-accepted');
   expect(after?.value, 'a negative messages-per-dispatch must not be stored').not.toBe(-1);
 
   await ctx.close();
@@ -447,7 +450,8 @@ test('FLOW-5 and FLOW-6 the player CSV import previews and refuses', async ({ br
     mimeType: 'text/csv',
     buffer: Buffer.from(bad),
   });
-  await expect(dialog.getByText(/skip/i).first()).toBeVisible({ timeout: 15_000 });
+  await dialog.getByRole('button', { name: 'Preview' }).click();
+  await expect(dialog.getByText(/skip/i).first()).toBeVisible({ timeout: 20_000 });
   await shot(page, 'FLOW-6-step-2-preview-reports-rows');
 
   const [{ count }] = await sql<{ count: string }[]>`
@@ -464,12 +468,11 @@ test('FLOW-16 archiving a concert keeps the row and writes an audit entry', asyn
 
   await page.goto('/admin/concerts');
   await shot(page, 'FLOW-16-step-1-list');
-  await page.getByRole('button', { name: /Actions for QA September|Open menu|More/i }).first().click();
+  await page.getByRole('button', { name: 'Actions for QA September' }).first().click();
   await page.getByRole('menuitem', { name: /archive/i }).click();
-  const confirm = page.getByRole('alertdialog').or(page.getByRole('dialog'));
-  if (await confirm.getByRole('button', { name: /archive/i }).count()) {
-    await confirm.getByRole('button', { name: /archive/i }).first().click();
-  }
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole('button', { name: /^Archive/ }).click();
 
   await expect
     .poll(async () => {

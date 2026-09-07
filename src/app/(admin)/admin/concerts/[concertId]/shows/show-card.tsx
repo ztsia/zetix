@@ -291,7 +291,10 @@ function SegmentRow({
           timeZone={timeZone}
           availableModes={[segment.audienceMode]}
           trigger={
-            <Button variant="ghost" size="sm">
+            // Named for the segment: two "Edit" buttons on one show are
+            // indistinguishable to a screen reader, and to anyone driving the
+            // page by keyboard.
+            <Button variant="ghost" size="sm" aria-label={`Edit ${segment.name}`}>
               <Pencil />
               Edit
             </Button>

@@ -9,7 +9,7 @@ import { systemSettings } from '@/db/schema/settings';
 import { writeAuditLog } from '@/lib/audit';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getSessionUser } from '@/lib/auth/session';
-import { settingSpec } from './catalogue';
+import { settingSpec, type SettingSpec } from './catalogue';
 import type { FormState } from '../concerts/form-state';
 
 /**
@@ -43,14 +43,42 @@ function jsonbParam(value: unknown) {
   return sql`${JSON.stringify(value)}::text::jsonb`;
 }
 
-/** Parses the posted string into the type the catalogue declares. */
-function parseValue(kind: string, raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
+/**
+ * Parses the posted string into the type the catalogue declares, and checks it
+ * means something.
+ *
+ * The bounds are not fussiness. `system_settings` is the root of the cascade, so
+ * a value accepted here is handed to the dispatcher, the scanner and the
+ * entitlement guard — which multiplies `allocation.base_quota` by the active
+ * player count. "−1 messages per dispatch" and "3.7 messages a day" are not
+ * tight configurations; they are nonsense that fails somewhere far from the
+ * screen that accepted it.
+ */
+function parseValue(
+  spec: SettingSpec,
+  raw: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
   const text = raw.trim();
 
-  switch (kind) {
+  switch (spec.kind) {
     case 'number': {
       const n = Number(text);
       if (!Number.isFinite(n)) return { ok: false, error: `“${text}” is not a number.` };
+      if (spec.integer !== false && !Number.isInteger(n)) {
+        return { ok: false, error: `${spec.label} is a whole number — “${text}” is not.` };
+      }
+      if (spec.min !== undefined && n < spec.min) {
+        return {
+          ok: false,
+          error:
+            spec.min === 0
+              ? `${spec.label} cannot be negative.`
+              : `${spec.label} must be at least ${spec.min}; ${n} would leave it doing nothing at all.`,
+        };
+      }
+      if (spec.max !== undefined && n > spec.max) {
+        return { ok: false, error: `${spec.label} cannot be more than ${spec.max}.` };
+      }
       return { ok: true, value: n };
     }
     case 'boolean': {
@@ -98,7 +126,7 @@ export async function setSystemSettingAction(
     return clearSystemSettingAction(parsed.data.key);
   }
 
-  const value = parseValue(spec.kind, parsed.data.value);
+  const value = parseValue(spec, parsed.data.value);
   if (!value.ok) return { error: value.error };
 
   try {

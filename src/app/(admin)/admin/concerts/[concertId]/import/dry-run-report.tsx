@@ -25,25 +25,36 @@ export type ReportRow = {
   rowNumber: number;
   party: string;
   contactName: string;
+  player: string;
   attendee: string;
   allocationType: string;
   promoted: boolean;
   level: 'BLOCKING' | 'WARNING' | 'INFO' | 'OK';
+  /** Every finding for this row, worst first — not only the worst one. */
   message: string;
 };
 
-/** Flattens a plan into one row per sheet row, carrying its worst finding. */
+/**
+ * Flattens a plan into one row per sheet row.
+ *
+ * **Every finding for a row, not only its worst.** Keeping the worst alone hid
+ * the §9.5 promotion notice behind any warning on the same row — so a seat
+ * silently moved from BASE to EXTRA showed a party-size warning and nothing
+ * about the seat that changed, which is the one thing the admin needed to see.
+ */
 export function toReportRows(plan: PlanResponse): ReportRow[] {
-  const worst = new Map<number, { level: ReportRow['level']; message: string }>();
   const rank = { BLOCKING: 3, WARNING: 2, INFO: 1, OK: 0 } as const;
+  const byRow = new Map<number, { level: ReportRow['level']; message: string }>();
 
   for (const f of plan.findings) {
     if (f.rowNumber === undefined) continue;
-    const current = worst.get(f.rowNumber);
-    if (!current || rank[f.level] > rank[current.level]) {
-      worst.set(f.rowNumber, { level: f.level, message: f.message });
-    }
+    const current = byRow.get(f.rowNumber);
+    byRow.set(f.rowNumber, {
+      level: !current || rank[f.level] > rank[current.level] ? f.level : current.level,
+      message: current ? `${current.message} ${f.message}` : f.message,
+    });
   }
+  const worst = byRow;
 
   const rows: ReportRow[] = [];
   for (const party of plan.parties) {
@@ -53,6 +64,7 @@ export function toReportRows(plan: PlanResponse): ReportRow[] {
         rowNumber: seat.rowNumber,
         party: party.contactEmail ?? party.contactName,
         contactName: party.contactName,
+        player: party.playerName ?? (party.playerId == null ? '' : `#${party.playerId}`),
         attendee: seat.fullName ?? `Guest of ${party.contactName}`,
         allocationType: seat.allocationType,
         promoted: seat.promotedFromBase,
@@ -87,6 +99,19 @@ const columns: DataTableColumn<ReportRow>[] = [
     accessorKey: 'attendee',
     header: ({ column }) => <DataTableColumnHeader column={column} title="Attendee" />,
     sortFn: 'text',
+  },
+  {
+    // Which player a party matched to is the whole point of the player-invited
+    // path, and the report had no way to show it went to the right one.
+    accessorKey: 'player',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Player" />,
+    sortFn: 'text',
+    cell: ({ row }) =>
+      row.original.player ? (
+        row.original.player
+      ) : (
+        <span className="text-muted-foreground text-xs">—</span>
+      ),
   },
   {
     accessorKey: 'allocationType',
@@ -194,8 +219,25 @@ export function DryRunReport({ plan, timeZone }: { plan: PlanResponse; timeZone:
             {plan.counts.promotedToExtra > 0
               ? ` (${plan.counts.promotedToExtra} over quota)`
               : ''}{' '}
-            · {seatsConsumed} of {plan.openSeats} open seats used
-            {plan.extrasPolicy === 'REVIEW' ? ', extras held for review' : ''}
+            · {seatsConsumed} of {plan.openSeats} open seats, extras pool{' '}
+            {plan.extrasPool}
+          </p>
+          {/*
+            What the engine is predicted to do — the line that distinguishes "the
+            file fits" from "the file will be granted". Without it a clean dry run
+            can be followed by an entirely waitlisted party under a success banner.
+          */}
+          <p className="mt-2 text-sm">
+            <span className="font-medium">{plan.counts.predictedConfirmed} confirm</span>
+            {plan.counts.predictedPending > 0
+              ? ` · ${plan.counts.predictedPending} held for review`
+              : ''}
+            {plan.counts.predictedWaitlisted > 0 ? (
+              <span className="text-destructive">
+                {' '}
+                · {plan.counts.predictedWaitlisted} waitlist
+              </span>
+            ) : null}
           </p>
         </div>
       </div>
@@ -247,6 +289,7 @@ export function DryRunReport({ plan, timeZone }: { plan: PlanResponse; timeZone:
             { header: 'Row', value: (r) => r.rowNumber },
             { header: 'Party', value: (r) => r.contactName },
             { header: 'Attendee', value: (r) => r.attendee },
+            { header: 'Player', value: (r) => r.player },
             { header: 'Seat', value: (r) => r.allocationType },
             { header: 'Level', value: (r) => r.level },
             { header: 'Detail', value: (r) => r.message },

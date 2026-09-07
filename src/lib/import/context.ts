@@ -75,15 +75,25 @@ export async function matchPlayers(
 
   try {
     const db = getDb();
+    /**
+     * One row per value: `values ($1), ($2), ($3)`.
+     *
+     * Joining the placeholders bare gives `values ($1, $2, $3)`, which is a
+     * single row of three *columns*. Postgres does not error — it names the
+     * first column `needle` and discards the rest as `column2`, `column3` — so
+     * the query succeeds and matches only the first value in the file. Every
+     * player after the first then blocks with PLAYER_NOT_MATCHED, and the
+     * screen offers to commit the remainder.
+     */
     const list = sql.join(
-      values.map((v) => sql`${v}`),
+      values.map((v) => sql`(${v})`),
       sql`, `,
     );
 
     if (strategy === 'EMAIL') {
       const rows = await db.execute<{ needle: string; id: string; full_name: string }>(sql`
         select v.needle, p.id, p.full_name
-          from (values (${list})) as v(needle)
+          from (values ${list}) as v(needle)
           join players p
             on p.email = v.needle::citext
            and p.concert_id = ${concertId}
@@ -104,7 +114,7 @@ export async function matchPlayers(
     if (strategy === 'NAME') {
       const rows = await db.execute<{ needle: string; id: string; full_name: string }>(sql`
         select v.needle, p.id, p.full_name
-          from (values (${list})) as v(needle)
+          from (values ${list}) as v(needle)
           join players p
             on lower(btrim(p.full_name)) = lower(btrim(v.needle))
            and p.concert_id = ${concertId}
@@ -132,7 +142,7 @@ export async function matchPlayers(
     }>(sql`
       select distinct on (v.needle)
              v.needle, p.id, p.full_name, similarity(p.full_name, v.needle) as score
-        from (values (${list})) as v(needle)
+        from (values ${list}) as v(needle)
         join players p
           on p.concert_id = ${concertId}
          and p.is_active
@@ -226,10 +236,20 @@ export async function buildPlanContext(
   let playerMatches = new Map<string, PlayerMatch>();
   if (target.audienceMode === 'PLAYER_INVITED' && profile.playerMatch) {
     const column = profile.playerMatch.column;
+
+    /**
+     * Keyed by the **trimmed cell value**, because that is exactly what the
+     * planner looks up. Lower-casing emails here instead produced a map whose
+     * keys no match could ever be found under: the planner reads that column as
+     * plain text, so "Alice@Example.com" in the sheet never found the
+     * "alice@example.com" key this loop had written. Case-insensitivity belongs
+     * in the comparison, not in the key — `players.email` is `citext` and the
+     * NAME strategies lower both sides in SQL.
+     */
     const distinct = new Set<string>();
     for (const row of rows) {
       const raw = (row.cells[column] ?? '').trim();
-      if (raw !== '') distinct.add(profile.transforms.lowercaseEmails && profile.playerMatch.strategy === 'EMAIL' ? raw.toLowerCase() : raw);
+      if (raw !== '') distinct.add(raw);
     }
     const threshold =
       (await resolveSetting<number>('import.fuzzy_match_threshold', ctx)) ?? 1;
@@ -249,6 +269,7 @@ export async function buildPlanContext(
     baseQuota: target.audienceMode === 'PLAYER_INVITED' && baseQuota != null ? Number(baseQuota) : null,
     maxTicketsPerResponse: maxTickets == null ? null : Number(maxTickets),
     openSeats: pool.open_seats,
+    extrasPool: pool.extras_pool,
     baseAlreadyClaimed,
     playersWithExistingRegistration: existing,
     playerMatches,

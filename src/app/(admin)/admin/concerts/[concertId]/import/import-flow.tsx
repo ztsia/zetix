@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, CircleAlert, FileSpreadsheet, Loader2, Lock, Upload } from 'lucide-react';
+import { Check, CircleAlert, FileSpreadsheet, Loader2, Lock, Save, Upload } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -46,12 +46,14 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { defaultProfileFor } from '@/lib/import/template';
+import { parseMappingProfile } from '@/lib/import/profile';
 import { DryRunReport } from './dry-run-report';
 import { PrepareStep } from './prepare-step';
 import type { InspectResponse, PlanResponse } from './types';
 
 export type SegmentOption = {
   segmentId: number;
+  showId: number;
   segmentName: string;
   audienceMode: 'PUBLIC' | 'PLAYER_INVITED';
   showName: string;
@@ -115,6 +117,18 @@ export function ImportFlow({
   const [uniformType, setUniformType] = React.useState<'BASE' | 'EXTRA'>('EXTRA');
   const [valueMap, setValueMap] = React.useState<Record<string, 'BASE' | 'EXTRA' | ''>>({});
 
+  /**
+   * Saved mapping profiles (§9.3). Round two of a concert should be a profile
+   * picked from a list, not the same mapping done again from memory — a re-done
+   * mapping is a chance to map a column differently from the first run, which is
+   * how two rounds of one form end up disagreeing in the database.
+   */
+  const [profiles, setProfiles] = React.useState<
+    { id: number; name: string; config: unknown }[]
+  >([]);
+  const [profileName, setProfileName] = React.useState('');
+  const [saved, setSaved] = React.useState<string | null>(null);
+
   const [plan, setPlan] = React.useState<PlanResponse | null>(null);
   const [confirmation, setConfirmation] = React.useState('');
   const [committed, setCommitted] = React.useState<PlanResponse | null>(null);
@@ -134,6 +148,70 @@ export function ImportFlow({
    */
   const effectiveMode: AllocationMode = isPublic ? 'UNIFORM' : allocationMode;
   const effectiveType: 'BASE' | 'EXTRA' = isPublic ? 'EXTRA' : uniformType;
+
+  const loadProfiles = React.useCallback(async (showId: number | null) => {
+    try {
+      const res = await fetch(`/api/import/profiles${showId ? `?showId=${showId}` : ''}`);
+      if (res.ok) setProfiles((await res.json()).profiles ?? []);
+    } catch {
+      // A profile list that will not load is a convenience missing, not a
+      // failure: the admin maps by hand exactly as they would have anyway.
+    }
+  }, []);
+
+  async function saveProfile() {
+    if (!profileName.trim() || !mapping) return;
+    setSaved(null);
+    const res = await fetch('/api/import/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: profileName.trim(),
+        showId: segment?.showId ?? null,
+        audience: segment?.audienceMode ?? null,
+        config: JSON.parse(buildProfile()),
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      setError(json.error ?? 'Could not save that mapping.');
+      return;
+    }
+    setSaved(profileName.trim());
+    setProfileName('');
+    void loadProfiles(segment?.showId ?? null);
+  }
+
+  /** Applies a saved profile over the current file's headers. */
+  function applyProfile(id: string) {
+    const found = profiles.find((p) => String(p.id) === id);
+    if (!found) return;
+    try {
+      const parsedProfile = parseMappingProfile(found.config);
+      setMapping({
+        requested_at: parsedProfile.columns.requestedAt,
+        contact_name: parsedProfile.columns.contactName,
+        contact_email: parsedProfile.columns.contactEmail,
+        attendee_name: parsedProfile.columns.attendeeName,
+        attendee_email: parsedProfile.columns.attendeeEmail,
+        allocation_type: parsedProfile.columns.allocationType,
+        group_key: parsedProfile.columns.groupKey,
+      });
+      if (parsedProfile.columns.allocationType) {
+        setAllocationMode('COLUMN');
+        const next: Record<string, 'BASE' | 'EXTRA' | ''> = {};
+        for (const v of parsedProfile.allocationTypeValues.BASE) next[v] = 'BASE';
+        for (const v of parsedProfile.allocationTypeValues.EXTRA) next[v] = 'EXTRA';
+        setValueMap(next);
+        void runInspectWithColumn(parsedProfile.columns.allocationType);
+      } else {
+        setAllocationMode('UNIFORM');
+        setUniformType(parsedProfile.defaultAllocationType);
+      }
+    } catch {
+      setError('That saved mapping could not be read.');
+    }
+  }
 
   async function post(action: 'inspect' | 'dry-run' | 'commit', extra: Record<string, string> = {}) {
     if (!file || !segmentId) return null;
@@ -206,10 +284,18 @@ export function ImportFlow({
   }
 
   const mappingComplete = Boolean(mapping?.requested_at && mapping?.contact_name);
+  /**
+   * `[].every(...)` is `true`, so an empty value list used to let Continue pass
+   * with nothing mapped at all — the vacuous case, and the one that reaches the
+   * dry run with every row blocking on ALLOCATION_TYPE_UNMAPPED. A column read
+   * has to have found at least one value before it counts as configured.
+   */
+  const allocationValues = inspect?.allocationValues ?? [];
   const allocationComplete =
     effectiveMode === 'UNIFORM' ||
     (Boolean(mapping?.allocation_type) &&
-      (inspect?.allocationValues ?? []).every((v) => valueMap[v]));
+      allocationValues.length > 0 &&
+      allocationValues.every((v) => valueMap[v]));
 
   return (
     <div className="space-y-6">
@@ -384,6 +470,27 @@ export function ImportFlow({
 
           {step === 3 && inspect && mapping ? (
             <div className="space-y-8">
+              {profiles.length > 0 ? (
+                <FieldSet>
+                  <FieldLegend>Saved mappings</FieldLegend>
+                  <FieldDescription>
+                    Reuse the mapping from an earlier round rather than rebuilding it.
+                  </FieldDescription>
+                  <Select value={null} onValueChange={(v) => v && applyProfile(String(v))}>
+                    <SelectTrigger className="mt-2 w-80">
+                      <SelectValue placeholder="Apply a saved mapping" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {profiles.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FieldSet>
+              ) : null}
+
               <FieldSet>
                 <FieldLegend>Columns</FieldLegend>
                 <FieldDescription>
@@ -467,42 +574,56 @@ export function ImportFlow({
                     onValueChange={(v) => setAllocationMode(v as AllocationMode)}
                   >
                     {/* Choice cards: FieldLabel wrapping a Field, per the shadcn Field composition. */}
-                    <FieldLabel htmlFor="mode-uniform">
-                      <Field orientation="horizontal">
-                        <RadioGroupItem value="UNIFORM" id="mode-uniform" />
-                        <div className="flex-1 space-y-2">
-                          <div className="text-sm font-medium">Every row is the same type</div>
-                          <FieldDescription>
-                            Use this when the file is all allocated seats, or all extras.
-                          </FieldDescription>
-                          {effectiveMode === 'UNIFORM' ? (
-                            <Select
-                              value={effectiveType}
-                              onValueChange={(v) => setUniformType(v as 'BASE' | 'EXTRA')}
-                            >
-                              <SelectTrigger className="w-48">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="BASE">BASE — allocated</SelectItem>
-                                <SelectItem value="EXTRA">EXTRA — from the pool</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : null}
+                    {/*
+                      The label wraps the radio and its text only. Nesting the
+                      dependent Select inside it makes the surrounding <label>
+                      swallow the click and toggle the radio instead of opening
+                      the menu — the control looks present and does nothing.
+                    */}
+                    <div className="rounded-lg border p-3">
+                      <FieldLabel htmlFor="mode-uniform">
+                        <Field orientation="horizontal">
+                          <RadioGroupItem value="UNIFORM" id="mode-uniform" />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">Every row is the same type</div>
+                            <FieldDescription>
+                              Use this when the file is all allocated seats, or all extras.
+                            </FieldDescription>
+                          </div>
+                        </Field>
+                      </FieldLabel>
+                      {effectiveMode === 'UNIFORM' ? (
+                        <div className="mt-3 pl-7">
+                          <Select
+                            value={effectiveType}
+                            onValueChange={(v) => v && setUniformType(v as 'BASE' | 'EXTRA')}
+                          >
+                            <SelectTrigger className="w-56">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="BASE">BASE — allocated</SelectItem>
+                              <SelectItem value="EXTRA">EXTRA — from the pool</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
-                      </Field>
-                    </FieldLabel>
+                      ) : null}
+                    </div>
 
-                    <FieldLabel htmlFor="mode-column">
-                      <Field orientation="horizontal">
-                        <RadioGroupItem value="COLUMN" id="mode-column" />
-                        <div className="flex-1 space-y-2">
-                          <div className="text-sm font-medium">Read it from a column</div>
-                          <FieldDescription>
-                            Map each value found in that column to BASE or EXTRA.
-                          </FieldDescription>
-                          {effectiveMode === 'COLUMN' ? (
-                            <div className="space-y-3">
+                    <div className="rounded-lg border p-3">
+                      <FieldLabel htmlFor="mode-column">
+                        <Field orientation="horizontal">
+                          <RadioGroupItem value="COLUMN" id="mode-column" />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">Read it from a column</div>
+                            <FieldDescription>
+                              Map each value found in that column to BASE or EXTRA.
+                            </FieldDescription>
+                          </div>
+                        </Field>
+                      </FieldLabel>
+                      {effectiveMode === 'COLUMN' ? (
+                        <div className="mt-3 space-y-3 pl-7">
                               <Select
                                 value={mapping.allocation_type ?? '__none__'}
                                 onValueChange={(v) => {
@@ -563,13 +684,37 @@ export function ImportFlow({
                                   ))}
                                 </div>
                               ) : null}
-                            </div>
-                          ) : null}
                         </div>
-                      </Field>
-                    </FieldLabel>
+                      ) : null}
+                    </div>
                   </RadioGroup>
                 )}
+              </FieldSet>
+
+              <FieldSet>
+                <FieldLegend>Save this mapping</FieldLegend>
+                <FieldDescription>
+                  So round two is a profile picked from a list rather than this step done again.
+                </FieldDescription>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="e.g. Google Form, player round"
+                    className="w-80"
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={!profileName.trim() || !mappingComplete}
+                    onClick={() => void saveProfile()}
+                  >
+                    <Save />
+                    Save
+                  </Button>
+                  {saved ? (
+                    <span className="text-muted-foreground text-sm">Saved &ldquo;{saved}&rdquo;</span>
+                  ) : null}
+                </div>
               </FieldSet>
             </div>
           ) : null}
@@ -640,7 +785,13 @@ export function ImportFlow({
             ) : null}
 
             {step === 2 ? (
-              <Button disabled={busy || !inspect} onClick={() => setStep(3)}>
+              <Button
+                disabled={busy || !inspect}
+                onClick={() => {
+                  void loadProfiles(segment?.showId ?? null);
+                  setStep(3);
+                }}
+              >
                 Continue
               </Button>
             ) : null}

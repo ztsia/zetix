@@ -27,6 +27,7 @@ export type PlanResponse = {
   largestParty: number;
   findings: Finding[];
   openSeats: number;
+  extrasPool: number;
   extrasPolicy: 'REVIEW' | 'AUTO_FCFS';
   parties: {
     key: string;
@@ -35,6 +36,7 @@ export type PlanResponse = {
     contactEmail: string | null;
     requestedAt: string;
     playerId: number | null;
+    playerName: string | null;
     blocked: boolean;
     seats: {
       rowNumber: number;

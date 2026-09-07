@@ -55,6 +55,7 @@ export default async function ImportPage({
 
   const segments: SegmentOption[] = rows.map((r) => ({
     segmentId: r.segmentId,
+    showId: r.showId,
     segmentName: r.segmentName,
     audienceMode: r.audienceMode,
     showName: r.showName,

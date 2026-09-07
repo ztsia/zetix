@@ -128,16 +128,38 @@ collects is worse than one that does not offer to collect it.
 | Duplicate email within the file | Warning |
 | Rows in one party disagree on contact name or player | Warning — first row in file order wins (§9.2) |
 | Row has no `contact_email` | Warning — becomes its own registration, counted separately (§9.2) |
-| Registration already exists for this player + show | Blocking — skip row |
-| Player not matched (`PLAYER_INVITED` only) | Blocking until resolved |
+| No contact name | Blocking — it is the identity of the party and the placeholder every unnamed seat tickets under |
+| Timestamp missing or unreadable | Blocking — it is the FCFS ordering key, and import time is not a substitute (§9.3) |
+| Registration already exists for this player + show | Blocking |
+| Player not matched (`PLAYER_INVITED` only) | Blocking |
 | `allocation_type` text matches no configured value | Blocking — the profile is wrong, and guessing spends the wrong seats (§9.5) |
 | Attendee name blank but the seat is real | Info — attendee created with a placeholder name (`v2.md` §8.2.1) |
 | Party exceeds `form.max_tickets_per_response` | Warning — import and flag; the cap governs the form, and an admin may have granted more |
 | Import would exceed the segment's or the show's capacity | Blocking — report overflow, admin chooses to cap in row order or raise capacity |
 
+**A blocking finding stops the whole run — it is never committed around.** Not the file, and not the
+one party carrying it. Committing the remainder is the silent under-issue this module exists to avoid:
+an unmatched player is a party that quietly receives no tickets, there is no rollback to discover it
+with (decision 26), and nothing downstream will ask where they went. The admin resolves it where it
+came from — remove the rows, fix the mapping, create the player — and dry runs again. Warnings and
+info never block; that is the whole difference between the levels.
+
 Imports run through `claim_seats()` in `requested_at` order, so capacity rules cannot be bypassed by
 importing. Under `REVIEW` policy, imported extras land as `PENDING_REVIEW` alongside form requests and
 compete fairly on timestamp.
+
+### Capacity is two pools, not one
+
+`BASE` seats draw on the segment's open seats; `EXTRA` seats draw on the **extras pool**, which is the
+open seats minus the base still owed to players who have not claimed it (`allocation.md` §7.2). They are
+different numbers, and sizing extras against open seats predicts that a file fits when the engine will
+waitlist most of it — a dry run reporting no problem, then a success banner over an entirely
+waitlisted party.
+
+So the dry run states, beside the counts, **what the engine is predicted to do**: how many seats
+confirm, hold as `PENDING_REVIEW`, and waitlist. It is a prediction rather than a promise — the engine
+decides against the pool as it stands at commit — but a file whose seats will not fit says so before
+the commit rather than after it.
 
 ## 9.5 What the engine decides, and what import must decide first
 
@@ -222,7 +244,13 @@ composition — with two modes:
 
 Listing the distinct values from the parsed file, rather than asking the admin to type them, is what
 makes `allocation_type_values` (§9.3) correct by construction: a value in the file that maps to nothing
-is visible as an unmapped row, which §9.4 makes blocking.
+is visible as an unmapped row, which §9.4 makes blocking. Choosing the column with nothing yet mapped
+is **not** a configured state: an empty value list must not let the step pass.
+
+The dependent controls sit **outside** the choice card's `FieldLabel`. A `<label>` wrapping an
+interactive control swallows the click and activates the label's own input instead, so a `Select`
+nested inside the card renders correctly, opens nothing, and leaves the admin looking at a control
+that does not respond.
 
 **Only `BASE` and `EXTRA` are offered.** `HELD` and `COMP` are in the enum and are admin concepts —
 seats withheld or comped by a person, one at a time. An importer that offered them invites a whole file
@@ -245,9 +273,13 @@ Above it, three things the table cannot say:
 
 - **The derived grouping** — *"38 rows → 12 registrations, largest party 4"* — with the party sizes
   broken down. This is the check that makes §9.2 safe, so it is stated before the table, not inside it.
-- **The seat outcome** — how many seats confirm, hold as `PENDING_REVIEW`, and waitlist, against the
-  segment's live pool from `segmentPool()`.
-- **Blocking counts**, as an `Alert variant="destructive"` that disables Commit while any remain.
+- **The seat outcome** — how many seats are predicted to confirm, hold as `PENDING_REVIEW`, and
+  waitlist, against the segment's live pool from `segmentPool()`. Extras are sized against
+  `extras_pool`, never `open_seats` (§9.4).
+- **Blocking counts**, as an `Alert variant="destructive"` that disables Commit while any remain —
+  any blocking finding, not only a file-level one. The server refuses the same commit independently,
+  because there is no rollback and a gate that lives only in a component is one stale tab from being
+  no gate at all.
 
 ### Step 6 — Commit
 

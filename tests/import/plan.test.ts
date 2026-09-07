@@ -55,6 +55,7 @@ function context(over: Partial<PlanContext> = {}): PlanContext {
     baseQuota: 2,
     maxTicketsPerResponse: null,
     openSeats: 100,
+    extrasPool: 100,
     baseAlreadyClaimed: new Map(),
     playersWithExistingRegistration: new Set(),
     playerMatches: new Map(),
@@ -466,5 +467,91 @@ describe('validation levels (§9.4)', () => {
 
     expect(codes(plan)).not.toContain('CAPACITY_EXCEEDED');
     expect(plan.counts.extraSeats).toBe(10);
+  });
+});
+
+describe('predicting what the engine will do (§9.4, §9.6)', () => {
+  const publicRows = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      row(
+        {
+          [HEADERS.ts]: `2026-09-01T10:0${i}:00Z`,
+          [HEADERS.contact]: `C${i}`,
+          [HEADERS.email]: `c${i}@example.com`,
+          [HEADERS.name]: `N${i}`,
+          [HEADERS.type]: 'Extra',
+        },
+        i + 2,
+      ),
+    );
+
+  /**
+   * The finding this exists for: `open_seats` and `extras_pool` are different
+   * numbers, and extras draw on the pool. Sizing against open seats reported a
+   * file that fits, then the engine waitlisted all of it under a success banner.
+   */
+  it('sizes extras against the extras pool, not against open seats', () => {
+    const plan = planImport(
+      publicRows(8),
+      profile({ player_match: null }),
+      context({
+        audienceMode: 'PUBLIC',
+        extrasPolicy: 'AUTO_FCFS',
+        baseQuota: null,
+        openSeats: 10,
+        // Eight base seats are still owed to players who have not claimed, so
+        // only two of the ten open seats are actually available to extras.
+        extrasPool: 2,
+      }),
+    );
+
+    expect(codes(plan)).toContain('CAPACITY_EXCEEDED');
+    expect(plan.findings.find((f) => f.code === 'CAPACITY_EXCEEDED')?.level).toBe('BLOCKING');
+  });
+
+  it('predicts confirmed and waitlisted rather than only counting seats', () => {
+    const plan = planImport(
+      publicRows(5),
+      profile({ player_match: null }),
+      context({
+        audienceMode: 'PUBLIC',
+        extrasPolicy: 'AUTO_FCFS',
+        baseQuota: null,
+        openSeats: 100,
+        extrasPool: 3,
+      }),
+    );
+
+    expect(plan.counts.predictedConfirmed).toBe(3);
+    expect(plan.counts.predictedWaitlisted).toBe(2);
+    expect(codes(plan)).toContain('SEATS_WILL_WAITLIST');
+  });
+
+  it('predicts REVIEW extras as pending, consuming nothing', () => {
+    const plan = planImport(
+      publicRows(6),
+      profile({ player_match: null }),
+      context({
+        audienceMode: 'PUBLIC',
+        extrasPolicy: 'REVIEW',
+        baseQuota: null,
+        openSeats: 0,
+        extrasPool: 0,
+      }),
+    );
+
+    expect(plan.counts.predictedPending).toBe(6);
+    expect(plan.counts.predictedWaitlisted).toBe(0);
+    expect(codes(plan)).not.toContain('CAPACITY_EXCEEDED');
+  });
+
+  it('names the matched player on the party, for the report to show', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'Guest', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ playerMatches: new Map([['p@example.com', match(7, 'Pat Lim')]]) }),
+    );
+
+    expect(plan.parties[0].playerName).toBe('Pat Lim');
   });
 });

@@ -43,8 +43,10 @@ export type PlannedParty = {
   contactEmail: string | null;
   requestedAt: Date;
   playerId: number | null;
+  /** The matched player's name, so the report can show which one it found. */
+  playerName: string | null;
   seats: PlannedSeat[];
-  /** A blocking finding somewhere in this party. Commit skips it entirely. */
+  /** A blocking finding somewhere in this party. Any one blocks the whole run. */
   blocked: boolean;
 };
 
@@ -59,8 +61,15 @@ export type PlanContext = {
   baseQuota: number | null;
   /** `form.max_tickets_per_response`, resolved. Null means no cap configured. */
   maxTicketsPerResponse: number | null;
-  /** `segmentPool().open_seats` at plan time. */
+  /** `segmentPool().open_seats` at plan time — what BASE seats draw on. */
   openSeats: number;
+  /**
+   * `segmentPool().extras_pool` — what EXTRA seats draw on, which is **not** the
+   * same number. The pool is open seats minus the base still owed to players who
+   * have not claimed it, so sizing extras against `open_seats` predicts a file
+   * fits when the engine will waitlist most of it (§7.2).
+   */
+  extrasPool: number;
   /**
    * Confirmed `BASE` seats this player already holds in this segment, so a
    * player who registered in round 1 does not get a second full quota in round
@@ -88,6 +97,10 @@ export type ImportPlan = {
     extraSeats: number;
     promotedToExtra: number;
     placeholderNames: number;
+    /** What the engine is predicted to do with these seats. See {@link predict}. */
+    predictedConfirmed: number;
+    predictedPending: number;
+    predictedWaitlisted: number;
     ungrouped: number;
     blocking: number;
     warning: number;
@@ -171,6 +184,7 @@ export function planImport(
     contactEmail: string | null;
     requestedAt: Date;
     playerId: number | null;
+    playerName: string | null;
     seats: PlannedSeat[];
     blocked: boolean;
   };
@@ -313,6 +327,7 @@ export function planImport(
         contactEmail,
         requestedAt,
         playerId: null,
+        playerName: null,
         seats: [],
         blocked: false,
       };
@@ -364,6 +379,7 @@ export function planImport(
       }
 
       draft.playerId = match.playerId;
+      draft.playerName = match.fullName;
       if (match.needsConfirmation) {
         draft.blocked = true;
         add({
@@ -403,6 +419,7 @@ export function planImport(
       contactEmail: d.contactEmail,
       requestedAt: d.requestedAt,
       playerId: d.playerId,
+      playerName: d.playerName,
       seats: d.seats,
       blocked: d.blocked,
     }));
@@ -458,15 +475,32 @@ export function planImport(
   const baseSeats = seats.filter((s) => s.allocationType === 'BASE').length;
   const extraSeats = seats.length - baseSeats;
 
+  const predicted = predict(baseSeats, extraSeats, context);
+
   // Under REVIEW an extras request holds as PENDING_REVIEW and consumes no
   // seats (§7.4), so it cannot overflow anything at intake. Under AUTO_FCFS it
   // is granted immediately and does.
   const seatsConsumed = context.extrasPolicy === 'REVIEW' ? baseSeats : seats.length;
-  if (seatsConsumed > context.openSeats) {
+  const available =
+    context.extrasPolicy === 'REVIEW'
+      ? context.openSeats
+      : Math.min(context.openSeats, baseSeats + context.extrasPool);
+  if (seatsConsumed > available) {
     add({
       level: 'BLOCKING',
       code: 'CAPACITY_EXCEEDED',
-      message: `This import needs ${seatsConsumed} seats but the segment has ${context.openSeats} open. Cap the file in row order, or raise the capacity of the segment - ${seatsConsumed - context.openSeats} seats over.`,
+      message: `This import needs ${seatsConsumed} seats but only ${available} can be granted (${context.openSeats} open, extras pool ${context.extrasPool}). Cap the file in row order, or raise the capacity of the segment - ${seatsConsumed - available} seats over.`,
+    });
+  }
+
+  // A file that fits capacity can still waitlist, because BASE is bounded by
+  // each player's quota and EXTRA by the pool. Saying so before the commit is
+  // the difference between a preview and a guess (§9.6).
+  if (predicted.waitlisted > 0) {
+    add({
+      level: 'WARNING',
+      code: 'SEATS_WILL_WAITLIST',
+      message: `${predicted.waitlisted} of ${seats.length} seats will be waitlisted rather than confirmed - the pool does not hold them.`,
     });
   }
 
@@ -483,11 +517,47 @@ export function planImport(
       extraSeats,
       promotedToExtra,
       placeholderNames: seats.filter((s) => s.fullName == null).length,
+      predictedConfirmed: predicted.confirmed,
+      predictedPending: predicted.pending,
+      predictedWaitlisted: predicted.waitlisted,
       ungrouped,
       blocking: level('BLOCKING'),
       warning: level('WARNING'),
       info: level('INFO'),
     },
     largestParty: parties.reduce((m, p) => Math.max(m, p.seats.length), 0),
+  };
+}
+
+/**
+ * What `claim_seats()` is expected to do with these seats.
+ *
+ * A prediction, not a promise — the engine decides, and it decides against the
+ * pool as it stands at commit rather than at preview. It mirrors the engine's
+ * own two-pass shape (§7.8): entitlement seats are decided first and spend the
+ * segment's room, then the extras budget is sized against what is genuinely
+ * left. Without it the dry run can report a clean file that arrives entirely
+ * waitlisted under a success banner, which is exactly the silent failure the dry
+ * run exists to prevent.
+ */
+function predict(
+  baseSeats: number,
+  extraSeats: number,
+  context: PlanContext,
+): { confirmed: number; pending: number; waitlisted: number } {
+  const baseGranted = Math.min(baseSeats, Math.max(0, context.openSeats));
+  const baseWaitlisted = baseSeats - baseGranted;
+
+  if (context.extrasPolicy === 'REVIEW') {
+    // Extras hold as PENDING_REVIEW consuming nothing; the admin grants later.
+    return { confirmed: baseGranted, pending: extraSeats, waitlisted: baseWaitlisted };
+  }
+
+  const roomLeft = Math.max(0, context.openSeats - baseGranted);
+  const extraGranted = Math.min(extraSeats, Math.max(0, context.extrasPool), roomLeft);
+  return {
+    confirmed: baseGranted + extraGranted,
+    pending: 0,
+    waitlisted: baseWaitlisted + (extraSeats - extraGranted),
   };
 }

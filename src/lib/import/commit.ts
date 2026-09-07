@@ -127,12 +127,19 @@ export async function commitImport(input: {
 }): Promise<ImportOutcome> {
   const { plan, target } = input;
 
-  // A blocking finding stops the whole run, not just its own party. §9.4 makes
-  // capacity overflow blocking at file level, and committing "the rest of it"
-  // would spend seats in an order nobody previewed.
-  if (plan.counts.blocking > 0 && plan.findings.some((f) => f.rowNumber === undefined)) {
+  /**
+   * **Any blocking finding stops the whole run** (§9.4, §9.6).
+   *
+   * Not just a file-level one. Committing "the rest of it" is the silent
+   * under-issue decision 33 set out to remove: an unmatched player is a party
+   * that quietly does not get tickets, and there is no rollback to notice it
+   * with afterwards (decision 26). The admin resolves it in the sheet — remove
+   * the rows, or fix the mapping — and dry runs again.
+   */
+  if (plan.counts.blocking > 0) {
+    const first = plan.findings.find((f) => f.level === 'BLOCKING');
     throw new Error(
-      'This import has a blocking finding that applies to the whole file. Resolve it and run the dry run again.',
+      `This import has ${plan.counts.blocking} blocking ${plan.counts.blocking === 1 ? 'issue' : 'issues'} and cannot be committed. Resolve them and dry run again. First: ${first?.message ?? ''}`,
     );
   }
 

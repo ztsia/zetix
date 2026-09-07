@@ -182,6 +182,7 @@ export async function POST(request: Request) {
     largestParty: plan.largestParty,
     findings: plan.findings,
     openSeats: context.openSeats,
+    extrasPool: context.extrasPool,
     extrasPolicy: context.extrasPolicy,
     parties: plan.parties.map((p) => ({
       key: p.key,
@@ -190,6 +191,7 @@ export async function POST(request: Request) {
       contactEmail: p.contactEmail,
       requestedAt: p.requestedAt.toISOString(),
       playerId: p.playerId,
+      playerName: p.playerName,
       blocked: p.blocked,
       seats: p.seats.map((s) => ({
         rowNumber: s.rowNumber,
@@ -227,9 +229,13 @@ export async function POST(request: Request) {
     );
   }
 
-  if (plan.counts.blocking > 0 && plan.findings.some((f) => f.rowNumber === undefined)) {
+  // Any blocking finding, not only a file-level one (§9.4). The screen disables
+  // Commit for the same reason; this is the half a stale tab cannot skip.
+  if (plan.counts.blocking > 0) {
     return NextResponse.json(
-      { error: 'This import has a blocking finding for the whole file. Fix it and dry run again.' },
+      {
+        error: `This import has ${plan.counts.blocking} blocking ${plan.counts.blocking === 1 ? 'issue' : 'issues'} and cannot be committed. Resolve them and dry run again.`,
+      },
       { status: 409 },
     );
   }

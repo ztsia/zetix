@@ -24,6 +24,7 @@ const baseContext: PlanContext = {
   baseQuota: null,
   maxTicketsPerResponse: null,
   openSeats: 100,
+  extrasPool: 100,
   baseAlreadyClaimed: new Map(),
   playersWithExistingRegistration: new Set(),
   playerMatches: new Map(),

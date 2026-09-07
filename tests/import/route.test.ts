@@ -182,6 +182,39 @@ describe('refusals', () => {
     expect(Number(count)).toBe(0);
   });
 
+  /**
+   * The commit half of the corrected blocking rule: any blocking finding, not
+   * only a file-level one, and the server says so independently of the screen.
+   */
+  it('409s a commit while any row is blocking, even with a valid confirmation', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('S');
+    ws.addRow([...HEADERS]);
+    ws.addRow(['2026-09-01T10:00:00Z', 'Good', 'g@x.test', 'Good', '', 'Extra']);
+    // BASE in a public segment: blocking (§9.5).
+    ws.addRow(['2026-09-02T10:00:00Z', 'Bad', 'b@x.test', 'Bad', '', 'Allocated']);
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const file = new File([new Uint8Array(buf)], 'mixed.xlsx');
+
+    const base = defaultProfileFor('EXTRA');
+    const res = await POST(
+      request({
+        action: 'commit',
+        segmentId: String(segmentId),
+        file,
+        profile: JSON.stringify(base),
+        confirmation: segmentName,
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/cannot be committed/);
+
+    // Not the good party either.
+    const [{ count }] = await sql<{ count: string }[]>`select count(*) from registrations`;
+    expect(Number(count)).toBe(0);
+  });
+
   it('400s a malformed mapping profile', async () => {
     const res = await POST(
       request({
@@ -259,3 +292,52 @@ function publicProfile() {
   const base = defaultProfileFor('EXTRA');
   return { ...base, columns: { ...base.columns, allocation_type: null } };
 }
+
+const { GET, POST: SAVE } = await import('@/app/api/import/profiles/route');
+
+describe('saved mapping profiles (§9.3)', () => {
+  beforeEach(() => sessionUser.mockResolvedValue(adminUser));
+
+  it('refuses an operator', async () => {
+    sessionUser.mockResolvedValue(operatorUser);
+    const res = await GET(new Request('http://localhost/api/import/profiles'));
+    expect(res.status).toBe(403);
+  });
+
+  it('saves a profile and lists it back', async () => {
+    const saved = await SAVE(
+      new Request('http://localhost/api/import/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Google Form, public round',
+          config: publicProfile(),
+        }),
+      }),
+    );
+    expect(saved.status).toBe(200);
+
+    const listed = await GET(new Request('http://localhost/api/import/profiles'));
+    const { profiles } = await listed.json();
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0].name).toBe('Google Form, public round');
+    // Stored in the §9.3 shape, so it parses back on the next round.
+    expect(profiles[0].config.columns.requested_at).toBe(TEMPLATE_HEADERS.timestamp);
+  });
+
+  /** A profile that cannot be read back is worse than none: it fails at round two. */
+  it('refuses to store a mapping the importer could not use', async () => {
+    const res = await SAVE(
+      new Request('http://localhost/api/import/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Broken', config: { columns: {} } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/not valid/);
+
+    const [{ count }] = await sql<{ count: string }[]>`select count(*) from mapping_profiles`;
+    expect(Number(count)).toBe(0);
+  });
+});

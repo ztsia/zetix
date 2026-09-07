@@ -129,7 +129,13 @@ describe('commitImport', () => {
     expect(seat.name_source).toBe('PLACEHOLDER');
   });
 
-  it('skips a blocked party and commits the rest', async () => {
+  /**
+   * **A blocking finding stops the whole run**, even when only one party carries
+   * it (§9.4, §9.6). Committing the rest is the silent under-issue decision 33
+   * set out to remove: an unmatched player is a party that quietly gets no
+   * tickets, and there is no rollback to notice it with afterwards.
+   */
+  it('refuses the whole run when any party is blocked', async () => {
     const { segmentId } = await publicSegment(10);
     const target = await loadSegmentTarget(segmentId);
     const rows = [
@@ -140,14 +146,17 @@ describe('commitImport', () => {
 
     const p = profile({ player_match: null });
     const plan = planImport(rows, p, await buildPlanContext(target, p, rows));
-    const outcome = await commitImport({ target, filename: 'x.csv', plan });
+    expect(plan.counts.blocking).toBeGreaterThan(0);
 
-    expect(outcome.createdRegistrations).toBe(1);
-    expect(outcome.skippedParties).toBe(1);
+    await expect(commitImport({ target, filename: 'x.csv', plan })).rejects.toThrow(
+      /blocking .* cannot be committed/,
+    );
+
+    // Nothing at all, not even the party that was fine.
     const [{ count }] = await sql<{ count: string }[]>`
       select count(*) from registrations where segment_id = ${segmentId}
     `;
-    expect(Number(count)).toBe(1);
+    expect(Number(count)).toBe(0);
   });
 
   /**
@@ -168,7 +177,7 @@ describe('commitImport', () => {
     expect(plan.findings.some((f) => f.code === 'CAPACITY_EXCEEDED')).toBe(true);
 
     await expect(commitImport({ target, filename: 'x.csv', plan })).rejects.toThrow(
-      /blocking finding that applies to the whole file/,
+      /cannot be committed/,
     );
     const [{ count }] = await sql<{ count: string }[]>`select count(*) from registrations`;
     expect(Number(count)).toBe(0);
@@ -347,6 +356,64 @@ describe('the player-invited path', () => {
 });
 
 describe('matchPlayers', () => {
+  /**
+   * **More than one value, always.** The bug this exists for: the value list was
+   * built as `values ($1, $2, $3)`, which is one row of three columns rather
+   * than three rows. Postgres does not error — it names the first column
+   * `needle` and discards the rest — so the query matched only the first value
+   * in the file and every player after it blocked with PLAYER_NOT_MATCHED.
+   *
+   * Every other test here happened to use a single distinct value, which is the
+   * one input under which the defect is invisible. So this one is deliberately
+   * three, for each strategy.
+   */
+  it('matches every distinct value, not just the first', async () => {
+    const concertId = await createConcert();
+    const playerIds = await createPlayers(concertId, 3);
+    const emails = await sql<{ email: string }[]>`
+      select email from players where id = any(${playerIds}) order by id
+    `;
+    const needles = emails.map((e) => e.email);
+
+    const matches = await matchPlayers(concertId, needles, 'EMAIL', 1);
+    expect([...matches.keys()].sort()).toEqual([...needles].sort());
+    expect(new Set([...matches.values()].map((m) => m!.playerId)).size).toBe(3);
+  });
+
+  it('matches every distinct value by name too', async () => {
+    const concertId = await createConcert();
+    await createPlayers(concertId, 3);
+    const names = ['Player 1', 'Player 2', 'Player 3'];
+
+    const matches = await matchPlayers(concertId, names, 'NAME', 1);
+    expect([...matches.keys()].sort()).toEqual([...names].sort());
+  });
+
+  it('scores every distinct value under NAME_FUZZY', async () => {
+    const concertId = await createConcert();
+    await createPlayers(concertId, 3);
+
+    const matches = await matchPlayers(concertId, ['Player 1', 'Player 2'], 'NAME_FUZZY', 0.5);
+    expect(matches.size).toBe(2);
+  });
+
+  /**
+   * The map is keyed by the trimmed cell value because that is what the planner
+   * looks up. Lower-casing the key in the context builder instead produced a map
+   * no lookup could ever hit.
+   */
+  it('keys the map by the value it was given, so the planner can find it', async () => {
+    const concertId = await createConcert();
+    const [playerId] = await createPlayers(concertId, 1);
+    const [{ email }] = await sql<{ email: string }[]>`
+      select email from players where id = ${playerId}
+    `;
+    const shouted = email.toUpperCase();
+
+    const matches = await matchPlayers(concertId, [shouted], 'EMAIL', 1);
+    expect(matches.has(shouted)).toBe(true);
+  });
+
   it('matches email case-insensitively through citext', async () => {
     const concertId = await createConcert();
     const [playerId] = await createPlayers(concertId, 1);

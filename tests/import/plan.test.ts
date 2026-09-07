@@ -1,0 +1,470 @@
+import { describe, expect, it } from 'vitest';
+import {
+  planImport,
+  type PlanContext,
+  type PlayerMatch,
+  type SheetRow,
+} from '@/lib/import/plan';
+import { parseMappingProfile, type MappingProfile } from '@/lib/import/profile';
+
+/**
+ * The planner is the whole correctness surface of module `C`
+ * (spec/import.md §9.2, §9.4, §9.5).
+ *
+ * These tests carry no database: the planner is pure by construction, and the
+ * things worth proving here — that a party is grouped the way §9.2 says, and
+ * that the three `claim_seats()` properties §9.5 names are handled *before* the
+ * call rather than discovered after it — are all decisions the planner makes
+ * alone. The commit path is exercised against real Postgres separately.
+ */
+
+const HEADERS = {
+  ts: 'Timestamp',
+  contact: 'Contact Name',
+  email: 'Contact Email',
+  name: 'Attendee Name',
+  type: 'Ticket Type',
+} as const;
+
+function profile(over: Partial<Record<string, unknown>> = {}): MappingProfile {
+  return parseMappingProfile({
+    header_row: 1,
+    columns: {
+      requested_at: HEADERS.ts,
+      contact_name: HEADERS.contact,
+      contact_email: HEADERS.email,
+      attendee_name: HEADERS.name,
+      allocation_type: HEADERS.type,
+    },
+    allocation_type_values: { BASE: ['Allocated'], EXTRA: ['Extra'] },
+    default_allocation_type: 'EXTRA',
+    ...over,
+  });
+}
+
+/**
+ * Every number a caller would resolve through the cascade is a parameter here,
+ * never a default — the same rule the allocation fixtures follow. A context that
+ * quietly defaulted `baseQuota` would hide the very arithmetic these tests exist
+ * to pin down.
+ */
+function context(over: Partial<PlanContext> = {}): PlanContext {
+  return {
+    audienceMode: 'PLAYER_INVITED',
+    extrasPolicy: 'REVIEW',
+    baseQuota: 2,
+    maxTicketsPerResponse: null,
+    openSeats: 100,
+    baseAlreadyClaimed: new Map(),
+    playersWithExistingRegistration: new Set(),
+    playerMatches: new Map(),
+    ...over,
+  };
+}
+
+let nextRow = 2;
+function row(cells: Record<string, string>, rowNumber?: number): SheetRow {
+  return { rowNumber: rowNumber ?? nextRow++, cells };
+}
+
+const match = (playerId: number, fullName = 'Player'): PlayerMatch => ({
+  playerId,
+  fullName,
+  confidence: 1,
+  needsConfirmation: false,
+});
+
+const codes = (plan: ReturnType<typeof planImport>) => plan.findings.map((f) => f.code);
+
+describe('grouping (§9.2)', () => {
+  it('groups rows sharing contact email and timestamp into one party', () => {
+    const at = '2026-09-01T10:00:00Z';
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Bob Tan', [HEADERS.type]: 'Extra' }, 3),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: '', [HEADERS.type]: 'Extra' }, 4),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(plan.counts.parties).toBe(1);
+    expect(plan.counts.seats).toBe(3);
+    expect(plan.largestParty).toBe(3);
+    expect(plan.parties[0].rowNumbers).toEqual([2, 3, 4]);
+  });
+
+  /**
+   * The reason the key is a pair. This is the case that decided it: one person,
+   * two rounds. Grouping on email alone would merge them into one oversized
+   * party and send one email for seats requested a week apart.
+   */
+  it('keeps the same email at two different timestamps as two registrations', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: '2026-09-08T10:00:00Z', [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Carol Tan', [HEADERS.type]: 'Extra' }, 3),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(plan.counts.parties).toBe(2);
+    expect(plan.largestParty).toBe(1);
+  });
+
+  it('lets a mapped group column override the rule outright', () => {
+    const p = profile({
+      player_match: null,
+      columns: {
+        requested_at: HEADERS.ts,
+        contact_name: HEADERS.contact,
+        contact_email: HEADERS.email,
+        attendee_name: HEADERS.name,
+        allocation_type: HEADERS.type,
+        group_key: 'Party',
+      },
+    });
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Extra', Party: '1' }, 2),
+        row({ [HEADERS.ts]: '2026-09-08T11:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Bob', [HEADERS.type]: 'Extra', Party: '1' }, 3),
+      ],
+      p,
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    // Different timestamps would be two parties under the default rule.
+    expect(plan.counts.parties).toBe(1);
+    expect(plan.counts.seats).toBe(2);
+  });
+
+  it('gives a row with no contact email its own registration, and counts it', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: '', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: '', [HEADERS.name]: 'Bob', [HEADERS.type]: 'Extra' }, 3),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(plan.counts.parties).toBe(2);
+    expect(plan.counts.ungrouped).toBe(2);
+    expect(codes(plan).filter((c) => c === 'NO_GROUPING_KEY')).toHaveLength(2);
+  });
+
+  it('warns when rows in one party disagree on the contact name, and keeps the first', () => {
+    const at = '2026-09-01T10:00:00Z';
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'A. Tan', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'Bob', [HEADERS.type]: 'Extra' }, 3),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(codes(plan)).toContain('PARTY_CONTACT_DISAGREEMENT');
+    expect(plan.parties[0].contactName).toBe('Alice Tan');
+    expect(plan.counts.parties).toBe(1);
+  });
+
+  it('orders parties by requested_at, not by file order', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-08T10:00:00Z', [HEADERS.contact]: 'Later', [HEADERS.email]: 'l@example.com', [HEADERS.name]: 'L', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Earlier', [HEADERS.email]: 'e@example.com', [HEADERS.name]: 'E', [HEADERS.type]: 'Extra' }, 3),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(plan.parties.map((p) => p.contactName)).toEqual(['Earlier', 'Later']);
+  });
+});
+
+describe('what claim_seats() will not infer (§9.5)', () => {
+  /**
+   * The landmine. The engine sets the base allowance to zero unless the segment
+   * is PLAYER_INVITED *and* a player is linked, so a BASE seat in a public
+   * segment is waitlisted rather than refused — a public file mapped as BASE
+   * would waitlist the whole audience and return success.
+   */
+  it('refuses a BASE row in a public segment rather than letting it waitlist silently', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Allocated' }, 2),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(codes(plan)).toContain('BASE_IN_PUBLIC_SEGMENT');
+    expect(plan.counts.blocking).toBeGreaterThan(0);
+    expect(plan.parties[0].blocked).toBe(true);
+    // Blocked parties contribute no seats to the commit.
+    expect(plan.counts.seats).toBe(0);
+  });
+
+  it('blocks a value the profile maps to neither BASE nor EXTRA', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Complimentary' }, 2),
+      ],
+      profile({ player_match: null }),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(codes(plan)).toContain('ALLOCATION_TYPE_UNMAPPED');
+    expect(plan.parties[0].blocked).toBe(true);
+  });
+
+  it('falls back to the profile default when no allocation column is mapped', () => {
+    const p = parseMappingProfile({
+      columns: {
+        requested_at: HEADERS.ts,
+        contact_name: HEADERS.contact,
+        contact_email: HEADERS.email,
+        attendee_name: HEADERS.name,
+      },
+      default_allocation_type: 'EXTRA',
+    });
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'Alice' }, 2)],
+      p,
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null }),
+    );
+
+    expect(plan.counts.blocking).toBe(0);
+    expect(plan.parties[0].seats[0].allocationType).toBe('EXTRA');
+  });
+
+  /** The engine waitlists surplus base; §9.4 promises it becomes EXTRA. */
+  it('promotes base seats past the quota to extra, in row order', () => {
+    const at = '2026-09-01T10:00:00Z';
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'One', [HEADERS.type]: 'Allocated' }, 2),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'Two', [HEADERS.type]: 'Allocated' }, 3),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'Three', [HEADERS.type]: 'Allocated' }, 4),
+      ],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ baseQuota: 2, playerMatches: new Map([['p@example.com', match(7)]]) }),
+    );
+
+    const seats = plan.parties[0].seats;
+    expect(seats.map((s) => s.allocationType)).toEqual(['BASE', 'BASE', 'EXTRA']);
+    expect(seats[2].promotedFromBase).toBe(true);
+    expect(plan.counts.promotedToExtra).toBe(1);
+    expect(codes(plan)).toContain('BASE_SURPLUS_PROMOTED');
+  });
+
+  /**
+   * A quota is per player across every registration they hold (§7.6), so a
+   * player who took their base in round 1 has none left in round 2. Counting
+   * only within the file would hand out a second full quota.
+   */
+  it('counts base already claimed in the database against the quota', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-08T10:00:00Z', [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'Second round', [HEADERS.type]: 'Allocated' }, 2),
+      ],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        baseQuota: 2,
+        baseAlreadyClaimed: new Map([[7, 2]]),
+        playerMatches: new Map([['p@example.com', match(7)]]),
+      }),
+    );
+
+    expect(plan.parties[0].seats[0].allocationType).toBe('EXTRA');
+    expect(plan.counts.promotedToExtra).toBe(1);
+  });
+
+  it('spends one quota across two parties held by the same player', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'R1', [HEADERS.type]: 'Allocated' }, 2),
+        row({ [HEADERS.ts]: '2026-09-08T10:00:00Z', [HEADERS.contact]: 'P', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'R2', [HEADERS.type]: 'Allocated' }, 3),
+      ],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ baseQuota: 1, playerMatches: new Map([['p@example.com', match(7)]]) }),
+    );
+
+    expect(plan.counts.parties).toBe(2);
+    expect(plan.parties[0].seats[0].allocationType).toBe('BASE');
+    expect(plan.parties[1].seats[0].allocationType).toBe('EXTRA');
+  });
+});
+
+describe('player matching (§9.3, §9.4)', () => {
+  it('blocks a party whose player does not match', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'nobody@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ playerMatches: new Map() }),
+    );
+
+    expect(codes(plan)).toContain('PLAYER_NOT_MATCHED');
+    expect(plan.parties[0].blocked).toBe(true);
+  });
+
+  it('blocks a fuzzy match below the confirmation threshold', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'NAME_FUZZY' } }),
+      context({
+        playerMatches: new Map([
+          ['p@example.com', { playerId: 7, fullName: 'Pat Lim', confidence: 0.7, needsConfirmation: true }],
+        ]),
+      }),
+    );
+
+    expect(codes(plan)).toContain('PLAYER_MATCH_UNCONFIRMED');
+    expect(plan.parties[0].blocked).toBe(true);
+  });
+
+  it('blocks a player who already has a registration for this show', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        playerMatches: new Map([['p@example.com', match(7, 'Pat Lim')]]),
+        playersWithExistingRegistration: new Set([7]),
+      }),
+    );
+
+    expect(codes(plan)).toContain('PLAYER_ALREADY_REGISTERED');
+    expect(plan.parties[0].blocked).toBe(true);
+  });
+});
+
+describe('validation levels (§9.4)', () => {
+  const publicCtx = () =>
+    context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null });
+  const publicProfile = () => profile({ player_match: null });
+
+  it('treats a blank attendee name as info and leaves the name null for the engine', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'a@example.com', [HEADERS.name]: '   ', [HEADERS.type]: 'Extra' }, 2)],
+      publicProfile(),
+      publicCtx(),
+    );
+
+    const info = plan.findings.find((f) => f.code === 'PLACEHOLDER_NAME');
+    expect(info?.level).toBe('INFO');
+    expect(info?.message).toContain('Guest of Alice Tan');
+    // Null, not the built string: claim_seats() generates it (decision 32).
+    expect(plan.parties[0].seats[0].fullName).toBeNull();
+    expect(plan.counts.placeholderNames).toBe(1);
+    expect(plan.counts.blocking).toBe(0);
+  });
+
+  it('warns on a malformed email but still imports the seat', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'Alice', [HEADERS.email]: 'not-an-email', [HEADERS.name]: 'Alice', [HEADERS.type]: 'Extra' }, 2)],
+      publicProfile(),
+      publicCtx(),
+    );
+
+    expect(codes(plan)).toContain('CONTACT_EMAIL_MALFORMED');
+    expect(plan.counts.blocking).toBe(0);
+    expect(plan.counts.seats).toBe(1);
+  });
+
+  it('warns on a duplicate attendee email within the file', () => {
+    const p = parseMappingProfile({
+      columns: {
+        requested_at: HEADERS.ts,
+        contact_name: HEADERS.contact,
+        contact_email: HEADERS.email,
+        attendee_name: HEADERS.name,
+        attendee_email: 'Attendee Email',
+      },
+      default_allocation_type: 'EXTRA',
+    });
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'A', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'One', 'Attendee Email': 'dup@example.com' }, 2),
+        row({ [HEADERS.ts]: '2026-09-02T10:00:00Z', [HEADERS.contact]: 'B', [HEADERS.email]: 'b@example.com', [HEADERS.name]: 'Two', 'Attendee Email': 'DUP@example.com' }, 3),
+      ],
+      p,
+      publicCtx(),
+    );
+
+    // Case-folded by the lowercase_emails transform, so the duplicate is caught.
+    expect(codes(plan)).toContain('DUPLICATE_EMAIL_IN_FILE');
+    expect(plan.counts.seats).toBe(2);
+  });
+
+  it('warns when a party exceeds the configured cap without blocking it', () => {
+    const at = '2026-09-01T10:00:00Z';
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'A', [HEADERS.email]: 'a@example.com', [HEADERS.name]: '1', [HEADERS.type]: 'Extra' }, 2),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'A', [HEADERS.email]: 'a@example.com', [HEADERS.name]: '2', [HEADERS.type]: 'Extra' }, 3),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'A', [HEADERS.email]: 'a@example.com', [HEADERS.name]: '3', [HEADERS.type]: 'Extra' }, 4),
+      ],
+      publicProfile(),
+      context({
+        audienceMode: 'PUBLIC',
+        extrasPolicy: 'AUTO_FCFS',
+        baseQuota: null,
+        maxTicketsPerResponse: 2,
+      }),
+    );
+
+    const f = plan.findings.find((x) => x.code === 'PARTY_OVER_CAP');
+    expect(f?.level).toBe('WARNING');
+    expect(plan.counts.blocking).toBe(0);
+    expect(plan.counts.seats).toBe(3);
+  });
+
+  it('blocks a row with no readable timestamp rather than substituting import time', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: 'not a date', [HEADERS.contact]: 'A', [HEADERS.email]: 'a@example.com', [HEADERS.name]: 'A', [HEADERS.type]: 'Extra' }, 2)],
+      publicProfile(),
+      publicCtx(),
+    );
+
+    expect(codes(plan)).toContain('REQUESTED_AT_UNREADABLE');
+    expect(plan.counts.parties).toBe(0);
+  });
+
+  it('blocks when the import needs more seats than the segment has open', () => {
+    const rows = Array.from({ length: 4 }, (_, i) =>
+      row({ [HEADERS.ts]: `2026-09-0${i + 1}T10:00:00Z`, [HEADERS.contact]: `C${i}`, [HEADERS.email]: `c${i}@example.com`, [HEADERS.name]: `N${i}`, [HEADERS.type]: 'Extra' }, i + 2),
+    );
+    const plan = planImport(
+      rows,
+      publicProfile(),
+      context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null, openSeats: 3 }),
+    );
+
+    const f = plan.findings.find((x) => x.code === 'CAPACITY_EXCEEDED');
+    expect(f?.level).toBe('BLOCKING');
+    expect(f?.message).toContain('1 seats over');
+  });
+
+  /**
+   * Under REVIEW an extras request holds as PENDING_REVIEW and consumes no
+   * seats (§7.4). Counting them against capacity at intake would block an
+   * import that the review screen exists to decide later.
+   */
+  it('does not count REVIEW extras against capacity at intake', () => {
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      row({ [HEADERS.ts]: `2026-09-01T10:0${i}:00Z`, [HEADERS.contact]: `C${i}`, [HEADERS.email]: `c${i}@example.com`, [HEADERS.name]: `N${i}`, [HEADERS.type]: 'Extra' }, i + 2),
+    );
+    const matches = new Map(rows.map((r, i) => [`c${i}@example.com`, match(100 + i)]));
+    const plan = planImport(
+      rows,
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ extrasPolicy: 'REVIEW', openSeats: 0, playerMatches: matches }),
+    );
+
+    expect(codes(plan)).not.toContain('CAPACITY_EXCEEDED');
+    expect(plan.counts.extraSeats).toBe(10);
+  });
+});

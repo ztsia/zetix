@@ -102,6 +102,20 @@ export type DataTableProps<TData extends RowData> = {
   enableSelection?: boolean;
   onRowClick?: (row: TData) => void;
 
+  /**
+   * The currently selected rows, whenever the selection changes.
+   *
+   * Added by module `D`: an action that follows the selection — "reissue these
+   * four tickets" — needs to know what is ticked, and export following the
+   * selection internally does not help a button outside the table. Additive and
+   * optional, so no existing caller changes (modules.md §4: extend the shared
+   * component rather than growing a second one).
+   *
+   * Fires with the rows themselves rather than ids, since a caller doing
+   * anything useful with a selection needs the row anyway.
+   */
+  onSelectionChange?: (rows: TData[]) => void;
+
   export?: DataTableExport<TData>;
 
   isLoading?: boolean;
@@ -140,6 +154,7 @@ export function DataTable<TData extends RowData>({
   toolbar,
   enableSelection = false,
   onRowClick,
+  onSelectionChange,
   export: exportConfig,
   isLoading = false,
   emptyTitle = 'Nothing here yet',
@@ -209,6 +224,37 @@ export function DataTable<TData extends RowData>({
       ),
     [selectedRows, filteredRows],
   );
+
+  /**
+   * Report the selection outward for callers that act on it.
+   *
+   * Keyed on the row ids rather than the row objects: TanStack rebuilds the row
+   * wrappers on every render, so depending on `selectedRows` itself would fire
+   * this on each pass and, for a caller that sets state from it, loop.
+   */
+  const selectionKey = selectedRows
+    .map((row: Row<DataTableFeatures, TData>) => row.id)
+    .join(',');
+
+  // Both the callback and the rows are read through a ref that a second effect
+  // refreshes after every render, so neither has to be a dependency below. The
+  // row wrappers are rebuilt on each pass, so depending on them directly would
+  // fire this every render and loop any caller that sets state from it.
+  const latest = React.useRef<{
+    rows: TData[];
+    notify: ((rows: TData[]) => void) | undefined;
+  }>({ rows: [], notify: undefined });
+
+  React.useEffect(() => {
+    latest.current = {
+      rows: selectedRows.map((row: Row<DataTableFeatures, TData>) => row.original),
+      notify: onSelectionChange,
+    };
+  });
+
+  React.useEffect(() => {
+    latest.current.notify?.(latest.current.rows);
+  }, [selectionKey]);
 
   /**
    * The search box types locally and tells the table on a delay.

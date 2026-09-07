@@ -51,8 +51,17 @@ export type SegmentView = {
     maxTicketsPerResponse: number | null;
   };
   resolved: Record<string, ResolvedSetting>;
-  /** Live counts from the engine — never recomputed here (spec/allocation.md §7.2). */
-  pool: SegmentPool;
+  /**
+   * Live counts from the engine — never recomputed here (spec/allocation.md §7.2).
+   *
+   * **Null until the segment has a capacity at some level.** `segment_pool()`
+   * raises rather than guessing, because every figure it returns is derived from
+   * `sellable` and an invented one would be a wrong number wearing the engine's
+   * authority. That is right, and it means a freshly added segment has no pool —
+   * which is the normal starting state on this screen, not an error. Callers
+   * render "no capacity set" and offer the form.
+   */
+  pool: SegmentPool | null;
 };
 
 export type ShowView = {
@@ -157,32 +166,47 @@ export async function getShowsForConcert(concertId: number): Promise<ShowView[]>
     const mine = segmentRows.filter((segment) => segment.showId === show.id);
 
     const segments: SegmentView[] = await Promise.all(
-      mine.map(async (segment) => ({
-        id: segment.id,
-        showId: segment.showId,
-        name: segment.name,
-        audienceMode: segment.audienceMode,
-        displayOrder: segment.displayOrder,
-        raw: {
-          capacity: segment.capacity,
-          baseQuota: segment.baseQuota,
-          baseClaimDeadline: segment.baseClaimDeadline,
-          extrasPolicy: segment.extrasPolicy,
-          allowPartialGrant: segment.allowPartialGrant,
-          maxTicketsPerResponse: segment.maxTicketsPerResponse,
-        },
-        resolved: await resolveWithOrigin([...SEGMENT_KEYS], {
+      mine.map(async (segment) => {
+        const resolved = await resolveWithOrigin([...SEGMENT_KEYS], {
           segmentId: segment.id,
           showId: show.id,
           concertId,
-        }),
-        pool: await segmentPool(segment.id),
-      })),
+        });
+
+        // Ask for a pool only once a capacity exists somewhere in the cascade.
+        // Calling it regardless and catching the failure would also swallow the
+        // errors worth seeing, and this screen's job is to be usable while the
+        // configuration is still incomplete.
+        const sellable = asNumber(resolved['segment.capacity']?.value);
+
+        return {
+          id: segment.id,
+          showId: segment.showId,
+          name: segment.name,
+          audienceMode: segment.audienceMode,
+          displayOrder: segment.displayOrder,
+          raw: {
+            capacity: segment.capacity,
+            baseQuota: segment.baseQuota,
+            baseClaimDeadline: segment.baseClaimDeadline,
+            extrasPolicy: segment.extrasPolicy,
+            allowPartialGrant: segment.allowPartialGrant,
+            maxTicketsPerResponse: segment.maxTicketsPerResponse,
+          },
+          resolved,
+          pool: sellable === null ? null : await segmentPool(segment.id),
+        };
+      }),
     );
 
     const resolved = await resolveWithOrigin([...SHOW_KEYS], { showId: show.id, concertId });
     const hall = asNumber(resolved['capacity']?.value);
-    const allocated = segments.reduce((total, segment) => total + segment.pool.sellable, 0);
+    // A segment with no capacity yet allocates nothing, so its seats still read
+    // as held. That is the honest arithmetic: nobody has claimed them.
+    const allocated = segments.reduce(
+      (total, segment) => total + (segment.pool?.sellable ?? 0),
+      0,
+    );
 
     views.push({
       id: show.id,

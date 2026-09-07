@@ -102,8 +102,19 @@ test('FLOW-5 the player CSV import commit never returns', async ({ page }) => {
   // an 81st, giving `created: 0` for a reason that has nothing to do with what
   // this test is about. Nothing here should depend on the previous test's
   // arithmetic, so it makes its own room first.
-  await sql`update show_segments set capacity = 100
-             where show_id = 1 and audience_mode = 'PLAYER_INVITED'`;
+  //
+  // Both segments in ONE statement, which is the same lesson §7.7 teaches about
+  // the move itself: FLOW-9 leaves public at 320, so raising the player segment
+  // to 100 on its own totals 420 in a 400-seat hall and
+  // `assert_segments_fit_hall` refuses it. One statement is one transaction, so
+  // the deferred guard judges the result rather than the intermediate state.
+  await sql`
+    update show_segments
+       set capacity = case audience_mode
+                        when 'PLAYER_INVITED' then 100
+                        else 300
+                      end
+     where show_id = 1 and deleted_at is null`;
 
   await login(page);
   await page.goto('/admin/concerts/1/players');

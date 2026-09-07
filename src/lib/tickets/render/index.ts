@@ -54,6 +54,16 @@ export type RenderResult = {
    * a whole show goes out with a truncated name.
    */
   truncated: string[];
+  /**
+   * Elements the renderer could not draw at all, as `id: reason`.
+   *
+   * Distinct from `truncated`, which is a ticket that printed imperfectly. This
+   * is a ticket missing something the template asked for, and it must not be
+   * silent: a QA pass found an `IMAGE` element producing an empty page with no
+   * error and nothing reported, which looks identical to a template that never
+   * had the element.
+   */
+  skipped: Record<string, string>;
 };
 
 export async function renderTicket(options: RenderOptions): Promise<RenderResult> {
@@ -119,6 +129,7 @@ export async function renderTicket(options: RenderOptions): Promise<RenderResult
   };
 
   const truncated: string[] = [];
+  const skipped: Record<string, string> = {};
 
   for (const element of layout.elements) {
     switch (element.type) {
@@ -132,9 +143,14 @@ export async function renderTicket(options: RenderOptions): Promise<RenderResult
         });
         break;
       case 'IMAGE':
-        // Nothing to embed without an asset loader, and the seeded defaults use
-        // none. Skipped rather than failed: an unrenderable decoration must not
-        // cost a guest their ticket.
+        /**
+         * Nothing to embed without an asset loader, and the seeded defaults use
+         * none. Skipped rather than failed — an unrenderable decoration must not
+         * cost a guest their ticket — but **reported**, because a silently
+         * missing element is indistinguishable from one that was never there.
+         * Module E adds uploads; until then this is the honest answer.
+         */
+        skipped[element.id] = 'IMAGE elements need an asset store, which module E adds';
         break;
       case 'TEXT': {
         const clipped = await drawText(page, element, data, pageHeight, embedFace);
@@ -144,7 +160,7 @@ export async function renderTicket(options: RenderOptions): Promise<RenderResult
     }
   }
 
-  return { pdf: await doc.save(), truncated };
+  return { pdf: await doc.save(), truncated, skipped };
 }
 
 function firstPage(doc: PDFDocument): PDFPage {

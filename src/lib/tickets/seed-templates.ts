@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
+import { resolveSetting } from '@/db/settings';
 import { DEFAULT_TEMPLATES } from './defaults';
 import { parseLayout } from './layout';
 
@@ -88,14 +89,72 @@ export async function ensureConcertTemplates(
 export type ResolvedTemplate = { id: number; version: number };
 
 /**
- * The template a concert renders with, seeding the defaults if it has none.
+ * The template a **show** renders with (spec/domain.md §5.1).
  *
- * This is the lazy half. Callers that are about to render or issue call it and
- * get a template back; a concert nobody has configured still produces a ticket,
- * which is the whole of decision 10.
+ * > `ticket_template_id` resolves like any other cascading value: **show →
+ * > concert (`ticket.default_template_id`) → the seeded default**. It is
+ * > nullable precisely so a concert can set one template for all its shows and
+ * > a single show can override it. **Never read the column directly.**
  *
- * Returns the highest version of the row flagged `is_default`, so an admin who
- * clones and edits gets their edit without this needing to know about it.
+ * That last sentence is the whole reason this function exists. An earlier
+ * version of this module resolved straight to the concert's seeded default and
+ * ignored both overrides, so a show- or concert-level choice was accepted by
+ * the admin UI and then silently discarded — and because the wrong template is
+ * *pinned* at issue time (§10.5), it would have survived being corrected.
+ *
+ * Resolution is per show rather than per concert because the override is: two
+ * shows in one concert may legitimately print different tickets.
+ */
+export async function resolveTemplateForShow(showId: number): Promise<ResolvedTemplate> {
+  const rows = await getDb().execute<{
+    concert_id: string;
+    show_template_id: string | null;
+  }>(sql`
+    select s.concert_id, s.ticket_template_id as show_template_id
+      from shows s
+     where s.id = ${showId} and s.deleted_at is null
+     limit 1
+  `);
+  const row = rows[0];
+  if (!row) throw new Error(`Show ${showId} does not exist.`);
+  const concertId = Number(row.concert_id);
+
+  // 1. The show's own override.
+  if (row.show_template_id) {
+    const template = await findTemplateById(Number(row.show_template_id));
+    if (template) return template;
+  }
+
+  // 2. The concert's, through the cascade — never by reading a column.
+  const setting = await resolveSetting<number | string>('ticket.default_template_id', {
+    concertId,
+  });
+  if (setting !== null && setting !== undefined) {
+    const template = await findTemplateById(Number(setting));
+    if (template) return template;
+  }
+
+  // 3. The seeded default, created on first use if this concert has none.
+  return resolveTemplateForConcert(concertId);
+}
+
+/** A specific template row, if it exists and is not soft-deleted. */
+async function findTemplateById(id: number): Promise<ResolvedTemplate | null> {
+  const rows = await getDb().execute<{ id: string; version: number }>(sql`
+    select id, version from ticket_templates
+     where id = ${id} and deleted_at is null
+     limit 1
+  `);
+  const row = rows[0];
+  return row ? { id: Number(row.id), version: row.version } : null;
+}
+
+/**
+ * The concert's seeded default, creating it on first use.
+ *
+ * The last step of the cascade above, and usable on its own where there is no
+ * show in hand. A concert nobody has configured still produces a ticket, which
+ * is the whole of decision 10.
  */
 export async function resolveTemplateForConcert(
   concertId: number,

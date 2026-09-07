@@ -4,8 +4,9 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { bindingsUsed, parseLayout, type Binding } from './layout';
-import { mintIdentifiers, type MintScope } from './mint';
-import { resolveTemplateForConcert } from './seed-templates';
+import { mintIdentifiers } from './mint';
+import { idList, scopeFilter, ticketable, type TicketScope } from './scope';
+import { resolveTemplateForShow, type ResolvedTemplate } from './seed-templates';
 
 /**
  * Issuing a ticket, and keeping an issued one honest
@@ -17,15 +18,15 @@ import { resolveTemplateForConcert } from './seed-templates';
  * changes underneath it, or the data does — and each way has its own guard.
  */
 
-export type IssueScope = MintScope & { concertId: number };
+export type IssueScope = TicketScope & { concertId: number };
 
 export type IssueResult = {
   /** Attendees that received identifiers on this call. */
   minted: number;
   /** Attendees whose template version was pinned on this call. */
   pinned: number;
-  /** The template every newly pinned attendee was pinned to. */
-  template: { id: number; version: number };
+  /** What each show in scope resolved to, keyed by show id. */
+  templates: Record<number, ResolvedTemplate>;
 };
 
 /**
@@ -43,35 +44,50 @@ export type IssueResult = {
  * twice before a blast must be harmless.
  */
 export async function issueTickets(scope: IssueScope): Promise<IssueResult> {
-  const template = await resolveTemplateForConcert(scope.concertId);
-  const minted = await mintIdentifiers(scope);
+  const shows = await showsInScope(scope);
 
-  try {
-    const rows = await getDb().execute<{ id: string }>(sql`
-      update attendees a
-         set ticket_template_id = ${template.id},
-             ticket_template_version = ${template.version},
-             ticket_issued_at = coalesce(a.ticket_issued_at, now())
-        from registrations r
-       where r.id = a.registration_id
-         and a.qr_token is not null
-         -- Never re-pin. An attendee already pinned holds a ticket rendered
-         -- against that version, and moving them to a newer one changes a PDF
-         -- someone may already be holding. Repinning is an explicit admin
-         -- action — reissueTickets() below — which also resends.
-         and a.ticket_template_id is null
-         and ${scopeFilter(scope)}
-         and a.status = 'CONFIRMED'
-         and a.deleted_at is null
-         and r.deleted_at is null
-         and r.status <> 'CANCELLED'
-      returning a.id
-    `);
+  let minted = 0;
+  let pinned = 0;
+  const templates: Record<number, ResolvedTemplate> = {};
 
-    return { minted: minted.minted, pinned: rows.length, template };
-  } catch (error) {
-    rethrowDbError(error);
+  /**
+   * **One template per show, not one per call.** `domain.md` §5.1 lets a single
+   * show override its concert's template, so two shows in the same scope can
+   * legitimately pin different ones. Resolving once for the whole scope would
+   * quietly give every attendee the first show's design — and the wrong
+   * template is *pinned*, so it would survive being corrected.
+   */
+  for (const showId of shows) {
+    const template = await resolveTemplateForShow(showId);
+    templates[showId] = template;
+    minted += (await mintIdentifiers({ ...scope, showId })).minted;
+
+    try {
+      const rows = await getDb().execute<{ id: string }>(sql`
+        update attendees a
+           set ticket_template_id = ${template.id},
+               ticket_template_version = ${template.version},
+               ticket_issued_at = coalesce(a.ticket_issued_at, now())
+          from registrations r
+         where r.id = a.registration_id
+           and a.show_id = ${showId}
+           and a.qr_token is not null
+           -- Never re-pin. An attendee already pinned holds a ticket rendered
+           -- against that version, and moving them to a newer one changes a PDF
+           -- someone may already be holding. Repinning is an explicit admin
+           -- action — reissueTickets() below — which also resends.
+           and a.ticket_template_id is null
+           and ${scopeFilter(scope, { require: false })}
+           and ${ticketable()}
+        returning a.id
+      `);
+      pinned += rows.length;
+    } catch (error) {
+      rethrowDbError(error);
+    }
   }
+
+  return { minted, pinned, templates };
 }
 
 export type ReissueResult = {
@@ -82,7 +98,7 @@ export type ReissueResult = {
    * the pending bucket for the next blast.
    */
   requeued: number;
-  template: { id: number; version: number };
+  templates: Record<number, ResolvedTemplate>;
 };
 
 /**
@@ -105,49 +121,73 @@ export type ReissueResult = {
  * leave the recipient holding a stale PDF with nothing to say so.
  */
 export async function reissueTickets(scope: IssueScope): Promise<ReissueResult> {
-  const template = await resolveTemplateForConcert(scope.concertId);
+  const shows = await showsInScope(scope);
+  let repinned = 0;
+  let requeued = 0;
+  const templates: Record<number, ResolvedTemplate> = {};
 
-  try {
-    /**
-     * The `target` CTE snapshots `ticket_sent_at` **before** the update.
-     *
-     * `RETURNING` reports the new row, so reading the column there would always
-     * see the null this statement just wrote and report zero resends every
-     * time. The count matters: it is what tells an admin how many people are
-     * about to get a second email, and silently reporting none is how a reissue
-     * looks like it did nothing.
-     */
-    const rows = await getDb().execute<{ id: string; was_sent: boolean }>(sql`
-      with target as (
-        select a.id, a.ticket_sent_at
-          from attendees a
-          join registrations r on r.id = a.registration_id
-         where a.qr_token is not null
-           and ${scopeFilter(scope)}
-           and a.status = 'CONFIRMED'
-           and a.deleted_at is null
-           and r.deleted_at is null
-           and r.status <> 'CANCELLED'
-      )
-      update attendees a
-         set ticket_template_id = ${template.id},
-             ticket_template_version = ${template.version},
-             ticket_sent_at = null,
-             ticket_sent_source = null,
-             needs_reissue = false
-        from target
-       where a.id = target.id
-      returning a.id, (target.ticket_sent_at is not null) as was_sent
-    `);
+  for (const showId of shows) {
+    const template = await resolveTemplateForShow(showId);
+    templates[showId] = template;
 
-    return {
-      repinned: rows.length,
-      requeued: rows.filter((r) => r.was_sent).length,
-      template,
-    };
-  } catch (error) {
-    rethrowDbError(error);
+    try {
+      /**
+       * The `target` CTE snapshots `ticket_sent_at` **before** the update.
+       *
+       * `RETURNING` reports the new row, so reading the column there would
+       * always see the null this statement just wrote and report zero resends
+       * every time. The count matters: it is what tells an admin how many
+       * people are about to get a second email, and silently reporting none is
+       * how a reissue looks like it did nothing.
+       */
+      const rows = await getDb().execute<{ id: string; was_sent: boolean }>(sql`
+        with target as (
+          select a.id, a.ticket_sent_at
+            from attendees a
+            join registrations r on r.id = a.registration_id
+           where a.show_id = ${showId}
+             and a.qr_token is not null
+             and ${scopeFilter(scope, { require: false })}
+             and ${ticketable()}
+        )
+        update attendees a
+           set ticket_template_id = ${template.id},
+               ticket_template_version = ${template.version},
+               ticket_sent_at = null,
+               ticket_sent_source = null,
+               needs_reissue = false
+          from target
+         where a.id = target.id
+        returning a.id, (target.ticket_sent_at is not null) as was_sent
+      `);
+      repinned += rows.length;
+      requeued += rows.filter((r) => r.was_sent).length;
+    } catch (error) {
+      rethrowDbError(error);
+    }
   }
+
+  return { repinned, requeued, templates };
+}
+
+/**
+ * The distinct shows a scope touches.
+ *
+ * Template resolution is per show (`domain.md` §5.1), so every mutation here
+ * works show by show rather than assuming the scope names exactly one.
+ */
+async function showsInScope(scope: IssueScope): Promise<number[]> {
+  const rows = await getDb().execute<{ show_id: string }>(sql`
+    select distinct a.show_id
+      from attendees a
+      join registrations r on r.id = a.registration_id
+      join shows s on s.id = a.show_id
+     where s.concert_id = ${scope.concertId}
+       and ${scopeFilter(scope, { require: false })}
+       and ${ticketable()}
+     order by a.show_id
+  `);
+  return rows.map((r) => Number(r.show_id));
 }
 
 /**
@@ -214,8 +254,49 @@ export async function flagReissueForChangedFields(
   }
 }
 
+/**
+ * Clear the reissue flag **without** re-rendering or resending (§10.6).
+ *
+ * > Admin sees a "N tickets need reissuing" count and resolves it deliberately —
+ * > reissue and resend, or **dismiss as cosmetic**.
+ *
+ * This is the second exit, and without it the banner has only one: a full
+ * resend. That matters because most flagged changes are cosmetic — a corrected
+ * spelling, a tidied capitalisation — and forcing a resend for those means
+ * either emailing a whole show again over a typo, or leaving the count standing
+ * until people stop reading it.
+ *
+ * Deliberately narrow: it changes `needs_reissue` and nothing else. The ticket
+ * the guest holds stays exactly as sent, which is the point of calling it
+ * cosmetic, and the door is unaffected either way because check-in matches on
+ * `qr_token`.
+ */
+export async function dismissReissue(scope: IssueScope): Promise<number> {
+  try {
+    const rows = await getDb().execute<{ id: string }>(sql`
+      update attendees a
+         set needs_reissue = false
+        from registrations r, shows s
+       where r.id = a.registration_id
+         and s.id = a.show_id
+         -- Tie the rows to the concert the caller named. Without it a list of
+         -- attendee ids reaches straight past the concert boundary, and the ids
+         -- come from a request body.
+         and s.concert_id = ${scope.concertId}
+         and a.needs_reissue
+         and ${scopeFilter(scope, { require: false })}
+         and a.deleted_at is null
+         and r.deleted_at is null
+      returning a.id
+    `);
+    return rows.length;
+  } catch (error) {
+    rethrowDbError(error);
+  }
+}
+
 /** How many tickets in scope are waiting to be reissued (§10.6's count). */
-export async function countNeedingReissue(scope: MintScope): Promise<number> {
+export async function countNeedingReissue(scope: TicketScope): Promise<number> {
   const rows = await getDb().execute<{ n: number }>(sql`
     select count(*)::int as n
       from attendees a
@@ -226,27 +307,4 @@ export async function countNeedingReissue(scope: MintScope): Promise<number> {
        and ${scopeFilter(scope)}
   `);
   return rows[0]?.n ?? 0;
-}
-
-function idList(ids: number[]) {
-  return sql`(${sql.join(
-    ids.map((id) => sql`${id}`),
-    sql`, `,
-  )})`;
-}
-
-function scopeFilter(scope: MintScope) {
-  const clauses = [];
-  if (scope.showId !== undefined) clauses.push(sql`a.show_id = ${scope.showId}`);
-  if (scope.segmentId !== undefined) clauses.push(sql`a.segment_id = ${scope.segmentId}`);
-  if (scope.attendeeIds !== undefined) {
-    // An empty list must match nothing, not everything.
-    clauses.push(
-      scope.attendeeIds.length === 0 ? sql`false` : sql`a.id in ${idList(scope.attendeeIds)}`,
-    );
-  }
-  if (clauses.length === 0) {
-    throw new Error('A ticket operation needs a scope: showId, segmentId or attendeeIds.');
-  }
-  return sql.join(clauses, sql` and `);
 }

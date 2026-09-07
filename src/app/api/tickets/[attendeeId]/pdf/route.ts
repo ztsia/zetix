@@ -22,13 +22,32 @@ import { renderTicket } from '@/lib/tickets/render';
  */
 export const runtime = 'nodejs';
 
+/**
+ * A render is bounded work, but not instant: the fonts are embedded whole and a
+ * hostile name makes the text fitter do real work. 30s leaves a wide margin
+ * over a normal ticket (tens of milliseconds) while still failing visibly
+ * rather than hanging a Vercel function to its platform default.
+ */
+export const maxDuration = 30;
+
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ attendeeId: string }> },
 ) {
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+  /**
+   * **Admins only.** `admin.md` §14.1: an operator "cannot edit any data,
+   * export, view PII beyond name and ticket status". A rendered ticket is a
+   * downloadable file carrying the attendee's name, show, venue and doors —
+   * an export in everything but name. The door does not need it either: the
+   * scanner matches `qr_token` against the offline manifest and never
+   * dereferences the QR (decision 28).
+   */
+  if (user.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   const { attendeeId: raw } = await params;
@@ -59,9 +78,12 @@ export async function GET(
   return new NextResponse(Buffer.from(pdf), {
     headers: {
       'content-type': 'application/pdf',
-      // `inline` so a preview opens in the browser instead of downloading; the
-      // admin screen adds `?download=1` when it wants a file.
-      'content-disposition': `inline; filename="${ticket.filename}"`,
+      // `inline` previews in the browser; `?download=1` saves a file. The
+      // screen's two row actions are exactly these, and the parameter used to
+      // be documented here while nothing read it — so both buttons previewed.
+      'content-disposition': `${
+        new URL(request.url).searchParams.get('download') ? 'attachment' : 'inline'
+      }; filename="${ticket.filename}"`,
       // Rendered on demand and pinned to a template version, so it is stable
       // for a given attendee — but it carries a name, so it must never be
       // cached by a shared proxy.

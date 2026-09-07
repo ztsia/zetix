@@ -78,15 +78,27 @@ function streams(pdf: Buffer): Buffer[] {
   return out;
 }
 
+/**
+ * The page's drawing operators only.
+ *
+ * Not the whole file: pdf-lib stamps `/CreationDate` and `/ModDate` into the
+ * Info dictionary, so two renders one second apart differ in bytes while
+ * drawing exactly the same thing. What §10.4 calls deterministic is the drawn
+ * content, and that is what this returns.
+ */
 function content(pdf: Buffer): string {
-  return streams(pdf).map((s) => s.toString('latin1')).join('\n');
+  return streams(pdf)
+    .map((s) => s.toString('latin1'))
+    .filter((s) => s.includes(' cm') || s.includes(' Tm'))
+    .join('\n');
 }
 
 /** Every rectangle drawn, in page space, with whether it was filled black. */
 function rects(pdf: Buffer): { x: number; y: number; w: number; h: number; dark: boolean }[] {
   const found: { x: number; y: number; w: number; h: number; dark: boolean }[] = [];
+  // pdf-lib emits: rg, line width, dash, then the translate and the path.
   const re =
-    /([\d.-]+) ([\d.-]+) ([\d.-]+) rg\s+1 0 0 1 ([\d.-]+) ([\d.-]+) cm[\s\S]{0,60}?0 0 m\s+0 ([\d.-]+) l\s+([\d.-]+) [\d.-]+ l/g;
+    /([\d.-]+) ([\d.-]+) ([\d.-]+) rg[\s\S]{0,40}?1 0 0 1 ([\d.-]+) ([\d.-]+) cm[\s\S]{0,60}?0 0 m\s+0 ([\d.-]+) l\s+([\d.-]+) [\d.-]+ l/g;
   for (const m of content(pdf).matchAll(re)) {
     found.push({
       dark: Number(m[1]) < 0.5 && Number(m[2]) < 0.5 && Number(m[3]) < 0.5,
@@ -502,5 +514,32 @@ test('FLOW-14  the longest name in the show still fits its box', async ({ browse
   expect(xs.length).toBeGreaterThan(0);
   for (const x of xs) expect(x).toBeGreaterThanOrEqual(0);
   expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  await ctx.close();
+});
+
+// ----------------------------------------------------- the Download affordance
+
+test('the Download row action does not download', async ({ browser }) => {
+  const ctx = await asAdmin(browser);
+  const [row] = await sql<{ id: string }[]>`
+    select id from attendees where show_id = ${show1} and qr_token is not null order by id limit 1`;
+
+  const plain = await ctx.request.get(`/api/tickets/${Number(row.id)}/pdf`);
+  const asked = await ctx.request.get(`/api/tickets/${Number(row.id)}/pdf?download=1`);
+  console.log('QA-DISPOSITION plain   =', plain.headers()['content-disposition']);
+  console.log('QA-DISPOSITION ?download=1 =', asked.headers()['content-disposition']);
+  expect(asked.status()).toBe(200);
+  // The table links the download button to `?download=1`; the route ignores it.
+  expect(asked.headers()['content-disposition']).toBe(
+    plain.headers()['content-disposition'],
+  );
+  expect(asked.headers()['content-disposition']).toMatch(/^inline;/);
+
+  const page = await ctx.newPage();
+  await page.goto(`${ticketsUrl()}?show=${show1}`);
+  const dl = page.getByRole('link', { name: /Download .*ticket/ }).first();
+  await expect(dl).toBeVisible();
+  await expect(dl).toHaveAttribute('href', /download=1/);
+  await shot(page, 'FLOW-2-step-6-download-affordance');
   await ctx.close();
 });

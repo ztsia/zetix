@@ -131,9 +131,15 @@ describe('GET /api/tickets/[attendeeId]/pdf', () => {
     expect((await call(ticketedId)).status).toBe(401);
   });
 
-  it('lets an operator fetch a ticket for a show they are rostered on', async () => {
+  it('refuses an operator even on a show they are rostered on', async () => {
+    // `admin.md` §14.1: an operator "cannot edit any data, export, view PII
+    // beyond name and ticket status". A rendered ticket is a downloadable file
+    // carrying the attendee's name, show, venue and doors — an export in
+    // everything but name. The door does not need it either: the scanner
+    // matches `qr_token` against the offline manifest and never dereferences
+    // the QR (decision 28). Found by an independent QA pass, which got a 200.
     asOperator();
-    expect((await call(ticketedId)).status).toBe(200);
+    expect((await call(ticketedId)).status).toBe(404);
   });
 
   it('refuses an operator a ticket for a show they are not rostered on', async () => {
@@ -141,13 +147,22 @@ describe('GET /api/tickets/[attendeeId]/pdf', () => {
     expect((await call(otherShowTicketId)).status).toBe(404);
   });
 
-  it('answers 404 identically for missing, unissued and not-yours', async () => {
-    // Probing ids must not distinguish these three, or the response becomes an
-    // oracle for which attendees exist (modules.md §5.2.1).
-    asOperator();
+  it('answers 404 identically for missing and unissued', async () => {
+    // Probing ids must not distinguish these, or the response becomes an oracle
+    // for which attendees exist (modules.md §5.2.1). An admin legitimately sees
+    // every show, so "not yours" does not arise for them.
+    asAdmin();
     expect((await call(999_999)).status).toBe(404);
     expect((await call(unissuedId)).status).toBe(404);
-    expect((await call(otherShowTicketId)).status).toBe(404);
+  });
+
+  it('gives an operator the same 404 whatever they ask for', async () => {
+    // Refused as a role, so nothing in the response distinguishes an attendee
+    // that exists from one that does not, or an assigned show from another.
+    asOperator();
+    for (const id of [ticketedId, otherShowTicketId, unissuedId, 999_999]) {
+      expect((await call(id)).status).toBe(404);
+    }
   });
 
   it('rejects a non-numeric id without touching the database', async () => {
@@ -161,5 +176,52 @@ describe('GET /api/tickets/[attendeeId]/pdf', () => {
     const disposition = (await call(ticketedId)).headers.get('content-disposition') ?? '';
     expect(disposition).toMatch(/^inline; filename="/);
     expect(disposition).toMatch(/ORC-[0-9A-HJKMNP-TV-Z]{4}\.pdf"$/);
+  });
+});
+
+describe('the pin is read as two columns, not one', () => {
+  it('refuses to render when the pinned version no longer matches the row', async () => {
+    // §10.5: rendering always uses the pinned pair. Each `ticket_templates` row
+    // is one immutable version, so the id alone identifies the version *today*
+    // — but only while module E clones instead of mutating, and E is built in
+    // parallel against the written spec rather than against this code. Reading
+    // both columns turns "E mutated a row" from a silently different ticket
+    // into a row that refuses to render.
+    asAdmin();
+    expect((await call(ticketedId)).status).toBe(200);
+
+    await sql`
+      update ticket_templates set version = version + 1
+       where id = (select ticket_template_id from attendees where id = ${ticketedId})
+    `;
+
+    expect((await call(ticketedId)).status).toBe(404);
+  });
+});
+
+describe('APP_URL is never a deployment hostname', () => {
+  it('refuses a per-deployment Vercel URL rather than baking it into a QR', async () => {
+    // §10.1 Rule A, decision 30. `APP_URL ?? VERCEL_URL` is a one-line change
+    // that looks like a sensible fallback, passes lint and typecheck, and bakes
+    // a hostname that dies within days into every ticket — permanently.
+    asAdmin();
+    const original = process.env.APP_URL;
+    process.env.APP_URL = 'https://zetix-h7f2k9x-ztsia.vercel.app';
+    try {
+      await expect(call(ticketedId)).rejects.toThrow(/per-deployment/);
+    } finally {
+      process.env.APP_URL = original;
+    }
+  });
+
+  it('accepts the production alias', async () => {
+    asAdmin();
+    const original = process.env.APP_URL;
+    process.env.APP_URL = 'https://zetix.vercel.app';
+    try {
+      expect((await call(ticketedId)).status).toBe(200);
+    } finally {
+      process.env.APP_URL = original;
+    }
   });
 });

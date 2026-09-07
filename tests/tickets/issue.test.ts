@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   countNeedingReissue,
+  dismissReissue,
   flagReissueForChangedFields,
   issueTickets,
   reissueTickets,
@@ -85,8 +86,8 @@ describe('issuing tickets', () => {
     expect(result.pinned).toBe(3);
     for (const row of await attendees()) {
       expect(row.qr_token).toMatch(/^[0-9A-Za-z]{22}$/);
-      expect(Number(row.ticket_template_id)).toBe(result.template.id);
-      expect(row.ticket_template_version).toBe(result.template.version);
+      expect(Number(row.ticket_template_id)).toBe(result.templates[showId].id);
+      expect(row.ticket_template_version).toBe(result.templates[showId].version);
       expect(row.ticket_issued_at).not.toBeNull();
     }
   });
@@ -127,10 +128,10 @@ describe('issuing tickets', () => {
 
     const second = await issueTickets({ concertId, showId });
 
-    expect(second.template.version).toBe(2);
+    expect(second.templates[showId].version).toBe(2);
     expect(second.pinned).toBe(0);
     for (const row of await attendees()) {
-      expect(row.ticket_template_version).toBe(first.template.version);
+      expect(row.ticket_template_version).toBe(first.templates[showId].version);
     }
   });
 
@@ -293,5 +294,42 @@ describe('flagging a reissue when bound data changes', () => {
   it('does nothing for an empty list', async () => {
     expect(await flagReissueForChangedFields([], ['attendee.full_name'])).toBe(0);
     expect(await flagReissueForChangedFields([1, 2], [])).toBe(0);
+  });
+});
+
+describe('dismissing a reissue as cosmetic', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await fixture(3);
+    await issueTickets({ concertId, showId });
+    await sql`update attendees set ticket_sent_at = now(), needs_reissue = true where show_id = ${showId}`;
+  });
+
+  it('clears the flag without re-rendering or resending', async () => {
+    // §10.6 offers two exits — "reissue and resend, or dismiss as cosmetic".
+    // With only the first, a corrected spelling costs a whole show a second
+    // email and the count stands until people stop reading it.
+    const before = await attendees();
+
+    expect(await dismissReissue({ concertId, showId })).toBe(3);
+
+    expect(await countNeedingReissue({ showId })).toBe(0);
+    const after = await attendees();
+    // Everything the guest holds is untouched: same token, same pinned
+    // template, and still marked as sent.
+    expect(after.map((r) => r.qr_token)).toEqual(before.map((r) => r.qr_token));
+    expect(after.map((r) => r.ticket_template_version)).toEqual(
+      before.map((r) => r.ticket_template_version),
+    );
+    expect(after.every((r) => r.ticket_sent_at !== null)).toBe(true);
+  });
+
+  it('cannot reach past the concert it was given', async () => {
+    // The ids arrive in a request body, so the concert has to bound them.
+    const otherConcert = await createConcert('Elsewhere');
+    const ids = (await attendees()).map((r) => Number(r.id));
+
+    expect(await dismissReissue({ concertId: otherConcert, attendeeIds: ids })).toBe(0);
+    expect(await countNeedingReissue({ showId })).toBe(3);
   });
 });

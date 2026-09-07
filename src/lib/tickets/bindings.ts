@@ -1,6 +1,6 @@
 import { TZDate } from '@date-fns/tz';
 import { format as formatDate } from 'date-fns';
-import { DATE_BINDINGS, type Binding, type Layout, bindingsUsed } from './layout';
+import { BINDINGS, type Binding, type Layout, bindingsUsed } from './layout';
 import { qrUrl } from './identifiers';
 
 /**
@@ -143,24 +143,18 @@ export function interpolate(
   });
 }
 
-function isBinding(value: string): value is Binding {
-  return (DATE_BINDINGS as readonly string[]).includes(value) || KNOWN.has(value);
-}
+/**
+ * Derived from `BINDINGS`, never restated.
+ *
+ * A second hand-written copy of the list drifts the moment one is extended, and
+ * the failure is silent: a placeholder for a real binding would render as
+ * literal `{{…}}` text on the ticket because this check said it was unknown.
+ */
+const KNOWN: ReadonlySet<string> = new Set(BINDINGS);
 
-const KNOWN = new Set<string>([
-  'attendee.full_name',
-  'attendee.ticket_code',
-  'attendee.qr_url',
-  'registration.contact_name',
-  'player.full_name',
-  'player.instrument',
-  'show.name',
-  'show.starts_at',
-  'show.doors_open_at',
-  'show.venue_name',
-  'show.venue_address',
-  'concert.name',
-]);
+function isBinding(value: string): value is Binding {
+  return KNOWN.has(value);
+}
 
 /**
  * Which of a layout's bindings resolve to nothing for this attendee.

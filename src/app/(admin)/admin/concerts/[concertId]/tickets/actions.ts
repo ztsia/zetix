@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
-import { issueTickets, reissueTickets } from '@/lib/tickets/issue';
+import { dismissReissue, issueTickets, reissueTickets } from '@/lib/tickets/issue';
 
 /**
  * The two ticket mutations (spec/tickets.md §10.5).
@@ -47,8 +47,9 @@ export async function issueTicketsAction(
       after: {
         minted: result.minted,
         pinned: result.pinned,
-        templateId: result.template.id,
-        templateVersion: result.template.version,
+        // Per show, because a show may override its concert's template
+        // (domain.md §5.1) — a single id here would misreport what was pinned.
+        templates: result.templates,
         scope: scopeOf(parsed.data),
       },
     });
@@ -58,9 +59,7 @@ export async function issueTicketsAction(
     }
     return {
       ok: true,
-      message:
-        `Issued ${result.pinned} ticket${result.pinned === 1 ? '' : 's'} against ` +
-        `template v${result.template.version}.`,
+      message: `Issued ${result.pinned} ticket${result.pinned === 1 ? '' : 's'}.`,
     };
   } catch (error) {
     return { ok: false, error: messageOf(error) };
@@ -84,8 +83,7 @@ export async function reissueTicketsAction(
       after: {
         repinned: result.repinned,
         requeued: result.requeued,
-        templateId: result.template.id,
-        templateVersion: result.template.version,
+        templates: result.templates,
         scope: scopeOf(parsed.data),
       },
     });
@@ -93,8 +91,8 @@ export async function reissueTicketsAction(
     return {
       ok: true,
       message:
-        `Repinned ${result.repinned} ticket${result.repinned === 1 ? '' : 's'} to ` +
-        `template v${result.template.version}. ${result.requeued} will be resent.`,
+        `Repinned ${result.repinned} ticket${result.repinned === 1 ? '' : 's'}. ` +
+        `${result.requeued} will be resent.`,
     };
   } catch (error) {
     return { ok: false, error: messageOf(error) };
@@ -121,4 +119,39 @@ function messageOf(error: unknown): string {
 /** Re-render the screen after a mutation so the counts are current. */
 export async function refreshTickets(concertId: number): Promise<void> {
   revalidatePath(`/admin/concerts/${concertId}/tickets`);
+}
+
+/**
+ * §10.6's other exit: clear the flag without resending.
+ *
+ * Audited like the other two, because it is the one that makes a divergence
+ * stop being reported — an admin should be able to see later that somebody
+ * decided a change was cosmetic, even though decision 19 costs us *which*
+ * admin.
+ */
+export async function dismissReissueAction(
+  input: z.infer<typeof scopeSchema>,
+): Promise<TicketActionResult> {
+  await requireAdmin();
+
+  const parsed = scopeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Malformed request.' };
+
+  try {
+    const dismissed = await dismissReissue(parsed.data);
+    await writeAuditLog({
+      action: 'tickets.reissue_dismissed',
+      entityType: 'concert',
+      entityId: parsed.data.concertId,
+      after: { dismissed, scope: scopeOf(parsed.data) },
+    });
+    return {
+      ok: true,
+      message:
+        `Dismissed ${dismissed} reissue flag${dismissed === 1 ? '' : 's'} as cosmetic. ` +
+        'No ticket was re-rendered and nothing will be resent.',
+    };
+  } catch (error) {
+    return { ok: false, error: messageOf(error) };
+  }
 }

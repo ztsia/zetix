@@ -88,11 +88,31 @@ export function wrap(
       continue;
     }
 
-    // The word alone does not fit. Break it across lines by character.
+    /**
+     * The word alone does not fit, so break it across lines by character.
+     *
+     * **Binary search for the cut, not a walk back from the end.** Stepping
+     * down one character at a time re-measures a growing prefix on every step,
+     * which is quadratic in the word and cubic once `SHRINK` retries it at each
+     * font size. A QA pass measured 240 characters at 19s and 500 at 87s — on a
+     * route that renders one ticket inside a serverless timeout. Names that
+     * long are pathological, but they arrive from a public form and the failure
+     * is a dead request rather than an ugly ticket.
+     */
     let remainder = word;
     while (remainder && measure(remainder, fontSize) > maxWidth) {
-      let cut = remainder.length - 1;
-      while (cut > 1 && measure(remainder.slice(0, cut), fontSize) > maxWidth) cut--;
+      let low = 1;
+      let high = remainder.length - 1;
+      let cut = 1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (measure(remainder.slice(0, mid), fontSize) <= maxWidth) {
+          cut = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
       lines.push(remainder.slice(0, cut));
       remainder = remainder.slice(cut);
       if (lines.length >= maxLines) return { lines, truncated: true };

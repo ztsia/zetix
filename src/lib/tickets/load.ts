@@ -25,6 +25,24 @@ function requireAppUrl(): string {
         'Vercel production alias and never VERCEL_URL (spec/tickets.md §10.1).',
     );
   }
+  /**
+   * **A per-deployment hostname is refused outright** (§10.1 Rule A,
+   * decision 30). `<project>-<hash>-<scope>.vercel.app` changes on every deploy
+   * and is dead within days, so a ticket rendered against one is born broken —
+   * and unrecallable, because the origin is baked in at issue time.
+   *
+   * Nothing else stops it: `VERCEL_URL` holds exactly that hostname, and
+   * `APP_URL ?? VERCEL_URL` is a one-line change that looks like a sensible
+   * fallback and passes every other check.
+   */
+  if (/-[0-9a-z]{6,}-[^.]+\.vercel\.app/i.test(value)) {
+    throw new Error(
+      `APP_URL looks like a per-deployment Vercel hostname: ${value}. It must ` +
+        'be the production alias (zetix.vercel.app). A deployment URL is ' +
+        'dead within days and is baked into every ticket permanently ' +
+        '(spec/tickets.md §10.1 Rule A).',
+    );
+  }
   return value;
 }
 
@@ -99,7 +117,15 @@ export async function loadTicket(attendeeId: number): Promise<LoadedTicket | nul
     -- inner join here would make an unissued ticket un-previewable, which is
     -- exactly the row an admin most wants to look at before a blast.
     left join players p        on p.id = r.player_id
-    left join ticket_templates t on t.id = a.ticket_template_id
+    -- **Both halves of the pin**, not just the id (§10.5). Each row is one
+    -- immutable version, so the id alone happens to identify the version today
+    -- — but that holds only while module E clones instead of mutating, and E
+    -- is being built in parallel against the written spec rather than against
+    -- this code. Joining on the version too turns "E mutated a row" from a
+    -- silently different ticket into a row this refuses to render.
+    left join ticket_templates t
+           on t.id = a.ticket_template_id
+          and t.version = a.ticket_template_version
     where a.id = ${attendeeId}
       and a.deleted_at is null
     limit 1

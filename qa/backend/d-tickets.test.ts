@@ -312,8 +312,8 @@ describe('AC-33..38  pinning and reissue, end to end through the renderer', () =
     await seedAttendees({ registrationId: reg2, showId, segmentId, count: 1, allocationType: 'BASE' });
     const result = await issueTickets({ concertId, showId });
 
-    console.log('QA: show override template id =', Number(overrideId), 'pinned =', result.template.id);
-    expect(result.template.id).not.toBe(Number(overrideId));
+    console.log('QA: show override template id =', Number(overrideId), 'pinned =', result.templates[showId].id);
+    expect(result.templates[showId].id).not.toBe(Number(overrideId));
   });
 
   it('AC-37  a new template version alone repins nothing', async () => {

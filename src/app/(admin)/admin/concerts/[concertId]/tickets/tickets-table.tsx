@@ -13,7 +13,11 @@ import {
   type DataTableColumn,
 } from '@/components/data-table';
 import { formatInZone, type ExportColumn } from '@/lib/export';
-import { issueTicketsAction, reissueTicketsAction } from './actions';
+import {
+  dismissReissueAction,
+  issueTicketsAction,
+  reissueTicketsAction,
+} from './actions';
 
 export type TicketRow = {
   id: number;
@@ -237,7 +241,11 @@ export function TicketsTable({
     return null;
   }
 
-  function run(action: typeof issueTicketsAction, verb: string) {
+  function run(
+    action: typeof issueTicketsAction,
+    verb: string,
+    confirmText?: string,
+  ) {
     const target = scope();
     if (!target) {
       setNotice({
@@ -246,6 +254,13 @@ export function TicketsTable({
       });
       return;
     }
+    /**
+     * Reissue asks first, because it is the one action here that reaches
+     * outside the system: clearing `ticket_sent_at` puts every ticket it
+     * touches back in the queue for another email. Issue does not — it only
+     * fills in identifiers that were missing — so it stays a single click.
+     */
+    if (confirmText && !window.confirm(confirmText)) return;
     startTransition(async () => {
       const result = await action(target);
       setNotice(
@@ -291,7 +306,16 @@ export function TicketsTable({
           </Button>
           <Button
             variant="outline"
-            onClick={() => run(reissueTicketsAction, 'reissue')}
+            onClick={() =>
+              run(
+                reissueTicketsAction,
+                'reissue',
+                `Reissue ${
+                  selected.length > 0 ? `${selected.length} selected ticket(s)` : 'this show'
+                } against the current template?\n\nEvery ticket this touches will be ` +
+                  're-rendered and queued to be emailed again.',
+              )
+            }
             disabled={isPending}
           >
             <RefreshCw className="size-4" aria-hidden />
@@ -307,11 +331,32 @@ export function TicketsTable({
           className="border-destructive/40 bg-destructive/5 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
         >
           <AlertTriangle className="size-4 shrink-0" aria-hidden />
-          <span>
+          <span className="flex-1">
             {needsReissueCount} ticket{needsReissueCount === 1 ? '' : 's'} need
             {needsReissueCount === 1 ? 's' : ''} reissuing — a printed field changed
             after the ticket was sent.
           </span>
+          {/*
+            §10.6 gives two ways out — "reissue and resend, or dismiss as
+            cosmetic". With only the first, a corrected spelling costs a whole
+            show a second email, and the count stands until people stop reading
+            it.
+          */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isPending}
+            onClick={() =>
+              run(
+                dismissReissueAction,
+                'dismiss',
+                'Dismiss these as cosmetic?\n\nNothing is re-rendered and nobody ' +
+                  'is emailed. The tickets people hold stay exactly as sent.',
+              )
+            }
+          >
+            Dismiss as cosmetic
+          </Button>
         </div>
       )}
 

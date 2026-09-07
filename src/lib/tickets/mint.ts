@@ -8,6 +8,7 @@ import {
   generateQrToken,
   generateTicketCode,
 } from './identifiers';
+import { scopeFilter, ticketable, type TicketScope } from './scope';
 
 /**
  * Assigning `ticket_code` and `qr_token` to attendees that have none.
@@ -49,11 +50,7 @@ export type MintResult = {
   attempts: number;
 };
 
-export type MintScope = {
-  showId?: number;
-  segmentId?: number;
-  attendeeIds?: number[];
-};
+export type MintScope = TicketScope;
 
 /**
  * Mint identifiers for every attendee in scope that lacks them.
@@ -148,50 +145,4 @@ async function countIssued(scope: MintScope): Promise<number> {
        and ${ticketable()}
   `);
   return rows[0]?.n ?? 0;
-}
-
-/**
- * Who gets a ticket.
- *
- * CONFIRMED only, and neither the attendee nor its registration soft-deleted.
- * A `WAITLIST` or `PENDING_REVIEW` row has no seat yet (spec/allocation.md
- * §7.5), and minting one a code would put a scannable ticket in the outbox for
- * a seat nobody granted.
- *
- * A **cancelled registration keeps** whatever it was already issued — nothing
- * here clears a token, and `ticket_sent_at` survives cancellation on purpose so
- * the door can say "cancelled — refer to desk" rather than "not found"
- * (spec/allocation.md §7.9). It simply stops being minted anything new.
- */
-function ticketable() {
-  return sql`
-    a.status = 'CONFIRMED'
-    and a.deleted_at is null
-    and r.deleted_at is null
-    and r.status <> 'CANCELLED'
-  `;
-}
-
-function scopeFilter(scope: MintScope) {
-  const clauses = [];
-  if (scope.showId !== undefined) clauses.push(sql`a.show_id = ${scope.showId}`);
-  if (scope.segmentId !== undefined) clauses.push(sql`a.segment_id = ${scope.segmentId}`);
-  if (scope.attendeeIds !== undefined) {
-    // An empty list must match nothing, not everything. `in ()` is a syntax
-    // error in Postgres, so it becomes a false literal.
-    clauses.push(
-      scope.attendeeIds.length === 0
-        ? sql`false`
-        : sql`a.id in ${sql`(${sql.join(
-            scope.attendeeIds.map((id) => sql`${id}`),
-            sql`, `,
-          )})`}`,
-    );
-  }
-  // No scope at all would mint across every concert in the database. That is
-  // never what a caller means, and the failure is silent and wide.
-  if (clauses.length === 0) {
-    throw new Error('mintIdentifiers needs a scope: showId, segmentId or attendeeIds.');
-  }
-  return sql.join(clauses, sql` and `);
 }

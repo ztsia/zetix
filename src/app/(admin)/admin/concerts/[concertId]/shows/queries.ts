@@ -85,6 +85,13 @@ export type ShowView = {
    * and the segments total 390, ten seats are held. Null when the hall itself is
    * unset, because "held" is meaningless without a total — and rendering 0 there
    * would read as "none held" rather than "nobody has said how big the room is".
+   *
+   * **Negative is defensive, not expected.** `assert_segments_fit_hall` refuses
+   * Σ segment capacity > hall with no override flag, so the database will not
+   * produce that state. The screens render "N over" rather than a negative
+   * anyway: §7.2 is explicit that a negative must never reach arithmetic that
+   * treats it as capacity, and a guard added later with an escape hatch should
+   * not silently turn this into one.
    */
   held: number | null;
 };

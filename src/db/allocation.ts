@@ -23,6 +23,22 @@ import { dbErrorMessage, rethrowDbError } from './errors';
  * a transaction that raises the isolation level.
  */
 
+/**
+ * Anything that can run a statement: the pooled client, or a transaction.
+ *
+ * `claimSeats` defaults to the pooled client, which is right for a single grant.
+ * A caller that must commit several grants **as one unit** — the import commit
+ * (spec/import.md §9.1) and the extras review commit (§7.5) both do — passes its
+ * transaction instead. Without this the call would run on a different connection
+ * from the transaction that is supposed to contain it, and with `max: 1` it
+ * simply deadlocks against the connection that transaction is holding.
+ *
+ * Isolation still matters: the transaction must be `READ COMMITTED`, per the
+ * note above. Passing one does not change that requirement, it only decides
+ * which connection the call lands on.
+ */
+export type Executor = Pick<ReturnType<typeof getDb>, 'execute'>;
+
 export type AllocationType = 'BASE' | 'EXTRA' | 'HELD' | 'COMP';
 
 /** One seat wanted. A registration is a party of N of these (decision 31). */
@@ -82,7 +98,7 @@ export async function claimSeats(
   segmentId: number,
   registrationId: number,
   requests: readonly SeatRequest[],
-  options: { override?: boolean } = {},
+  options: { override?: boolean; executor?: Executor } = {},
 ): Promise<ClaimOutcome> {
   const payload = requests.map((r) => ({
     full_name: r.fullName ?? null,
@@ -91,7 +107,7 @@ export async function claimSeats(
   }));
 
   try {
-    const rows = await getDb().execute<{ claim_seats: ClaimOutcome }>(sql`
+    const rows = await (options.executor ?? getDb()).execute<{ claim_seats: ClaimOutcome }>(sql`
       select claim_seats(
         ${segmentId}::bigint,
         ${registrationId}::bigint,

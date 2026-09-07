@@ -102,7 +102,7 @@ session reads those files and no others unless something sends it further.
 |---|---|---|---|---|
 | **A** | `claude/A-config-and-people` | Concerts, shows, segments CRUD; capacity moves between segments; players CRUD + CSV import + invite tokens; system settings UI | `domain.md` §5.1, §6, `allocation.md` §7.7, `admin.md` §14.1 | F2 |
 | **B** | `claude/B-registrations-extras` | Registrations table and full manual CRUD; attendee editing; cancellation; **extras review screen** with the strict-FCFS preselection walk | `allocation.md` §7.5, §7.6, §7.9 | F2 |
-| **C** | `claude/C-spreadsheet-import` | Upload, header detection, mapping profiles, repeating-group mapping, validation, dry run, commit | `import.md` §9 | F2 |
+| **C** | `claude/C-spreadsheet-import` | Upload, header detection, mapping profiles, party grouping, validation, dry run, commit | `import.md` §9 | F2 |
 | **D** | `claude/D-ticket-render` | `ticket_code` / `qr_token` minting, layout renderer, QR, `pdf-lib` + `sharp`, seeded default templates, version pinning, reissue flagging | `tickets.md` §10.1, §10.4, §10.5, §10.6 | F2 |
 | **E** | `claude/E-template-editor` | `react-konva` canvas editor, element bindings, versioning, longest-name preview | `tickets.md` §10.2, §10.3 | F2 |
 | **F** | `claude/F-outbox-blast` | Email templates, render-to-`DRAFT`, review and edit, Gmail SMTP, `/api/outbox/dispatch`, idempotent blast, mark-delivered-by-hand | `email.md` §11 | **D** |

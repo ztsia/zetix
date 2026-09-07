@@ -166,3 +166,92 @@ Everything else stays the engine's: whether an extras request is granted, held a
 waitlisted; the whole-party rule; the placeholder name for an unnamed attendee, which `claim_seats()`
 generates itself as `"Guest of {contact_name}"` with `name_source = 'PLACEHOLDER'` (decision 32). Import
 passes a null name through and lets it do that — it does not build the string.
+
+## 9.6 The import screen
+
+Admin surface, web-first (`surfaces.md` §15.1). Six steps, strictly linear, each gated on the one
+before. The step body is a `Card`; the rail above it is an `ItemGroup` of `Item`s marking done,
+current and upcoming. shadcn ships no stepper, and this is the composition that replaces one — a
+`Tabs` bar would imply the steps are freely navigable, which they are not.
+
+### Step 1 — Prepare your sheet
+
+**This step exists because the normalization is now the admin's job (§9.2), and a step the system
+depends on but never explains is a step that gets done wrong.** It renders before any file is chosen,
+and it is not skippable on a first run.
+
+It carries three things:
+
+1. **A before-and-after example**, as a static `Table` — the wide export on one side, the normalized
+   long sheet on the other, with the same two registrations in both so the reshaping is legible rather
+   than described.
+2. **A "Download template" button**, producing an `.xlsx` or `.csv` with exactly the headers §9.3
+   expects, through the existing export helper (`src/lib/export/`). This is the strongest part of the
+   step: an admin who fills the template in gets a sheet whose columns map themselves, and the mapping
+   step becomes a confirmation rather than a task.
+3. **A standing `Alert`: every row of one party repeats the same contact email and the same
+   timestamp.** That pair is the grouping key (§9.2), and it is the one thing a careful admin would
+   otherwise "tidy up" by filling the contact columns on the first row of each party only.
+
+An `Accordion` holds the cases that are not the common path — a form that asked for a seat count
+instead of names, a party whose contact has no email, a second-round file — so the default reading is
+short.
+
+### Steps 2–4 — Upload, sheet and header row, mapping
+
+Upload is an `Input type="file"`; parsing reports through `Progress`, and a parse failure is an
+`Alert variant="destructive"` that names the sheet and row, never a toast, because it is not
+transient.
+
+Sheet and header row are `Select`s, with the detected header row preselected and the first rows shown
+beneath so the choice is verifiable rather than trusted.
+
+Each mapping row is a `Field` with the target on the left and a `Select` of the file's actual headers
+on the right. Unmapped optional targets stay visibly unmapped; a required target left unmapped puts
+its `Field` in `data-invalid` and blocks Continue.
+
+### The allocation-type control
+
+One `RadioGroup` in choice-card form — `FieldLabel` wrapping a `Field`, per the shadcn Field
+composition — with two modes:
+
+| Mode | Then |
+|---|---|
+| **Every row is the same type** | A second control picks `BASE` or `EXTRA` for the whole file |
+| **Read it from a column** | A `Select` picks the column; the screen then lists each **distinct value actually present in that column** as an `Item`, each mapping to `BASE` or `EXTRA` |
+
+Listing the distinct values from the parsed file, rather than asking the admin to type them, is what
+makes `allocation_type_values` (§9.3) correct by construction: a value in the file that maps to nothing
+is visible as an unmapped row, which §9.4 makes blocking.
+
+**Only `BASE` and `EXTRA` are offered.** `HELD` and `COMP` are in the enum and are admin concepts —
+seats withheld or comped by a person, one at a time. An importer that offered them invites a whole file
+to arrive as `COMP`, outside the pool arithmetic, with no one having decided that seat by seat.
+
+**In a `PUBLIC` segment the control is locked to `EXTRA`** and says why: a `BASE` seat in a public
+segment is not refused by the engine, it is silently waitlisted (§9.5), so a public file mapped as
+`BASE` would waitlist the entire audience and report success. The lock is the UI half of the refusal
+§9.5 requires; both exist because either alone is one edit away from being the only one.
+
+### Step 5 — Dry run
+
+The per-row report is the shared `DataTable` (`../modules.md` §4 — it is not forked, and it needs no
+extension: the level filter goes in its `toolbar` slot and the report exports through its own export
+menu). One row per sheet row: line number, party, attendee, resolved allocation type, matched player,
+and outcome. Level is a `Badge` — `destructive` for blocking, `secondary` for warning, `outline` for
+info.
+
+Above it, three things the table cannot say:
+
+- **The derived grouping** — *"38 rows → 12 registrations, largest party 4"* — with the party sizes
+  broken down. This is the check that makes §9.2 safe, so it is stated before the table, not inside it.
+- **The seat outcome** — how many seats confirm, hold as `PENDING_REVIEW`, and waitlist, against the
+  segment's live pool from `segmentPool()`.
+- **Blocking counts**, as an `Alert variant="destructive"` that disables Commit while any remain.
+
+### Step 6 — Commit
+
+Behind an `AlertDialog`, because the commit is irreversible: there is no rollback and no re-sync
+(§9.1, decision 26). The dialog states the counts it is about to write and requires the typed name of
+the target segment — the same shape of confirmation §7.5 uses for an over-capacity grant. `Sonner`
+reports the result; the `import_batch` id is the durable record.

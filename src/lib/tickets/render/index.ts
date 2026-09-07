@@ -92,7 +92,28 @@ export async function renderTicket(options: RenderOptions): Promise<RenderResult
   const embedFace = async (key: FaceKey): Promise<PDFFont> => {
     const cached = fonts.get(key);
     if (cached) return cached;
-    const font = await doc.embedFont(loadFace(key), { subset: true });
+    /**
+     * **`subset: false`, and it is not negotiable.**
+     *
+     * pdf-lib's subsetter drops glyph outlines. The PDF comes out structurally
+     * perfect — right glyph ids, right positions, right widths, valid
+     * `ToUnicode` — and the page renders mostly blank, because the outlines
+     * those ids point at are empty. "Wellington Mainwaring" printed as
+     * "ll g a war g", and every test in this module passed while it did.
+     *
+     * Text extraction still returns the correct string, so nothing short of
+     * inspecting the embedded font program catches it. That is what
+     * `tests/tickets/glyphs.test.ts` does, and it turns red if anyone sets this
+     * back to `true` to reclaim the file size.
+     *
+     * The cost is real, and is why it was `true` to begin with: a ticket goes
+     * from ~12KB to ~410KB, since the whole of Inter and JetBrains Mono is
+     * embedded rather than the glyphs in use. That is still well inside
+     * `email.max_attachment_mb`, but a merged batch
+     * (`email.merge_attachments_above`) wants to dedupe the font programs
+     * rather than carry one copy per ticket — noted for module `F`.
+     */
+    const font = await doc.embedFont(loadFace(key), { subset: false });
     fonts.set(key, font);
     return font;
   };

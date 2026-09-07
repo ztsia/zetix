@@ -66,7 +66,16 @@ test('FLOW-9 the §7.7 capacity move never returns', async ({ page }) => {
 
   // Sixty seconds is far past any honest write of two integers.
   await page.waitForTimeout(60_000);
-  const buttonText = await dialog.getByRole('button', { name: /Saving|Save capacities/ }).innerText();
+  // Updated after the fix. This read `dialog.getByRole(...).innerText()`, which
+  // assumed the dialog was still open — true only while the move hung. Now that
+  // it commits, `ActionDialog` closes on success and the locator waited out the
+  // whole test timeout on a button that no longer exists. A closed dialog is
+  // the success case, so it is treated as one rather than as missing text.
+  const stillSaving = await dialog
+    .getByRole('button', { name: /Saving/ })
+    .count()
+    .catch(() => 0);
+  const buttonText = stillSaving > 0 ? 'Saving…' : 'closed';
   const rows = await sql<{ capacity: number }[]>`
     select capacity from show_segments where show_id = 1 order by display_order`;
   const stuck = await stuckSessions();
@@ -86,6 +95,15 @@ test('FLOW-5 the player CSV import commit never returns', async ({ page }) => {
   await sql`select pg_terminate_backend(pid) from pg_stat_activity
              where datname = current_database() and state = 'idle in transaction'
                and pid <> pg_backend_pid()`;
+
+  // Updated after the fix. FLOW-9 above moves the player segment to 80, and the
+  // seed carries exactly 80 active players at a base quota of 1 — so by the time
+  // this ran the segment was precisely full and the §7.4 guard correctly refused
+  // an 81st, giving `created: 0` for a reason that has nothing to do with what
+  // this test is about. Nothing here should depend on the previous test's
+  // arithmetic, so it makes its own room first.
+  await sql`update show_segments set capacity = 100
+             where show_id = 1 and audience_mode = 'PLAYER_INVITED'`;
 
   await login(page);
   await page.goto('/admin/concerts/1/players');

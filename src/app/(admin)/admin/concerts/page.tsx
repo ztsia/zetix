@@ -4,13 +4,14 @@ import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
 import { shows } from '@/db/schema/shows';
 import { ConcertsTable, type ConcertRow } from './concerts-table';
+import { ConcertCreateDialog } from './concert-create-dialog';
 
 export const metadata: Metadata = { title: 'Concerts' };
 
 /**
  * `/admin/concerts` — list, create, archive (spec/admin.md §14.1).
  *
- * F2 ships the list; creating and archiving are module `A`'s.
+ * F2 shipped the list; module `A` added creating and archiving.
  *
  * **This is the reference implementation of `DataTable`'s server mode**
  * (spec/surfaces.md §15.1). Paging, sorting and searching all happen here in
@@ -106,11 +107,14 @@ export default async function ConcertsPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-semibold">Concerts</h1>
-        <p className="text-muted-foreground text-sm">
-          Choose a concert to open its console.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Concerts</h1>
+          <p className="text-muted-foreground text-sm">
+            Choose a concert to open its console.
+          </p>
+        </div>
+        <ConcertCreateDialog />
       </div>
       <ConcertsTable
         concerts={data}

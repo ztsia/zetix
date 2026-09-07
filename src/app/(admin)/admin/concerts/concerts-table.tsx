@@ -12,6 +12,7 @@ import {
   type DataTableColumn,
 } from '@/components/data-table';
 import type { ExportColumn } from '@/lib/export';
+import { ConcertRowActions } from './concert-row-actions';
 
 export type ConcertRow = {
   id: number;
@@ -79,6 +80,22 @@ const columns: DataTableColumn<ConcertRow>[] = [
     meta: { label: 'Shows' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Shows" />,
     cell: ({ row }) => <span className="tabular-nums">{row.original.shows}</span>,
+  },
+  {
+    id: 'actions',
+    // Excluded from the column-visibility menu and from export: it renders
+    // controls, and a spreadsheet cell cannot hold a dropdown (modules.md §5.2.1).
+    enableHiding: false,
+    enableSorting: false,
+    meta: { label: 'Actions' },
+    header: () => <span className="sr-only">Actions</span>,
+    cell: ({ row }) => (
+      <ConcertRowActions
+        concertId={row.original.id}
+        name={row.original.name}
+        status={row.original.status}
+      />
+    ),
   },
 ];
 
@@ -156,7 +173,7 @@ export function ConcertsTable({
       onRowClick={(row) => router.push(`/admin/concerts/${row.id}/overview`)}
       export={{ filename: 'concerts', columns: exportColumns, timeZone, sheetName: 'Concerts' }}
       emptyTitle="No concerts yet"
-      emptyDescription="Module A builds concert creation. Until then, seed one with pnpm db:seed:dev."
+      emptyDescription="Create one to start adding shows, segments and players."
     />
   );
 }

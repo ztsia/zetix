@@ -64,7 +64,6 @@ describe('QA-1 matchPlayers with more than one distinct value', () => {
     expect(emails).toHaveLength(3);
 
     const matches = await matchPlayers(concertId, emails, 'EMAIL', 1);
-    // eslint-disable-next-line no-console
     log('QA-1 matched keys:', [...matches.keys()], 'of', emails);
     expect([...matches.keys()].sort()).toEqual([...emails].sort());
   });

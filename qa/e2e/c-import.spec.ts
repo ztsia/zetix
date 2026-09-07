@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import postgres from 'postgres';
 
 /**
@@ -394,7 +394,7 @@ test('FLOW-12 the downloaded template maps itself', async ({ page }) => {
   ]);
   const path = `${TMP}/template.csv`;
   await download.saveAs(path);
-  const text = require('node:fs').readFileSync(path, 'utf8');
+  const text = readFileSync(path, 'utf8');
   expect(text.split('\n')[0].trim()).toBe(HEADERS);
   await page.screenshot({ path: `${SHOTS}/FLOW-12-step-1-template.png`, fullPage: true });
 

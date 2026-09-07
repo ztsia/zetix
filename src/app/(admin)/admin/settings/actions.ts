@@ -28,16 +28,24 @@ import type { FormState } from '../concerts/form-state';
  */
 
 /**
- * The `::text::jsonb` double cast is load-bearing, exactly as in
- * `scripts/seed-settings.ts`.
+ * The `::text::jsonb` double cast, as in `scripts/seed-settings.ts`.
  *
- * With a bare `::jsonb`, `postgres.js` infers the parameter type from the cast
- * and JSON-encodes the string that was already serialised, so the value lands
- * one level too deep — a jsonb *string* rather than a number, boolean or
- * object. Nothing errors. `keepalive.enabled` becomes `"true"` (still truthy),
- * and `allocation.extras_policy` becomes a string that never matches the
+ * **On the raw `postgres.js` path that script uses, this is load-bearing.**
+ * With a bare `::jsonb` the driver infers the parameter type from the cast and
+ * JSON-encodes the already-serialised string, so the value lands one level too
+ * deep — a jsonb *string* rather than a number, boolean or object. Nothing
+ * errors: `keepalive.enabled` becomes `"true"` (still truthy), and
+ * `allocation.extras_policy` becomes a string that never matches the
  * per-audience branch in `resolve_setting`, so a player segment silently
- * auto-grants extras that decision 4 says must be held for review.
+ * auto-grants extras decision 4 says must be held for review.
+ *
+ * **Here it is belt and braces, not necessity.** A QA probe put both casts
+ * through drizzle's `sql` template against a real database and found a bare
+ * `::jsonb` stores a number as a number on this path. The double cast is kept
+ * anyway — it costs nothing, it matches the seed script so the two read alike,
+ * and it does not depend on a driver detail that a future drizzle release could
+ * change. What guarantees the behaviour either way are the tests that assert
+ * `jsonb_typeof` directly; do not remove *those*.
  */
 function jsonbParam(value: unknown) {
   return sql`${JSON.stringify(value)}::text::jsonb`;

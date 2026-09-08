@@ -191,3 +191,23 @@ begin
     'reason',    null);
 end;
 $$;
+--> statement-breakpoint
+
+--------------------------------------------------------------------------------
+-- And take the default grant straight back off it
+--------------------------------------------------------------------------------
+
+-- Postgres grants `execute` on every new function to `PUBLIC`, and both `anon`
+-- and `authenticated` inherit from `PUBLIC` — so a function created after
+-- `0004_lock_down_public_grants.sql` ran quietly reopens the door that migration
+-- closed. This one confirms seats, which is precisely the door: anyone holding
+-- the browser bundle's publishable key could call it through PostgREST and
+-- promote whatever attendee ids they liked. RLS does not cover functions; only
+-- the revoke does.
+--
+-- `tests/schema/rls-lockdown.test.ts` is what caught this, and it stays the
+-- guard: it asserts the callable-by-`authenticated` list is exactly
+-- `manifest_for_show`, so any future function added without this line turns the
+-- suite red rather than shipping.
+revoke all on function promote_seats(bigint, bigint[], boolean)
+  from public, anon, authenticated;

@@ -194,10 +194,24 @@ export async function promoteSeats(
   }
 }
 
-/** The live §7.2 figures for one segment — the extras review header reads these (§7.5). */
-export async function segmentPool(segmentId: number): Promise<SegmentPool> {
+/**
+ * The live §7.2 figures for one segment — the extras review header reads these
+ * (§7.5).
+ *
+ * Pass `executor` to read them **inside** a transaction, which the review commit
+ * does when it records what the pool looked like at the moment it committed.
+ * Without it the read lands on the pooled client, and with `max: 1` that waits
+ * for the connection the transaction is already holding: a request that
+ * deadlocks against itself rather than failing.
+ */
+export async function segmentPool(
+  segmentId: number,
+  options: { executor?: Executor } = {},
+): Promise<SegmentPool> {
   try {
-    const rows = await getDb().execute<{ segment_pool: SegmentPool }>(sql`
+    const rows = await (options.executor ?? getDb()).execute<{
+      segment_pool: SegmentPool;
+    }>(sql`
       select segment_pool(${segmentId}::bigint)
     `);
     return rows[0].segment_pool;

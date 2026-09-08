@@ -16,6 +16,7 @@ import {
   renameAttendee,
   restoreRegistration,
   updateRegistrationDetails,
+  type NewSeat,
 } from '@/lib/registrations/mutations';
 
 /**
@@ -69,10 +70,10 @@ async function publicSegment(opts: { hall?: number; capacity?: number } = {}) {
   return { concertId, showId, segmentId };
 }
 
-const guests = (n: number, type: 'BASE' | 'EXTRA' = 'EXTRA') =>
+const guests = (n: number, type: 'BASE' | 'EXTRA' = 'EXTRA'): NewSeat[] =>
   Array.from({ length: n }, (_, i) => ({
     fullName: `Guest ${i + 1}`,
-    allocationType: type as const,
+    allocationType: type,
   }));
 
 describe('createRegistration', () => {

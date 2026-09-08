@@ -286,6 +286,9 @@ export function TicketsTable({
               three designs. */}
           <Button
             variant="outline"
+            // A Button rendering an anchor is not a native <button>, and Base
+            // UI logs an accessibility error on every load unless told so.
+            nativeButton={false}
             render={<Link href={`/admin/concerts/${concertId}/tickets/templates`} />}
           >
             <Palette />

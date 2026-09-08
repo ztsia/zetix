@@ -392,6 +392,24 @@ describe('duplicateTemplate', () => {
     expect(row.supersedes_id).toBeNull();
   });
 
+  it('derives the background kind rather than copying it', async () => {
+    // The one place `background_kind` was passed rather than computed, so a row
+    // whose kind had drifted from its path propagated the drift into a new
+    // lineage. Arranged by writing a deliberately wrong pair.
+    const source = await templateNamed('Classic Landscape');
+    await sql`
+      update ticket_templates
+         set background_asset_path = 'concerts/1/art.png', background_kind = 'PDF'
+       where id = ${source.id}
+    `;
+
+    const { templateId } = await duplicateTemplate(concertId, source.id);
+    expect(await loadTemplate(concertId, templateId)).toMatchObject({
+      backgroundAssetPath: 'concerts/1/art.png',
+      backgroundKind: 'IMAGE',
+    });
+  });
+
   it('does not collide with an existing copy', async () => {
     const source = await templateNamed('Classic Landscape');
     await duplicateTemplate(concertId, source.id);

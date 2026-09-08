@@ -121,6 +121,8 @@ export function TemplateList({
                     <Button
                       variant="outline"
                       size="sm"
+                      // Not a native <button>; Base UI logs otherwise.
+                      nativeButton={false}
                       render={
                         <Link
                           href={`/admin/concerts/${concertId}/tickets/templates/${template.id}`}

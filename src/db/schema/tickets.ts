@@ -8,12 +8,17 @@ import { fk, pk, timestamps } from './columns';
  * `ticket_templates` — a canvas layout over a background asset
  * (spec/domain.md §5.1, spec/tickets.md §10.2).
  *
- * **Each row is one immutable version.** Editing a template creates a new
- * version rather than mutating the old one, because `attendees` pin
- * `(ticket_template_id, ticket_template_version)` at issue time and rendering
- * always uses the pinned pair (spec/tickets.md §10.5). If an edit mutated the
- * row in place, the PDF in someone's inbox and the PDF behind their portal link
- * would silently disagree.
+ * **Each row is one version, and a version becomes immutable the moment a
+ * ticket is issued against it.** `attendees` pin `(ticket_template_id,
+ * ticket_template_version)` at issue time and rendering always uses the pinned
+ * pair (spec/tickets.md §10.5), so rewriting a pinned row would make the PDF in
+ * someone's inbox and the PDF behind their portal link silently disagree.
+ *
+ * A version **nothing is pinned to** is edited in place instead: there is no
+ * copy anywhere to disagree with, and minting a version per nudged text box
+ * would make the number meaningless. `saveTemplate()` is where that condition
+ * lives. This comment used to say every row was immutable outright, which module
+ * `E` made untrue.
  *
  * `concert_id` null means a global default — the seeded template that lets the
  * system render a ticket before anyone opens the editor (decision 10).

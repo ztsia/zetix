@@ -174,10 +174,21 @@ export const canvasSchema = z
   })
   .strict();
 
+/**
+ * The most elements one ticket may carry.
+ *
+ * A cost bound, like the one on `text`, and found the same way: a QA pass built
+ * a layout of 5,000 elements and the render took 28.3 seconds — over the
+ * `maxDuration = 30` the ticket route sets, and multiplied by every attendee in
+ * a blast. A ticket is a postcard; 200 elements is far more than any design
+ * needs and far less than enough to stall a send.
+ */
+export const MAX_ELEMENTS = 200;
+
 export const layoutSchema = z
   .object({
     canvas: canvasSchema,
-    elements: z.array(elementSchema),
+    elements: z.array(elementSchema).max(MAX_ELEMENTS),
   })
   .strict();
 

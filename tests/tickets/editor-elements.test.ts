@@ -11,7 +11,7 @@ import {
   resizeCanvas,
   updateElement,
 } from '@/lib/tickets/editor-elements';
-import { elementSchema, layoutSchema, type Layout } from '@/lib/tickets/layout';
+import { MAX_ELEMENTS, elementSchema, layoutSchema, type Layout } from '@/lib/tickets/layout';
 
 /**
  * The editor's arithmetic (spec/tickets.md §10.3).
@@ -230,5 +230,32 @@ describe('the layout schema bounds what the editor can store', () => {
     };
     expect(() => elementSchema.parse({ ...base, text: 'a'.repeat(2000) })).not.toThrow();
     expect(() => elementSchema.parse({ ...base, text: 'a'.repeat(2001) })).toThrow();
+  });
+});
+
+describe('the layout schema bounds how much one ticket can hold', () => {
+  const rect = (id: string) => ({
+    id,
+    type: 'RECT' as const,
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+    rotation: 0,
+    fill: '#000000',
+    stroke: null,
+    stroke_width: 0,
+    radius: 0,
+  });
+
+  it('refuses more elements than a render can carry', () => {
+    // A QA pass rendered 5,000 elements in 28.3s, over the ticket route's
+    // 30s maxDuration and multiplied by every attendee in a blast.
+    const at = (n: number) => ({
+      canvas: { width_pt: 100, height_pt: 100, dpi: 300 },
+      elements: Array.from({ length: n }, (_, i) => rect(`el_${i}`)),
+    });
+    expect(() => layoutSchema.parse(at(MAX_ELEMENTS))).not.toThrow();
+    expect(() => layoutSchema.parse(at(MAX_ELEMENTS + 1))).toThrow();
   });
 });

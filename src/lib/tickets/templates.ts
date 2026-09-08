@@ -354,7 +354,12 @@ export async function duplicateTemplate(
         page_width_pt, page_height_pt, layout, is_default
       ) values (
         ${concertId}, ${name}, 1,
-        ${source.backgroundAssetPath}, ${source.backgroundKind},
+        ${source.backgroundAssetPath},
+        -- Derived, like everywhere else: copying the source's column was the
+        -- one place the kind was passed rather than computed, so a row whose
+        -- kind had drifted from its path propagated the drift into a new
+        -- lineage.
+        ${backgroundKindOf(source.backgroundAssetPath)},
         ${source.pageWidthPt}, ${source.pageHeightPt},
         ${JSON.stringify(source.layout)}::text::jsonb,
         false

@@ -121,7 +121,10 @@ export function TemplateEditor({
   );
 
   const assetUrl = useCallback((src: string) => `/api/ticket-assets/${src}`, []);
-  const backgroundUrl = useRasterisedBackground(backgroundPath, assetUrl);
+  const { url: backgroundUrl, error: backgroundError } = useRasterisedBackground(
+    backgroundPath,
+    assetUrl,
+  );
 
   /** Arrow keys nudge, 1pt and 10pt with shift (§10.3). */
   useEffect(() => {
@@ -185,7 +188,6 @@ export function TemplateEditor({
     try {
       const uploaded = await upload(file);
       if (!uploaded) return;
-      setBackgroundPath(uploaded.path);
 
       /**
        * §10.3: "Canvas dimensions derive from the asset; for PDF the page box in
@@ -193,11 +195,23 @@ export function TemplateEditor({
        * assumed, because a layout whose canvas disagrees with its background
        * puts every element somewhere other than where it was placed — the
        * renderer reads coordinates against the *real* page box.
+       *
+       * **The server's sniffed kind decides, not `file.type`.** The browser
+       * takes that from the operating system's idea of the extension, so the
+       * same PDF offered as `application/octet-stream` was measured as an image
+       * and left the page at its old size with no warning — while the upload
+       * route, which reads the leading bytes, had already filed it correctly.
+       *
+       * Measured **before** anything is shown, so the artwork and the page size
+       * appear together. Setting the path first put the card into a state where
+       * it said the artwork had loaded while the size was still the old one —
+       * briefly wrong on screen, and long enough that a test reading the two in
+       * sequence saw them disagree.
        */
-      const measured = await measureAsset(file);
-      // Computed outside the updater: a state updater must be pure, and React
-      // is free to run it twice.
+      const measured = await measureAsset(file, uploaded.kind === 'PDF');
       const page = measured ? canvasSizeFor(measured, layout.canvas.dpi) : null;
+
+      setBackgroundPath(uploaded.path);
       if (page) setLayout((current) => resizeCanvas(current, page.width_pt, page.height_pt));
 
       setFeedback({
@@ -208,7 +222,7 @@ export function TemplateEditor({
               (measured.unit === 'px'
                 ? `, from ${measured.width} × ${measured.height} px at ${layout.canvas.dpi} dpi — correct the dpi below if the artwork was exported at another.`
                 : ', from the PDF page box.')
-            : 'Artwork loaded.',
+            : 'Artwork loaded, but its dimensions could not be read — set the page size below by hand.',
       });
     } finally {
       setBusy(false);
@@ -505,9 +519,19 @@ export function TemplateEditor({
             <CardContent className="flex flex-col gap-3">
               <p className="text-muted-foreground text-xs">
                 {backgroundPath
-                  ? `${template.backgroundKind === 'PDF' || backgroundPath.endsWith('.pdf') ? 'PDF' : 'Image'} artwork loaded.`
+                  ? `${backgroundPath.endsWith('.pdf') ? 'PDF' : 'Image'} artwork loaded.`
                   : 'No artwork. The ticket prints as type on a blank page.'}
               </p>
+              {backgroundError && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="size-4" aria-hidden />
+                  <AlertDescription>
+                    The artwork is stored and <strong>will print</strong>, but it could not be
+                    drawn on this canvas ({backgroundError}), so you are placing elements over a
+                    blank page. Use Preview PDF to see them composed onto it.
+                  </AlertDescription>
+                </Alert>
+              )}
               <ButtonGroup>
                 <Button
                   variant="outline"
@@ -673,9 +697,13 @@ function useUnsavedChangesWarning(dirty: boolean) {
 function useRasterisedBackground(
   path: string | null,
   assetUrl: (src: string) => string,
-): string | null {
+): { url: string | null; error: string | null } {
   const isPdf = Boolean(path?.endsWith('.pdf'));
-  const [rasterised, setRasterised] = useState<{ key: string; url: string } | null>(null);
+  const [rasterised, setRasterised] = useState<{
+    key: string;
+    url: string | null;
+    error?: string;
+  } | null>(null);
 
   useEffect(() => {
     // An image needs no rasterising, so there is nothing to do here for one —
@@ -687,11 +715,7 @@ function useRasterisedBackground(
 
     (async () => {
       try {
-        const pdfjs = await import('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.min.mjs',
-          import.meta.url,
-        ).toString();
+        const pdfjs = await loadPdfjs();
 
         const response = await fetch(assetUrl(path));
         if (!response.ok) return;
@@ -707,16 +731,39 @@ function useRasterisedBackground(
         const canvas = window.document.createElement('canvas');
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
-        const context = canvas.getContext('2d');
-        if (!context) return;
 
-        await page.render({ canvas, canvasContext: context, viewport }).promise;
+        /**
+         * **`canvas` alone, never `canvas` *and* `canvasContext`.**
+         *
+         * pdf.js v6 documents the context parameter as backwards compatibility
+         * and requires `canvas` to be null when it is used. Passing both threw
+         * on every render — which the old bare `catch {}` swallowed, so the
+         * artwork silently never appeared while the card said it had loaded,
+         * and an admin laid their ticket out over white. A QA pass found it by
+         * proving `toBlob` was never reached.
+         */
+        await page.render({ canvas, viewport }).promise;
+
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve));
-        if (!blob || cancelled) return;
+        if (cancelled) return;
+        if (!blob) throw new Error('the page rendered but produced no image');
+
         objectUrl = URL.createObjectURL(blob);
         setRasterised({ key: path, url: objectUrl });
-      } catch {
-        // Leave it unrasterised: the canvas falls back to a blank page below.
+      } catch (error) {
+        /**
+         * **A failure here is reported, not swallowed.** The layout is still
+         * correct and Preview PDF still composes onto the real vector artwork,
+         * so this is not fatal — but an admin placing elements over a blank
+         * page needs to know that is what they are doing.
+         */
+        if (!cancelled) {
+          setRasterised({
+            key: path,
+            url: null,
+            error: error instanceof Error ? error.message : 'the preview could not be drawn',
+          });
+        }
       }
     })();
 
@@ -726,11 +773,37 @@ function useRasterisedBackground(
     };
   }, [path, isPdf, assetUrl]);
 
-  if (!path) return null;
-  if (!isPdf) return assetUrl(path);
+  if (!path) return { url: null, error: null };
+  if (!isPdf) return { url: assetUrl(path), error: null };
   // Keyed, so replacing one PDF with another never leaves the old artwork on
   // screen while the new one rasterises.
-  return rasterised?.key === path ? rasterised.url : null;
+  const current = rasterised?.key === path ? rasterised : null;
+  return { url: current?.url ?? null, error: current?.error ?? null };
+}
+
+
+/**
+ * pdf.js, from the **legacy** build, with its matching worker.
+ *
+ * Not a stylistic choice. The default build calls
+ * `Map.prototype.getOrInsertComputed`, a proposal-stage method that this
+ * project's Chromium does not have, so every `page.render()` threw
+ * `this[#methodPromises].getOrInsertComputed is not a function` and the canvas
+ * stayed blank while everything around it — the upload, the page box, the
+ * worker fetch — succeeded. The legacy build is the one pdf.js ships for
+ * exactly this, and the artwork is drawn once per template, so nothing here is
+ * hot enough for the difference to matter.
+ *
+ * The worker must come from the **same** build: a legacy main thread against a
+ * modern worker reintroduces the failure in the harder-to-see half.
+ */
+async function loadPdfjs() {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString();
+  return pdfjs;
 }
 
 /**
@@ -740,14 +813,10 @@ function useRasterisedBackground(
  * template's dpi and this does not. A PDF's page box is already points and
  * authoritative (§10.3); an image is pixels.
  */
-async function measureAsset(file: File): Promise<AssetMeasurement | null> {
-  if (file.type === 'application/pdf') {
+async function measureAsset(file: File, isPdf: boolean): Promise<AssetMeasurement | null> {
+  if (isPdf) {
     try {
-      const pdfjs = await import('pdfjs-dist');
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url,
-      ).toString();
+      const pdfjs = await loadPdfjs();
       const document = await pdfjs.getDocument({
         data: new Uint8Array(await file.arrayBuffer()),
       }).promise;

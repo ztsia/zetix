@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { canAccessShow } from '@/lib/auth/show-access';
+import { backgroundFor, loadTicketAsset } from '@/lib/tickets/background';
 import { loadTicket } from '@/lib/tickets/load';
 import { renderTicket } from '@/lib/tickets/render';
 
@@ -73,6 +74,10 @@ export async function GET(
   const { pdf } = await renderTicket({
     layout: ticket.template.layout,
     data: ticket.data,
+    // The artwork of the **pinned** version, not of the template's newest one
+    // (§10.5) — `loadTicket()` carries it for exactly that reason.
+    background: await backgroundFor(ticket.template),
+    loadAsset: loadTicketAsset,
   });
 
   return new NextResponse(Buffer.from(pdf), {

@@ -59,8 +59,21 @@ export type LoadedTicket = {
   attendeeId: number;
   concertId: number;
   showId: number;
-  /** The pinned template — never the concert's current one (§10.5). */
-  template: { id: number; version: number; layout: Layout };
+  /**
+   * The pinned template — never the concert's current one (§10.5).
+   *
+   * The artwork travels with it rather than being resolved separately, for the
+   * same reason the layout does: a ticket must render against the background
+   * the pinned version was designed over, not against whatever the template's
+   * newest version now points at.
+   */
+  template: {
+    id: number;
+    version: number;
+    layout: Layout;
+    backgroundAssetPath: string | null;
+    backgroundKind: 'IMAGE' | 'PDF' | 'NONE';
+  };
   data: TicketData;
   /** Filename for a download, per spec/email.md §11.3. */
   filename: string;
@@ -87,6 +100,8 @@ export async function loadTicket(attendeeId: number): Promise<LoadedTicket | nul
     template_id: string | null;
     template_version: number | null;
     layout: unknown;
+    background_asset_path: string | null;
+    background_kind: 'IMAGE' | 'PDF' | 'NONE' | null;
   }>(sql`
     select
       a.id                as attendee_id,
@@ -107,7 +122,9 @@ export async function loadTicket(attendeeId: number): Promise<LoadedTicket | nul
       c.timezone,
       t.id                as template_id,
       t.version           as template_version,
-      t.layout
+      t.layout,
+      t.background_asset_path,
+      t.background_kind
     from attendees a
     join registrations r on r.id = a.registration_id
     join shows s         on s.id = a.show_id
@@ -175,6 +192,8 @@ export async function loadTicket(attendeeId: number): Promise<LoadedTicket | nul
       id: Number(row.template_id),
       version: row.template_version ?? 1,
       layout: parseLayout(row.layout),
+      backgroundAssetPath: row.background_asset_path,
+      backgroundKind: row.background_kind ?? 'NONE',
     },
     data,
     filename: ticketFilename(row.show_name, row.full_name, row.ticket_code),

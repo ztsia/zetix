@@ -1,9 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { SortingState } from '@tanstack/react-table';
-import { AlertTriangle, Download, Eye, RefreshCw, Ticket } from 'lucide-react';
+import { AlertTriangle, Download, Eye, Palette, RefreshCw, Ticket } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -280,6 +281,16 @@ export function TicketsTable({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Module E's editor. The design lives one level down rather than in
+              a tab here: this screen is four hundred attendees, that one is
+              three designs. */}
+          <Button
+            variant="outline"
+            render={<Link href={`/admin/concerts/${concertId}/tickets/templates`} />}
+          >
+            <Palette />
+            Templates
+          </Button>
           <select
             className="border-input bg-background h-9 rounded-md border px-3 text-sm"
             value={showFilter ?? ''}

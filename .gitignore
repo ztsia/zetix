@@ -50,3 +50,7 @@ next-env.d.ts
 
 # qa run artifacts (screenshots, traces, reports)
 qa-artifacts/
+
+# uploaded ticket artwork, when TICKET_ASSET_DIR points inside the repo
+# (spec/tickets.md §10.3). Production uses the Supabase bucket instead.
+.ticket-assets/

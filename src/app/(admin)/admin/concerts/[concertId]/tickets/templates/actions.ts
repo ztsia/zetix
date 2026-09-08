@@ -1,0 +1,177 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
+import { requireAdmin } from '@/lib/auth/guards';
+import { writeAuditLog } from '@/lib/audit';
+import { deleteAsset } from '@/lib/tickets/assets';
+import { layoutSchema } from '@/lib/tickets/layout';
+import {
+  duplicateTemplate,
+  loadTemplate,
+  saveTemplate,
+  setDefaultTemplate,
+} from '@/lib/tickets/templates';
+
+/**
+ * The editor's three mutations (spec/tickets.md §10.3, §10.5).
+ *
+ * Server Actions, because each is an admin button rather than a URL anything
+ * external calls (CLAUDE.md conventions). **Every one re-checks
+ * `requireAdmin()`**: a Server Action is its own entry point, so the page's
+ * guard does not cover it (modules.md §5.2.1).
+ *
+ * The layout arrives from a browser and is parsed with the same `zod` schema the
+ * renderer parses it with. It is the contract between the editor and module
+ * `D`'s renderer, and it is `.strict()` — a key the editor invents is rejected
+ * here rather than stored and silently ignored at render time.
+ */
+
+export type TemplateActionResult =
+  | { ok: true; message: string; templateId?: number; version?: number }
+  | { ok: false; error: string };
+
+const saveSchema = z.object({
+  concertId: z.number().int().positive(),
+  templateId: z.number().int().positive(),
+  name: z.string().trim().min(1, 'A template needs a name.').max(120),
+  layout: layoutSchema,
+  /** Null clears the background; omitted leaves it alone. */
+  backgroundAssetPath: z.string().min(1).nullable().optional(),
+});
+
+export async function saveTemplateAction(
+  input: z.infer<typeof saveSchema>,
+): Promise<TemplateActionResult> {
+  await requireAdmin();
+
+  const parsed = saveSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: firstIssue(parsed.error) };
+  }
+
+  const { concertId, templateId } = parsed.data;
+  const before = await loadTemplate(concertId, templateId);
+  if (!before) return { ok: false, error: 'That template no longer exists.' };
+
+  try {
+    const result = await saveTemplate(parsed.data);
+
+    /**
+     * A background that was replaced *and* left behind by an in-place save is
+     * unreferenced from this moment on, so it is deleted. **Only in that exact
+     * case**: a clone means the old version still points at the old artwork and
+     * still has to render for the tickets pinned to it (§10.5).
+     */
+    if (
+      !result.cloned &&
+      before.backgroundAssetPath &&
+      parsed.data.backgroundAssetPath !== undefined &&
+      parsed.data.backgroundAssetPath !== before.backgroundAssetPath
+    ) {
+      await deleteAsset(before.backgroundAssetPath).catch(() => undefined);
+    }
+
+    await writeAuditLog({
+      action: result.cloned ? 'ticket_template.versioned' : 'ticket_template.updated',
+      entityType: 'ticket_template',
+      entityId: result.templateId,
+      before: {
+        id: before.id,
+        version: before.version,
+        name: before.name,
+        elements: before.elementCount,
+        issued: before.issuedCount,
+      },
+      after: {
+        id: result.templateId,
+        version: result.version,
+        name: parsed.data.name,
+        elements: parsed.data.layout.elements.length,
+      },
+    });
+
+    revalidatePath(`/admin/concerts/${concertId}/tickets/templates`);
+    revalidatePath(`/admin/concerts/${concertId}/tickets/templates/${result.templateId}`);
+
+    return {
+      ok: true,
+      templateId: result.templateId,
+      version: result.version,
+      message: result.cloned
+        ? `Saved as version ${result.version}. Version ${before.version} has ${before.issuedCount} ticket${
+            before.issuedCount === 1 ? '' : 's'
+          } issued against it and keeps its design.`
+        : `Saved. Still version ${result.version} — no tickets have been issued from it yet.`,
+    };
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+const templateSchema = z.object({
+  concertId: z.number().int().positive(),
+  templateId: z.number().int().positive(),
+});
+
+export async function setDefaultTemplateAction(
+  input: z.infer<typeof templateSchema>,
+): Promise<TemplateActionResult> {
+  await requireAdmin();
+
+  const parsed = templateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Malformed request.' };
+
+  try {
+    await setDefaultTemplate(parsed.data.concertId, parsed.data.templateId);
+    await writeAuditLog({
+      action: 'ticket_template.default_set',
+      entityType: 'ticket_template',
+      entityId: parsed.data.templateId,
+      after: { concertId: parsed.data.concertId },
+    });
+    revalidatePath(`/admin/concerts/${parsed.data.concertId}/tickets/templates`);
+    return {
+      ok: true,
+      message:
+        'Default set. Tickets issued from now on use it — those already issued keep the ' +
+        'template they were pinned to.',
+    };
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+export async function duplicateTemplateAction(
+  input: z.infer<typeof templateSchema>,
+): Promise<TemplateActionResult> {
+  await requireAdmin();
+
+  const parsed = templateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Malformed request.' };
+
+  try {
+    const { templateId } = await duplicateTemplate(parsed.data.concertId, parsed.data.templateId);
+    await writeAuditLog({
+      action: 'ticket_template.duplicated',
+      entityType: 'ticket_template',
+      entityId: templateId,
+      before: { id: parsed.data.templateId },
+    });
+    revalidatePath(`/admin/concerts/${parsed.data.concertId}/tickets/templates`);
+    return { ok: true, templateId, message: 'Duplicated.' };
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+function firstIssue(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (!issue) return 'Malformed request.';
+  const path = issue.path.join('.');
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : 'Something went wrong.';
+}

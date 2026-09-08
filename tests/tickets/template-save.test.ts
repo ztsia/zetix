@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, sql } from '../helpers/db';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetDb, newConnection, sql } from '../helpers/db';
 import {
   createConcert,
   createRegistration,
@@ -17,6 +20,25 @@ import {
   saveTemplate,
   setDefaultTemplate,
 } from '@/lib/tickets/templates';
+
+vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
+vi.mock('next/navigation', () => ({
+  redirect: (to: string) => {
+    throw new Error(`redirect:${to}`);
+  },
+  notFound: () => {
+    throw new Error('notFound');
+  },
+}));
+vi.mock('@/lib/auth/session', () => ({
+  getSessionUser: async () => ({
+    id: '00000000-0000-0000-0000-000000000001',
+    email: 'a@x',
+    displayName: 'Committee',
+    role: 'ADMIN',
+  }),
+  recordLogin: async () => {},
+}));
 
 /**
  * Saving a template edit (spec/tickets.md §10.5).
@@ -233,6 +255,24 @@ describe('saveTemplate, once tickets are issued', () => {
     expect(clone?.isDefault).toBe(true);
   });
 
+  it('leaves exactly one default row in the concert', async () => {
+    // A QA pass found the clone copying `is_default` and leaving both rows
+    // flagged. `findConcertTemplate()` orders across names as well as versions,
+    // so two flagged lineages would resolve by version number rather than by
+    // anybody's choice — and §5.1 describes a concert as having exactly one.
+    await issueFor(1);
+    const pinned = await templateNamed('Classic Landscape');
+    const result = await saveTemplate({
+      concertId,
+      templateId: pinned.id,
+      name: pinned.name,
+      layout: pinned.layout,
+    });
+
+    const flagged = (await listTemplates(concertId)).filter((t) => t.isDefault);
+    expect(flagged.map((t) => t.id)).toEqual([result.templateId]);
+  });
+
   it('survives a rename that collides with another template’s name', async () => {
     await issueFor(1);
     const pinned = await templateNamed('Classic Landscape');
@@ -357,5 +397,148 @@ describe('duplicateTemplate', () => {
     await duplicateTemplate(concertId, source.id);
     const { templateId } = await duplicateTemplate(concertId, source.id);
     expect((await loadTemplate(concertId, templateId))?.name).toBe('Classic Landscape copy 2');
+  });
+});
+
+describe('saveTemplate, under a concurrent blast', () => {
+  it('waits for the issue to commit, then clones instead of rewriting', async () => {
+    // **The test the `for update` lock exists for.** A QA pass found the lock
+    // untested: deleting it left every other test in this file green, because
+    // the pinning UPDATE happens to take FOR KEY SHARE on the template row
+    // through the `attendees_ticket_template_id_...` foreign key. The outcome
+    // was right, resting on a constraint nobody had named, with nothing to
+    // notice if it changed. This fails without the explicit lock.
+    const template = await templateNamed('Classic Landscape');
+    const originalLayout = JSON.stringify(template.layout);
+    const registrationId = await createRegistration({ showId, segmentId });
+    await seedAttendees({
+      registrationId,
+      showId,
+      segmentId,
+      count: 1,
+      allocationType: 'BASE',
+    });
+
+    // A blast pins the attendee to v1 but has not committed yet.
+    const issuer = newConnection();
+    let saved: { cloned: boolean; version: number } | null = null;
+    try {
+      await issuer`begin`;
+      await issuer`
+        update attendees
+           set ticket_template_id = ${template.id},
+               ticket_template_version = ${template.version},
+               ticket_issued_at = now()
+         where show_id = ${showId}
+      `;
+
+      // The admin presses Save in the same moment.
+      const save = saveTemplate({
+        concertId,
+        templateId: template.id,
+        name: template.name,
+        layout: withElement(template.layout, 'el_raced'),
+      });
+
+      const raced = await Promise.race([
+        save.then(() => ({ waited: false })),
+        new Promise<{ waited: true }>((resolve) =>
+          setTimeout(() => resolve({ waited: true }), 1000),
+        ),
+      ]);
+      // It must still be blocked: reading the issued count without the lock
+      // would see zero and rewrite v1 underneath the attendee.
+      expect(raced.waited).toBe(true);
+
+      await issuer`commit`;
+      saved = await save;
+    } finally {
+      await issuer`rollback`.catch(() => undefined);
+      await issuer.end();
+    }
+
+    const v1 = await loadTemplate(concertId, template.id);
+    const [pin] = await sql<{ version: number }[]>`
+      select ticket_template_version as version from attendees order by id limit 1
+    `;
+
+    expect({
+      cloned: saved?.cloned,
+      v1Unchanged: JSON.stringify(v1?.layout) === originalLayout,
+      pinnedTo: pin.version,
+    }).toEqual({ cloned: true, v1Unchanged: true, pinnedTo: template.version });
+  });
+});
+
+describe('background assets are never deleted by a save', () => {
+  it('keeps the artwork a pinned version still renders from', async () => {
+    // The Blocker a QA pass found. A path is not owned by one row: a clone
+    // copies it onto the new version, so "the in-place save that changed the
+    // path leaves the old file unreferenced" was false, and replacing the
+    // background on the newer row unlinked the artwork an already-issued
+    // ticket renders from (§10.5).
+    const dir = await mkdtemp(join(tmpdir(), 'zetix-save-assets-'));
+    process.env.TICKET_ASSET_DIR = dir;
+    try {
+      // The action writes an audit row, whose actor_id is a real FK.
+      await sql`
+        insert into app_users (id, email, display_name, role)
+        values ('00000000-0000-0000-0000-000000000001'::uuid,
+                'committee@example.test', 'Committee', 'ADMIN')
+        on conflict (id) do nothing
+      `;
+
+      const { putAsset, getAsset } = await import('@/lib/tickets/assets');
+      const { saveTemplateAction } = await import(
+        '@/app/(admin)/admin/concerts/[concertId]/tickets/templates/actions'
+      );
+
+      const artwork = await putAsset({
+        concertId,
+        contentType: 'image/png',
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]),
+      });
+
+      const template = await templateNamed('Classic Landscape');
+      await saveTemplate({
+        concertId,
+        templateId: template.id,
+        name: template.name,
+        layout: template.layout,
+        backgroundAssetPath: artwork,
+      });
+
+      // Issue against it, then edit: v2 is a clone naming the same file.
+      await issueFor(1);
+      const clone = await saveTemplate({
+        concertId,
+        templateId: template.id,
+        name: template.name,
+        layout: withElement(template.layout, 'el_after'),
+      });
+      expect(clone.cloned).toBe(true);
+      expect((await loadTemplate(concertId, clone.templateId))?.backgroundAssetPath).toBe(artwork);
+
+      // Replace the background on v2, which has nothing issued against it.
+      const replacement = await putAsset({
+        concertId,
+        contentType: 'image/png',
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]),
+      });
+      const result = await saveTemplateAction({
+        concertId,
+        templateId: clone.templateId,
+        name: template.name,
+        layout: withElement(template.layout, 'el_after'),
+        backgroundAssetPath: replacement,
+      });
+      if (!result.ok) throw new Error(`saveTemplateAction refused: ${result.error}`);
+
+      // v1 is pinned and still names the original file, which must still exist.
+      expect((await loadTemplate(concertId, template.id))?.backgroundAssetPath).toBe(artwork);
+      expect(await getAsset(artwork)).not.toBeNull();
+    } finally {
+      delete process.env.TICKET_ASSET_DIR;
+    }
   });
 });

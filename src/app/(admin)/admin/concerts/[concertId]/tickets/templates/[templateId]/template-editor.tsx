@@ -33,12 +33,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import type { TicketData } from '@/lib/tickets/bindings';
 import {
+  canvasSizeFor,
   createElement,
   nudgeElement,
   removeElement,
   reorderElement,
   resizeCanvas,
   updateElement,
+  type AssetMeasurement,
 } from '@/lib/tickets/editor-elements';
 import type { Layout, LayoutElement } from '@/lib/tickets/layout';
 import type { PreviewOption, PreviewSubject } from '@/lib/tickets/preview';
@@ -65,6 +67,8 @@ export type TemplateEditorProps = {
   showId: number | null;
   previewOptions: PreviewOption[];
   previewData: TicketData;
+  /** Carried across the navigation a clone forces — see `save()`. */
+  savedMessage?: string | null;
 };
 
 type Feedback = { ok: boolean; text: string } | null;
@@ -76,6 +80,7 @@ export function TemplateEditor({
   showId,
   previewOptions,
   previewData,
+  savedMessage,
 }: TemplateEditorProps) {
   const router = useRouter();
   const [name, setName] = useState(template.name);
@@ -88,7 +93,9 @@ export function TemplateEditor({
   const [subject, setSubject] = useState<PreviewSubject>(
     previewOptions[0]?.subject ?? 'SAMPLE',
   );
-  const [feedback, setFeedback] = useState<Feedback>(null);
+  const [feedback, setFeedback] = useState<Feedback>(
+    savedMessage ? { ok: true, text: savedMessage } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [pending, startTransition] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -187,17 +194,21 @@ export function TemplateEditor({
        * puts every element somewhere other than where it was placed — the
        * renderer reads coordinates against the *real* page box.
        */
-      const size = await measureAsset(file);
-      if (size) {
-        setLayout((current) =>
-          resizeCanvas(current, Math.round(size.width), Math.round(size.height)),
-        );
-      }
+      const measured = await measureAsset(file);
+      // Computed outside the updater: a state updater must be pure, and React
+      // is free to run it twice.
+      const page = measured ? canvasSizeFor(measured, layout.canvas.dpi) : null;
+      if (page) setLayout((current) => resizeCanvas(current, page.width_pt, page.height_pt));
+
       setFeedback({
         ok: true,
-        text: size
-          ? `Artwork loaded. Canvas set to ${Math.round(size.width)} × ${Math.round(size.height)} pt.`
-          : 'Artwork loaded.',
+        text:
+          measured && page
+            ? `Artwork loaded. Page set to ${page.width_pt} × ${page.height_pt} pt` +
+              (measured.unit === 'px'
+                ? `, from ${measured.width} × ${measured.height} px at ${layout.canvas.dpi} dpi — correct the dpi below if the artwork was exported at another.`
+                : ', from the PDF page box.')
+            : 'Artwork loaded.',
       });
     } finally {
       setBusy(false);
@@ -232,14 +243,25 @@ export function TemplateEditor({
         layout,
         backgroundAssetPath: backgroundPath,
       });
-      setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
       if (result.ok && result.templateId && result.templateId !== template.id) {
-        // A clone is a different row, so the editor has to follow it — staying
-        // put would leave the admin editing the frozen version they just left.
-        router.push(`/admin/concerts/${concertId}/tickets/templates/${result.templateId}`);
-      } else if (result.ok) {
-        router.refresh();
+        /**
+         * A clone is a different row, so the editor has to follow it — staying
+         * put would leave the admin editing the frozen version they just left.
+         *
+         * **The message travels with the navigation** rather than being set
+         * here. Setting it here put it on screen for about 300 ms before the
+         * route change threw the component away, so the one sentence explaining
+         * that a *new version* was made — the §10.5 behaviour an admin most
+         * needs to understand — was the sentence nobody could read.
+         */
+        router.push(
+          `/admin/concerts/${concertId}/tickets/templates/${result.templateId}` +
+            `?saved=${encodeURIComponent(result.message)}`,
+        );
+        return;
       }
+      setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
+      if (result.ok) router.refresh();
     });
   }
 
@@ -431,7 +453,11 @@ export function TemplateEditor({
                     }}
                   >
                     <SelectTrigger id="show">
-                      <SelectValue />
+                      <SelectValue>
+                        {(value: string) =>
+                          shows.find((show) => String(show.id) === value)?.name ?? value
+                        }
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {shows.map((show) => (
@@ -450,7 +476,11 @@ export function TemplateEditor({
                   onValueChange={(value) => value && setSubject(value as PreviewSubject)}
                 >
                   <SelectTrigger id="subject">
-                    <SelectValue />
+                    <SelectValue>
+                      {(value: string) =>
+                        previewOptions.find((option) => option.subject === value)?.label ?? value
+                      }
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {previewOptions.map((option) => (
@@ -500,6 +530,67 @@ export function TemplateEditor({
                 )}
               </ButtonGroup>
               <FieldDescription>PNG, JPEG or a PDF whose page 1 is the ticket.</FieldDescription>
+
+              {/*
+                The page size is derived from the artwork, and for an image that
+                derivation depends on a dpi nothing in the file reliably states.
+                These three fields are the escape hatch: without them a wrong
+                guess leaves an admin with a 43 × 62 cm ticket and no way back.
+              */}
+              <div className="grid grid-cols-3 gap-2">
+                <Field>
+                  <FieldLabel htmlFor="page-w">Width pt</FieldLabel>
+                  <Input
+                    id="page-w"
+                    type="number"
+                    min={1}
+                    value={layout.canvas.width_pt}
+                    onChange={(event) => {
+                      const width = Number(event.target.value);
+                      if (width > 0) {
+                        setLayout((current) =>
+                          resizeCanvas(current, width, current.canvas.height_pt),
+                        );
+                      }
+                    }}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="page-h">Height pt</FieldLabel>
+                  <Input
+                    id="page-h"
+                    type="number"
+                    min={1}
+                    value={layout.canvas.height_pt}
+                    onChange={(event) => {
+                      const height = Number(event.target.value);
+                      if (height > 0) {
+                        setLayout((current) =>
+                          resizeCanvas(current, current.canvas.width_pt, height),
+                        );
+                      }
+                    }}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="page-dpi">Dpi</FieldLabel>
+                  <Input
+                    id="page-dpi"
+                    type="number"
+                    min={1}
+                    value={layout.canvas.dpi}
+                    onChange={(event) => {
+                      const dpi = Number(event.target.value);
+                      if (dpi > 0) {
+                        setLayout((current) => ({
+                          ...current,
+                          canvas: { ...current.canvas, dpi },
+                        }));
+                      }
+                    }}
+                  />
+                </Field>
+              </div>
             </CardContent>
           </Card>
 
@@ -643,14 +734,13 @@ function useRasterisedBackground(
 }
 
 /**
- * The artwork's real size in points, for the canvas.
+ * The artwork's own dimensions, **in its own unit**.
  *
- * A PDF's page box is already in points and is authoritative (§10.3). An image
- * is in pixels, so it is converted at 72 px per point — the PDF unit — which
- * makes a 595 × 280 px image an A5-ish strip rather than an accidental
- * postage stamp.
+ * Converting to points is `canvasSizeFor()`'s job, because it needs the
+ * template's dpi and this does not. A PDF's page box is already points and
+ * authoritative (§10.3); an image is pixels.
  */
-async function measureAsset(file: File): Promise<{ width: number; height: number } | null> {
+async function measureAsset(file: File): Promise<AssetMeasurement | null> {
   if (file.type === 'application/pdf') {
     try {
       const pdfjs = await import('pdfjs-dist');
@@ -662,7 +752,7 @@ async function measureAsset(file: File): Promise<{ width: number; height: number
         data: new Uint8Array(await file.arrayBuffer()),
       }).promise;
       const viewport = (await document.getPage(1)).getViewport({ scale: 1 });
-      return { width: viewport.width, height: viewport.height };
+      return { width: viewport.width, height: viewport.height, unit: 'pt' };
     } catch {
       return null;
     }
@@ -672,7 +762,7 @@ async function measureAsset(file: File): Promise<{ width: number; height: number
     const image = new window.Image();
     const objectUrl = URL.createObjectURL(file);
     image.onload = () => {
-      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      resolve({ width: image.naturalWidth, height: image.naturalHeight, unit: 'px' });
       URL.revokeObjectURL(objectUrl);
     };
     image.onerror = () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MIN_ELEMENT_PT,
+  canvasSizeFor,
   clampSize,
   createElement,
   nextElementId,
@@ -181,5 +182,53 @@ describe('resizeCanvas', () => {
 
     expect(resized.canvas).toMatchObject({ width_pt: 842, height_pt: 210, dpi: 300 });
     expect(resized.elements[0]).toEqual(element);
+  });
+});
+
+describe('canvasSizeFor', () => {
+  it('reads an image back through its dpi, not at 72', () => {
+    // The QA finding: artwork exported at 300 dpi measured 1240 × 1754 px, and
+    // dividing by 72 made a 43 × 62 cm page with every element in one corner.
+    expect(canvasSizeFor({ width: 2479, height: 1167, unit: 'px' }, 300)).toEqual({
+      width_pt: 595,
+      height_pt: 280,
+    });
+    expect(canvasSizeFor({ width: 595, height: 280, unit: 'px' }, 72)).toEqual({
+      width_pt: 595,
+      height_pt: 280,
+    });
+  });
+
+  it('leaves a PDF page box alone — it is already points and authoritative', () => {
+    expect(canvasSizeFor({ width: 595.276, height: 280.63, unit: 'pt' }, 300)).toEqual({
+      width_pt: 595,
+      height_pt: 281,
+    });
+  });
+
+  it('never produces a zero or negative page from a nonsense dpi', () => {
+    expect(canvasSizeFor({ width: 100, height: 100, unit: 'px' }, 0).width_pt).toBeGreaterThan(0);
+    expect(canvasSizeFor({ width: 1, height: 1, unit: 'px' }, 600)).toEqual({
+      width_pt: 1,
+      height_pt: 1,
+    });
+  });
+});
+
+describe('the layout schema bounds what the editor can store', () => {
+  it('refuses a static text long enough to hang the renderer', () => {
+    // A QA pass fed 1 MB of text through and the render never returned: the
+    // line breaker measures substrings, so length is a cost, not just a value.
+    const base = {
+      id: 'el_text',
+      type: 'TEXT' as const,
+      binding: null,
+      x: 0,
+      y: 0,
+      w: 100,
+      h: 20,
+    };
+    expect(() => elementSchema.parse({ ...base, text: 'a'.repeat(2000) })).not.toThrow();
+    expect(() => elementSchema.parse({ ...base, text: 'a'.repeat(2001) })).toThrow();
   });
 });

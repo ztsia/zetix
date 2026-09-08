@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
-import { deleteAsset } from '@/lib/tickets/assets';
 import { layoutSchema } from '@/lib/tickets/layout';
 import {
   duplicateTemplate,
@@ -58,20 +57,26 @@ export async function saveTemplateAction(
     const result = await saveTemplate(parsed.data);
 
     /**
-     * A background that was replaced *and* left behind by an in-place save is
-     * unreferenced from this moment on, so it is deleted. **Only in that exact
-     * case**: a clone means the old version still points at the old artwork and
-     * still has to render for the tickets pinned to it (§10.5).
+     * **Replacing a background never deletes the file it replaced.**
+     *
+     * This used to delete the old asset whenever an in-place save changed the
+     * path, on the reasoning that an in-place save leaves nothing pointing at
+     * it. That reasoning was wrong, and a QA pass proved it: a path is not
+     * owned by one row. `saveTemplate()`'s clone copies
+     * `background_asset_path` verbatim onto the new version, and
+     * `duplicateTemplate()` copies it into a whole new lineage — so the version
+     * being edited can name the same file as a **pinned, already-issued** one.
+     * Replacing the background on the newer row then unlinked the artwork the
+     * issued ticket renders from, and because `backgroundFor()` degrades
+     * instead of throwing, that ticket silently lost its design (§10.5).
+     *
+     * An orphaned file costs a few hundred kilobytes in a bucket holding a
+     * handful of images. Deleting the wrong one costs a ticket that no longer
+     * matches the PDF already in someone's inbox, discovered at the door. If
+     * reclaiming them is ever worth it, it needs a reference check across every
+     * version's `background_asset_path` **and** every layout's `IMAGE`
+     * elements — not a comparison against one row's previous value.
      */
-    if (
-      !result.cloned &&
-      before.backgroundAssetPath &&
-      parsed.data.backgroundAssetPath !== undefined &&
-      parsed.data.backgroundAssetPath !== before.backgroundAssetPath
-    ) {
-      await deleteAsset(before.backgroundAssetPath).catch(() => undefined);
-    }
-
     await writeAuditLog({
       action: result.cloned ? 'ticket_template.versioned' : 'ticket_template.updated',
       entityType: 'ticket_template',

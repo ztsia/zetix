@@ -249,6 +249,23 @@ export async function saveTemplate(input: SaveTemplateInput): Promise<SaveTempla
 
       const row = inserted[0];
       if (!row) throw new Error('The new template version could not be created.');
+
+      /**
+       * The flag **moves** to the new version; it is not copied.
+       *
+       * Leaving it on both looked harmless, because `findConcertTemplate()`
+       * takes the highest version among flagged rows and would still resolve to
+       * this one. But that query orders across *names* too, so a second flagged
+       * lineage would then resolve by version number rather than by anybody's
+       * choice — and `setDefaultTemplate()` and `domain.md` §5.1 both describe a
+       * concert as having exactly one default. A QA pass found the duplicate.
+       */
+      if (current.is_default) {
+        await tx.execute(sql`
+          update ticket_templates set is_default = false where id = ${templateId}
+        `);
+      }
+
       return { templateId: Number(row.id), version: row.version, cloned: true };
     });
   } catch (error) {

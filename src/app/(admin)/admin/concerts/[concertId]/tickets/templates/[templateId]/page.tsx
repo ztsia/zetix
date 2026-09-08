@@ -29,7 +29,7 @@ export default async function TemplateEditorPage({
   searchParams,
 }: {
   params: Promise<{ concertId: string; templateId: string }>;
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; saved?: string }>;
 }) {
   await requireAdmin();
 
@@ -45,7 +45,8 @@ export default async function TemplateEditorPage({
   const showRows = await previewShows(concertId);
   const shows = showRows.map((row) => ({ id: Number(row.id), name: row.name }));
 
-  const requested = Number((await searchParams).show ?? 0);
+  const query = await searchParams;
+  const requested = Number(query.show ?? 0);
   const showId =
     shows.find((show) => show.id === requested)?.id ?? shows[0]?.id ?? null;
 
@@ -91,6 +92,9 @@ export default async function TemplateEditorPage({
           showId={showId}
           previewOptions={options}
           previewData={data}
+          // Bounded: it is reflected into an alert, and it arrives in a URL
+          // anyone can hand an admin.
+          savedMessage={query.saved?.slice(0, 200) ?? null}
         />
       ) : (
         <p className="text-muted-foreground text-sm">

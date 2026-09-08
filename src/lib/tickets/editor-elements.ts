@@ -247,3 +247,39 @@ export function resizeCanvas(layout: Layout, width_pt: number, height_pt: number
     canvas: { ...layout.canvas, width_pt, height_pt },
   };
 }
+
+/** What a measured background is measured in. */
+export type AssetMeasurement = {
+  width: number;
+  height: number;
+  /** A PDF's page box is already points; an image is pixels. */
+  unit: 'pt' | 'px';
+};
+
+/**
+ * The page size an uploaded background implies.
+ *
+ * **Pixels are not points, and the ratio is the artwork's dpi.** Converting at
+ * 72 px/pt — the PDF unit — is right only for artwork exported at 72 dpi, and
+ * ticket artwork is not: at the 300 dpi `canvas.dpi` defaults to, an A5 strip
+ * exported for print is about 2479 × 1167 px, which that conversion turns into a
+ * 2479 × 1167 pt page. That is 87 × 41 cm, and every element that was placed on
+ * the old canvas ends up huddled in one corner of it. A QA pass found exactly
+ * that.
+ *
+ * §10.2 already carries the number this needs: `canvas.dpi`, "only meaningful
+ * for a raster background". This is what it is meaningful *for*.
+ *
+ * A PDF is left alone — its page box is authoritative and already in points
+ * (§10.3).
+ */
+export function canvasSizeFor(
+  measurement: AssetMeasurement,
+  dpi: number,
+): { width_pt: number; height_pt: number } {
+  const perPoint = measurement.unit === 'pt' ? 1 : (dpi > 0 ? dpi : 72) / 72;
+  return {
+    width_pt: Math.max(1, Math.round(measurement.width / perPoint)),
+    height_pt: Math.max(1, Math.round(measurement.height / perPoint)),
+  };
+}

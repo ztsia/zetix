@@ -138,7 +138,8 @@ Admin-only canvas editor:
 - Live preview against a real attendee, plus a **"longest name in this show"** preview so overflow is
   caught before a whole show's tickets go out.
 - Undo/redo. Templates are **versioned** — never mutate a template that has already issued tickets;
-  clone it.
+  clone it. *(V1 ships the versioning; undo/redo, snap, guides, lock, duplicate and multi-select are
+  deliberately out — decision 33.)*
 - **Three seeded default layouts** (Classic Landscape, Minimal Portrait, Wide Banner) that work with no
   background asset, so the system is usable before anyone opens the editor.
 

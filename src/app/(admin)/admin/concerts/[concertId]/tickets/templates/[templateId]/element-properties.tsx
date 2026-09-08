@@ -66,6 +66,9 @@ const BINDING_LABELS: Record<Binding, string> = {
 
 const STATIC_TEXT = '__static__';
 
+const VALIGN_LABELS = { top: 'Top', middle: 'Middle', bottom: 'Bottom' } as const;
+const OVERFLOW_LABELS = { SHRINK: 'Shrink the text', CLIP: 'Cut it off' } as const;
+
 export function ElementProperties({
   element,
   onChange,
@@ -191,7 +194,17 @@ function TextFields({
           }}
         >
           <SelectTrigger id="binding">
-            <SelectValue />
+            {/*
+              Base UI's Value renders the raw value unless it is given a
+              formatter, so without this the picker reads
+              "attendee.full_name" — the jsonb key, not the label beside it in
+              the list. A QA pass found the same on every select here.
+            */}
+            <SelectValue>
+              {(value: string) =>
+                value === STATIC_TEXT ? 'Fixed text' : (BINDING_LABELS[value as Binding] ?? value)
+              }
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={STATIC_TEXT}>Fixed text</SelectItem>
@@ -244,7 +257,7 @@ function TextFields({
             onValueChange={(value) => value && onChange({ font_family: value })}
           >
             <SelectTrigger id="font">
-              <SelectValue />
+              <SelectValue>{(value: string) => value}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {/*
@@ -274,7 +287,9 @@ function TextFields({
             onValueChange={(value) => value && onChange({ font_weight: Number(value) })}
           >
             <SelectTrigger id="weight">
-              <SelectValue />
+              <SelectValue>
+                {(value: string) => (Number(value) >= 600 ? 'Semibold' : 'Regular')}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="400">Regular</SelectItem>
@@ -332,7 +347,9 @@ function TextFields({
             }
           >
             <SelectTrigger id="valign">
-              <SelectValue />
+              <SelectValue>
+                {(value: string) => VALIGN_LABELS[value as keyof typeof VALIGN_LABELS] ?? value}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="top">Top</SelectItem>
@@ -358,7 +375,11 @@ function TextFields({
           }
         >
           <SelectTrigger id="overflow">
-            <SelectValue />
+            <SelectValue>
+              {(value: string) =>
+                OVERFLOW_LABELS[value as keyof typeof OVERFLOW_LABELS] ?? value
+              }
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="SHRINK">Shrink the text</SelectItem>
@@ -396,7 +417,7 @@ function QrFields({
             }
           >
             <SelectTrigger id="ec">
-              <SelectValue />
+              <SelectValue>{(value: string) => value}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {EC_LEVELS.map((level) => (

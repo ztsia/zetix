@@ -308,9 +308,14 @@ test('FLOW-9 moving 20 seats commits both segments and audits it', async ({ brow
   expect(audit[0].reason).toBe('Player segment closed with seats unclaimed.');
   await shot(page, 'FLOW-9-step-3-committed');
 
-  // Put it back for the flows that follow.
-  await sql`update show_segments set capacity = 100 where id = ${playerSegment}`;
-  await sql`update show_segments set capacity = 300 where id = ${publicSegment}`;
+  // Put it back for the flows that follow — both in ONE statement. Undoing the
+  // move one segment at a time passes through 100 + 320 = 420 in a 400-seat
+  // hall, which `assert_segments_fit_hall` refuses. That is the same lesson
+  // §7.7 teaches about the move itself.
+  await sql`
+    update show_segments
+       set capacity = case id when ${playerSegment} then 100 else 300 end
+     where show_id = ${showId} and deleted_at is null`;
   await ctx.close();
 });
 
@@ -319,6 +324,13 @@ test('FLOW-10 a move below the confirmed count is refused, nothing changes', asy
   browser,
 }) => {
   const { concertId, showId, publicSegment } = await ids();
+
+  // Nothing here should depend on what FLOW-9 left behind. One statement, for
+  // the reason given in FLOW-9's teardown.
+  await sql`
+    update show_segments
+       set capacity = case audience_mode when 'PUBLIC' then 300 else 100 end
+     where show_id = ${showId} and deleted_at is null`;
 
   const [reg] = await sql<{ id: number }[]>`
     insert into registrations (show_id, segment_id, source, contact_name, contact_email, status, requested_at)
@@ -468,11 +480,17 @@ test('FLOW-16 archiving a concert keeps the row and writes an audit entry', asyn
 
   await page.goto('/admin/concerts');
   await shot(page, 'FLOW-16-step-1-list');
-  await page.getByRole('button', { name: 'Actions for QA September' }).first().click();
-  await page.getByRole('menuitem', { name: /archive/i }).click();
+  // `DataTable` renders a table and a card list, so the row-actions trigger
+  // exists twice; only one is visible at this viewport.
+  const trigger = page
+    .getByRole('button', { name: 'Actions for QA September' })
+    .locator('visible=true');
+  console.log('row-action triggers visible:', await trigger.count());
+  await trigger.first().click();
+  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
   const confirm = page.getByRole('alertdialog');
-  await expect(confirm).toBeVisible();
-  await confirm.getByRole('button', { name: /^Archive/ }).click();
+  await expect(confirm.getByText('Archive QA September?')).toBeVisible();
+  await confirm.getByRole('button', { name: 'Archive', exact: true }).click();
 
   await expect
     .poll(async () => {

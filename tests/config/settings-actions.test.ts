@@ -149,6 +149,46 @@ describe('system settings', () => {
       const result = await setSystemSettingAction(NO_STATE, set('email.max_per_day', 'lots'));
       expect(result.error).toMatch(/not a number/i);
     });
+
+    /**
+     * The range checks themselves. A QA pass found them untested: wrapping the
+     * `min`/`integer` branches in `if (false && …)` left the suite green, so
+     * the bounds were guarded by nothing.
+     *
+     * They matter because this is the root of the cascade. A value accepted
+     * here reaches the dispatcher, the scanner, and — for
+     * `allocation.base_quota` — the entitlement guard, which multiplies it by
+     * the active player count.
+     */
+    it.each([
+      ['email.max_per_dispatch', '-1', /at least 1/i],
+      ['email.max_per_day', '0', /at least 1/i],
+      ['email.max_per_day', '3.7', /whole number/i],
+      ['allocation.base_quota', '-3', /cannot be negative/i],
+      ['segment.capacity', '-1', /cannot be negative/i],
+      ['capacity', '2.5', /whole number/i],
+      ['checkin.scan_debounce_ms', '-100', /cannot be negative/i],
+      ['import.fuzzy_match_threshold', '1.5', /cannot be more than 1/i],
+    ])('refuses %s = %s, and stores nothing', async (key, value, expected) => {
+      const result = await setSystemSettingAction(NO_STATE, set(key, value));
+
+      expect(result.error).toMatch(expected);
+      const rows = await sql<{ value: unknown }[]>`
+        select value from system_settings where key = ${key}
+      `;
+      expect(rows).toHaveLength(0);
+    });
+
+    it('accepts the fraction that is genuinely a fraction', async () => {
+      // `import.fuzzy_match_threshold` is the one non-integer in §6, so the
+      // integer rule must not be applied blindly to every number.
+      const result = await setSystemSettingAction(
+        NO_STATE,
+        set('import.fuzzy_match_threshold', '0.85'),
+      );
+      expect(result.error).toBeNull();
+      await expect(resolveSetting('import.fuzzy_match_threshold')).resolves.toBe(0.85);
+    });
   });
 
   describe('clearing', () => {

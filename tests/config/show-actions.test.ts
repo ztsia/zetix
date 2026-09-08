@@ -463,6 +463,135 @@ describe('show and segment actions', () => {
     });
   });
 
+  describe('a segment\u2019s audience is immutable (decisions 5 and 17)', () => {
+    /**
+     * These post what the **browser** posts, which is the whole point.
+     *
+     * Every other test in this file hands `audienceMode` to the action by
+     * name. The form does not: it disables the audience select on edit to
+     * express that the value cannot change, a disabled control is not
+     * submitted, and the action's `?? 'PUBLIC'` default then rewrote the
+     * audience on every edit. Supplying the field by hand made that invisible
+     * to the entire suite.
+     */
+    async function editWithoutAudience(
+      concertId: number,
+      segmentId: number,
+      fields: Record<string, string>,
+    ) {
+      const data = new FormData();
+      for (const [k, v] of Object.entries(fields)) data.append(k, v);
+      // Deliberately no `audienceMode` — a disabled select posts nothing.
+      return updateSegmentAction(concertId, segmentId, NO_STATE, data);
+    }
+
+    it('keeps PLAYER_INVITED when the form omits the audience', async () => {
+      const showId = await createShow(concertId, 400);
+      const segmentId = await createSegment(showId, {
+        audienceMode: 'PLAYER_INVITED',
+        capacity: 100,
+        baseQuota: 1,
+        name: 'Player invited',
+      });
+
+      const result = await editWithoutAudience(concertId, segmentId, {
+        name: 'Player invited',
+        capacity: '120',
+        extrasPolicy: '',
+        allowPartialGrant: '',
+      });
+
+      expect(result.error).toBeNull();
+      const [row] = await sql<{ audience_mode: string; capacity: number }[]>`
+        select audience_mode, capacity from show_segments where id = ${segmentId}::bigint
+      `;
+      expect(row.audience_mode).toBe('PLAYER_INVITED');
+      expect(row.capacity).toBe(120);
+    });
+
+    it('lets an ordinary capacity edit through on a segment that has a quota', async () => {
+      // With the audience read from the form this tripped the
+      // quota-on-PUBLIC check, making capacity, deadline, policy and party cap
+      // unreachable for exactly the segment this concert runs.
+      const showId = await createShow(concertId, 400);
+      const segmentId = await createSegment(showId, {
+        audienceMode: 'PLAYER_INVITED',
+        capacity: 100,
+        baseQuota: 1,
+      });
+
+      const result = await editWithoutAudience(concertId, segmentId, {
+        name: 'Player invited',
+        capacity: '150',
+        baseQuota: '1',
+        extrasPolicy: '',
+        allowPartialGrant: '',
+      });
+
+      expect(result.error).toBeNull();
+    });
+
+    it('ignores an audience posted by hand — the field is not the client\u2019s to set', async () => {
+      // Not merely a form problem: a crafted POST must not flip it either.
+      const showId = await createShow(concertId, 400);
+      const segmentId = await createSegment(showId, {
+        audienceMode: 'PLAYER_INVITED',
+        capacity: 100,
+        baseQuota: 1,
+      });
+
+      await updateSegmentAction(
+        concertId,
+        segmentId,
+        NO_STATE,
+        form({
+          name: 'Player invited',
+          audienceMode: 'PUBLIC',
+          capacity: '100',
+          extrasPolicy: '',
+          allowPartialGrant: '',
+        }),
+      );
+
+      const [row] = await sql<{ audience_mode: string }[]>`
+        select audience_mode from show_segments where id = ${segmentId}::bigint
+      `;
+      expect(row.audience_mode).toBe('PLAYER_INVITED');
+    });
+
+    it('keeps the §7.4 guard live after an edit, which a flip would switch off', async () => {
+      // `assert_base_entitlement_fits()` returns early for a non-player
+      // segment, so flipping the audience is an opt-out of a guard decision 17
+      // says has none.
+      const showId = await createShow(concertId, 400);
+      const segmentId = await createSegment(showId, {
+        audienceMode: 'PLAYER_INVITED',
+        capacity: 50,
+        baseQuota: 1,
+      });
+      await createPlayers(concertId, 40);
+
+      await editWithoutAudience(concertId, segmentId, {
+        name: 'Player invited',
+        capacity: '50',
+        // Carried deliberately. A blank field *clears* the override
+        // (spec/domain.md §6), so omitting this would set `base_quota` to null,
+        // leave nothing at any level, and the guard would have no entitlement
+        // to enforce — passing this test for entirely the wrong reason.
+        baseQuota: '1',
+        extrasPolicy: '',
+        allowPartialGrant: '',
+      });
+
+      await expect(
+        sql`insert into players (concert_id, full_name, email, invite_token, is_active)
+            select ${concertId}, 'Overflow ' || g, 'of' || g || '@example.test',
+                   'tok-overflow-' || g, true
+              from generate_series(1, 11) g`,
+      ).rejects.toThrow(/but the segment holds 50/);
+    });
+  });
+
   describe('segments own the audience, and a show holds one of each', () => {
     it('explains the duplicate rather than leaking the index name', async () => {
       const showId = await createShow(concertId, 400);

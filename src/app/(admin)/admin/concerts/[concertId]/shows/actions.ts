@@ -349,9 +349,6 @@ export async function updateSegmentAction(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? 'Check the form and try again.' };
   }
-  if (parsed.data.audienceMode === 'PUBLIC' && parsed.data.baseQuota !== null) {
-    return { error: QUOTA_ON_PUBLIC };
-  }
 
   const zone = await concertZone(concertId);
   if (!zone && parsed.data.baseClaimDeadline) return { error: NO_ZONE };
@@ -382,11 +379,34 @@ export async function updateSegmentAction(
       );
     if (!before) return { error: 'That segment is not part of this concert.' };
 
+    /**
+     * **The audience comes from the database, never from the form.**
+     *
+     * A segment's `audience_mode` is fixed once it exists — every seat in it was
+     * allocated under those rules — so an update has no business accepting one.
+     * Reading the stored value closes the hole against *any* POST rather than
+     * against the form alone, which is what an immutable field needs.
+     *
+     * This was a live Blocker, and the shape of it is worth remembering. The
+     * form disables the audience select on edit, precisely to express that the
+     * value cannot change. A disabled control is not submitted, so
+     * `formData.get('audienceMode')` came back null, `readSegmentForm` fell
+     * through to its `?? 'PUBLIC'` default, and every edit posted PUBLIC. On a
+     * segment with a quota that made capacity, deadline and policy unsaveable;
+     * on one without, it silently rewrote a PLAYER_INVITED segment to PUBLIC —
+     * and `assert_base_entitlement_fits()` returns early for a non-player
+     * segment, so that switched the §7.4 guard off from the ordinary edit form.
+     * Decision 17 says the guard has no opt-out toggle; that was one.
+     */
+    const audienceMode = before.audienceMode;
+    if (audienceMode === 'PUBLIC' && parsed.data.baseQuota !== null) {
+      return { error: QUOTA_ON_PUBLIC };
+    }
+
     await db
       .update(showSegments)
       .set({
         name: parsed.data.name,
-        audienceMode: parsed.data.audienceMode,
         capacity: parsed.data.capacity,
         baseQuota: parsed.data.baseQuota,
         baseClaimDeadline: toInstant(parsed.data.baseClaimDeadline, zone ?? 'UTC'),
@@ -405,7 +425,7 @@ export async function updateSegmentAction(
       before,
       after: {
         name: parsed.data.name,
-        audienceMode: parsed.data.audienceMode,
+        audienceMode,
         capacity: parsed.data.capacity,
         baseQuota: parsed.data.baseQuota,
       },
@@ -414,7 +434,9 @@ export async function updateSegmentAction(
     revalidatePath(`/admin/concerts/${concertId}/shows`);
     return { error: null, message: `Saved ${parsed.data.name}.` };
   } catch (error) {
-    return { error: friendlySegmentError(error, parsed.data.audienceMode) };
+    // Not `friendlySegmentError`: that exists to explain a duplicate audience,
+    // which an update can no longer cause now that it never changes one.
+    return { error: dbErrorMessage(error) };
   }
 }
 

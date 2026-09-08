@@ -36,7 +36,7 @@ vi.mock('@/lib/auth/session', () => ({
 const { createConcertAction, setConcertArchivedAction } = await import(
   '@/app/(admin)/admin/concerts/actions'
 );
-const { createShowAction, createSegmentAction, updateSegmentAction, moveCapacityAction } =
+const { createSegmentAction, updateSegmentAction, moveCapacityAction } =
   await import('@/app/(admin)/admin/concerts/[concertId]/shows/actions');
 const { createPlayerAction, planPlayerImportAction, commitPlayerImportAction } = await import(
   '@/app/(admin)/admin/concerts/[concertId]/players/actions'

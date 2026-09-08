@@ -49,8 +49,37 @@ export type AuditEntry = {
  * A log written on a separate connection survives a rollback of the thing it
  * describes, which is worse than no log: it records an override that never
  * happened.
+ *
+ * **Passing `tx` requires passing `actorId`, and the overloads below enforce
+ * it at compile time.** Without one this resolves the actor with
+ * `getSessionUser()`, which issues *its own query*; `src/db/client.ts` is
+ * `max: 1`, so inside a transaction that query waits for the connection the
+ * transaction is already holding and the request deadlocks against itself —
+ * then starves the pool, taking the rest of the console down with it.
+ *
+ * That shipped twice in module `A` and no test caught it: suites mock
+ * `@/lib/auth/session`, so the fatal query never runs under test. A runtime
+ * test therefore cannot be the guard. Making it a type error means `tsc` is,
+ * and CI already runs `tsc`. The runtime check below covers the paths types do
+ * not reach, and fails loudly instead of hanging.
+ *
+ * Callers already have the value: `requireAdmin()` returns the user.
  */
+export async function writeAuditLog(entry: AuditEntry): Promise<void>;
+export async function writeAuditLog(
+  entry: AuditEntry & { actorId: string | null },
+  tx: Tx,
+): Promise<void>;
 export async function writeAuditLog(entry: AuditEntry, tx?: Tx): Promise<void> {
+  if (tx && entry.actorId === undefined) {
+    throw new Error(
+      'writeAuditLog was given a transaction but no actorId. Resolving the ' +
+        'actor needs a second connection, and the pool holds one — this would ' +
+        'deadlock against the transaction rather than fail. Pass the user ' +
+        'requireAdmin() returned.',
+    );
+  }
+
   const actorId =
     entry.actorId !== undefined ? entry.actorId : ((await getSessionUser())?.id ?? null);
 

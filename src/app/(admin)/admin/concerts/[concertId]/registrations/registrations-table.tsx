@@ -77,7 +77,19 @@ export function RegistrationsTable({
 
   const columns: DataTableColumn<RegistrationRow>[] = [
     {
-      accessorKey: 'contactName',
+      /**
+       * Name **and** email in the accessor, though only the name sorts
+       * meaningfully.
+       *
+       * The global search matches a column's value, not what its cell happened
+       * to render — and the email is rendered inside this cell rather than
+       * being a column of its own. Without it in the value, "Search name, email
+       * or player" would quietly not search email, which is worse than not
+       * offering it: the operator concludes the party is not there.
+       */
+      id: 'contactName',
+      accessorFn: (row: RegistrationRow) =>
+        [row.contactName, row.contactEmail].filter(Boolean).join(' '),
       meta: { label: 'Contact' },
       header: ({ column }) => <DataTableColumnHeader column={column} title="Contact" />,
       cell: ({ row }) => (

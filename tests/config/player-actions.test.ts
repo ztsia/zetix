@@ -363,6 +363,19 @@ describe('player actions', () => {
       expect(result.plan.rows[0].instrument).toBe('Cello');
     });
 
+    it('skips a name longer than the manual form would accept', async () => {
+      // The form caps at 200; the importer had no cap, so a malformed sheet
+      // could load a name no screen renders and no ticket prints.
+      const sheet = ['Name,Email', `${'a'.repeat(10_000)},huge@example.test`].join('\n');
+
+      const result = await planPlayerImportAction(concertId, csvUpload(sheet));
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.counts).toMatchObject({ create: 0, skip: 1 });
+      expect(result.plan.rows[0].reason).toMatch(/limit is 200/);
+    });
+
     it('refuses a file with no name column rather than importing blanks', async () => {
       const sheet = ['Instrument,Section', 'Cello,Strings'].join('\n');
 

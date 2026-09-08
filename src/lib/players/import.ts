@@ -152,6 +152,19 @@ export async function planPlayerImport(
       section: value('section'),
     };
 
+    // The manual player form caps a name at 200 characters; the importer had no
+    // cap at all, so a malformed sheet could load a 10,000-character "name"
+    // that no screen can render and no ticket can print. Same limit, one place
+    // it was missing.
+    if (fullName && fullName.length > 200) {
+      planned.push({
+        ...base,
+        action: 'skip',
+        reason: `That name is ${fullName.length} characters — the limit is 200.`,
+      });
+      continue;
+    }
+
     if (!fullName) {
       // A player with no name cannot be told apart from another on any screen.
       // This is not the placeholder case of decision 32 — that is about a

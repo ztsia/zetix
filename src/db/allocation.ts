@@ -123,6 +123,77 @@ export async function claimSeats(
   }
 }
 
+/**
+ * What `promote_seats()` did, or why it did nothing.
+ *
+ * `refused` is not an error: the engine confirms every named seat or none of
+ * them, and a refusal carries the sentence explaining which ceiling was in the
+ * way. The caller renders `reason` and either reduces the selection or takes
+ * the override.
+ */
+export type PromoteOutcome = {
+  confirmed: number;
+  /** Ids that named nothing promotable — another segment, already confirmed, cancelled. */
+  skipped: number;
+  refused: boolean;
+  reason: string | null;
+};
+
+/**
+ * Confirms seats that **already exist** (§7.5's review commit, §7.9's restore).
+ *
+ * The counterpart to {@link claimSeats}, and part of the same engine: that one
+ * decides seats which do not exist yet and inserts them, this one moves rows
+ * already on the table — `PENDING_REVIEW` granted by an admin, or `CANCELLED`
+ * returned by a restore. Neither flow can go back through `claim_seats()`,
+ * because inserting again would mint a second `qr_token` for a seat that
+ * already has one and a guest holding a printed ticket must still get through
+ * the door (decision 28).
+ *
+ * It is a Postgres function for the reason `claim_seats()` is: it holds the
+ * **show** row lock across a read-then-write, and the ceilings are checked
+ * where no route can go around them. `attendees_promotion_guard` in
+ * `drizzle/0001_allocation_engine.sql` refuses this transition to anything that
+ * has not deliberately taken responsibility for those checks, and this is what
+ * takes it.
+ *
+ * `override` is the same §7.6 escape hatch as on {@link claimSeats}: the caller
+ * owns the typed confirmation and the `audit_log` row.
+ *
+ * Pass `executor` whenever the promotion belongs to a wider transaction — the
+ * review commit is one unit with the WAITLIST writes beside it — for the same
+ * `max: 1` reason documented on {@link Executor}.
+ */
+export async function promoteSeats(
+  segmentId: number,
+  attendeeIds: readonly number[],
+  options: { override?: boolean; executor?: Executor } = {},
+): Promise<PromoteOutcome> {
+  // Built as an array literal, so every id is coerced to a finite integer on the
+  // way in. These arrive from a request body, and the engine's own guard is
+  // that it re-derives every row from the ids under the lock — this is the
+  // cheaper half of the same care, one layer earlier.
+  const ids = Array.from(new Set(attendeeIds.map(Number)));
+  if (ids.some((id) => !Number.isSafeInteger(id))) {
+    throw new Error('promoteSeats was given something that is not an attendee id.');
+  }
+
+  try {
+    const rows = await (options.executor ?? getDb()).execute<{
+      promote_seats: PromoteOutcome;
+    }>(sql`
+      select promote_seats(
+        ${segmentId}::bigint,
+        ${`{${ids.join(',')}}`}::bigint[],
+        ${options.override ?? false}::boolean
+      )
+    `);
+    return rows[0].promote_seats;
+  } catch (error) {
+    rethrowDbError(error);
+  }
+}
+
 /** The live §7.2 figures for one segment — the extras review header reads these (§7.5). */
 export async function segmentPool(segmentId: number): Promise<SegmentPool> {
   try {

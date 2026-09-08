@@ -380,20 +380,37 @@ describe('commitReview', () => {
   });
 });
 
-describe('commitReview under contention', () => {
+describe('commitReview', () => {
   beforeEach(resetDb);
 
-  it('cannot oversell a segment from two commits at once', async () => {
+  /**
+   * Two commits of the same queue, one after the other.
+   *
+   * This is **not** a concurrency test and does not pretend to be: `src/db/client.ts`
+   * is `max: 1`, so two `getDb().transaction()` calls in a `Promise.all` run on
+   * one connection and are strictly sequential — a QA probe confirmed both
+   * report the same `pg_backend_pid`. What it does prove is that a commit
+   * repeated against a queue it already resolved grants nothing a second time,
+   * which is the mistake an admin makes when they are unsure the first click
+   * registered.
+   *
+   * The real lock — a commit *in flight* blocking the next one — is proven in
+   * `tests/registrations/promote-seats.test.ts`, on two independent connections
+   * with a statement timeout, which is the only way contention is observable.
+   */
+  it('grants nothing the second time the same queue is committed', async () => {
     const { segmentId } = await reviewSegment({ capacity: 2, hall: 10 });
     const first = await request(segmentId, 5, 2);
-    const second = await request(segmentId, 15, 2);
 
-    const [a, b] = await Promise.all([
-      commitReview(segmentId, [{ registrationId: first, granted: 2 }], { actorId: null }),
-      commitReview(segmentId, [{ registrationId: second, granted: 2 }], { actorId: null }),
-    ]);
+    const a = await commitReview(segmentId, [{ registrationId: first, granted: 2 }], {
+      actorId: null,
+    });
+    const b = await commitReview(segmentId, [{ registrationId: first, granted: 2 }], {
+      actorId: null,
+    });
 
-    expect(a.confirmed + b.confirmed).toBe(2);
+    expect(a.confirmed).toBe(2);
+    expect(b.confirmed).toBe(0);
     const [row] = await sql<{ n: number }[]>`
       select count(*)::int as n from attendees
        where segment_id = ${segmentId} and status = 'CONFIRMED'

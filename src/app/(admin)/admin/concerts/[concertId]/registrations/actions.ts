@@ -8,6 +8,11 @@ import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
 import { requireAdmin } from '@/lib/auth/guards';
+import { resolveSetting } from '@/db/settings';
+import {
+  confirmsOverCapacity,
+  OVERSELL_PHRASE,
+} from '@/lib/registrations/confirmation';
 import {
   addAttendees,
   cancelRegistration,
@@ -122,6 +127,52 @@ function seatsFrom(count: number, names: string | null, type: NewSeat['allocatio
   }));
 }
 
+/**
+ * The party cap, resolved rather than invented (spec/domain.md §6).
+ *
+ * `form.max_tickets_per_response` cascades segment → show → concert → system, and
+ * **null means no cap is configured**, not zero — the same reading module `C`
+ * applies to the same key on the import path. Enforcing it here as well is what
+ * keeps the two routes into `registrations` agreeing about how large a party may
+ * be; a cap the admin set that only the importer honours is not a cap.
+ *
+ * It bounds a *party*, so it is checked against the seats this registration will
+ * hold in total — the existing ones plus the ones being added — rather than
+ * against each click.
+ */
+async function assertWithinPartyCap(
+  segmentId: number,
+  seats: number,
+  existingSeats = 0,
+): Promise<string | null> {
+  const cap = await resolveSetting<number>('form.max_tickets_per_response', { segmentId });
+  if (cap == null) return null;
+
+  const total = seats + existingSeats;
+  if (total <= cap) return null;
+
+  return existingSeats > 0
+    ? `This party would hold ${total} seats, above the ${cap}-seat cap for this segment. It already holds ${existingSeats}.`
+    : `${total} seats is above the ${cap}-seat cap for this segment.`;
+}
+
+/** How many seats a party already holds, and where. */
+async function partySize(
+  registrationId: number,
+): Promise<{ segmentId: number; seats: number }> {
+  const rows = await getDb().execute<{ segment_id: string; seats: number }>(sql`
+    select r.segment_id,
+           (select count(*)::int from attendees a
+             where a.registration_id = r.id
+               and a.deleted_at is null
+               and a.status <> 'CANCELLED') as seats
+      from registrations r
+     where r.id = ${registrationId}
+  `);
+  if (rows.length === 0) throw new Error('That registration no longer exists.');
+  return { segmentId: Number(rows[0].segment_id), seats: rows[0].seats };
+}
+
 const allocationType = z.enum(['BASE', 'EXTRA', 'HELD', 'COMP']);
 
 const registrationSchema = z.object({
@@ -135,14 +186,24 @@ const registrationSchema = z.object({
   playerId: optionalId,
   roundLabel: optionalText,
   requestedAt: localDateTime,
-  seats: z.coerce
-    .number()
-    .int()
-    .min(1, 'A registration needs at least one seat.')
-    .max(50, 'That is more seats than one party can hold. Create a second registration.'),
+  /**
+   * No ceiling here. The party cap is `form.max_tickets_per_response`, resolved
+   * through the cascade against the segment being registered into — a literal
+   * in this file would be an operational value in code, and worse, would enforce
+   * an invented number while the configured one went unread (`CLAUDE.md`,
+   * spec/README.md §2.1). {@link assertWithinPartyCap} is where it is applied.
+   */
+  seats: z.coerce.number().int().min(1, 'A registration needs at least one seat.'),
   guestNames: z.preprocess(blankToNull, z.string().max(4000).nullable()),
   allocationType,
-  override: z.preprocess((v) => v === 'on' || v === 'true', z.boolean()),
+  /**
+   * §7.6 allows exceeding the hall "with a typed confirmation recorded in
+   * `audit_log`" — so the override is what the admin *typed*, never a checkbox.
+   * A tick is one stray click away from overfilling the room, and the review
+   * screen already asks for the phrase; the two must not disagree about how
+   * deliberate deliberate is.
+   */
+  overrideConfirmation: z.string().trim().max(100),
 });
 
 export async function createRegistrationAction(
@@ -163,14 +224,18 @@ export async function createRegistrationAction(
     seats: formData.get('seats') ?? '',
     guestNames: formData.get('guestNames') ?? '',
     allocationType: formData.get('allocationType') ?? 'EXTRA',
-    override: formData.get('override') ?? 'false',
+    overrideConfirmation: formData.get('overrideConfirmation') ?? '',
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
   const input = parsed.data;
+  const override = confirmsOverCapacity(input.overrideConfirmation);
 
   if (!(await segmentInConcert(concertId, input.segmentId))) {
     return fail('That segment does not belong to this concert.');
   }
+
+  const overCap = await assertWithinPartyCap(input.segmentId, input.seats);
+  if (overCap) return fail(overCap);
 
   try {
     const timeZone = await concertTimeZone(concertId);
@@ -183,17 +248,17 @@ export async function createRegistrationAction(
       roundLabel: input.roundLabel,
       requestedAt: toInstant(input.requestedAt, timeZone),
       seats: seatsFrom(input.seats, input.guestNames, input.allocationType),
-      override: input.override,
+      override,
       createdBy: admin.id,
     });
 
-    if (input.override) {
+    if (override) {
       await writeAuditLog({
         action: 'registration.created_over_capacity',
         entityType: 'registration',
         entityId: result.registrationId,
         after: { seats: input.seats, granted: result.granted },
-        reason: `Manual registration for ${input.contactName}, seated past the ceiling deliberately.`,
+        reason: `Manual registration for ${input.contactName}, seated past the ceiling. Confirmation typed: "${input.overrideConfirmation}".`,
         actorId: admin.id,
       });
     }
@@ -260,10 +325,10 @@ export async function updateRegistrationAction(
 }
 
 const addSeatsSchema = z.object({
-  seats: z.coerce.number().int().min(1, 'Add at least one seat.').max(50),
+  seats: z.coerce.number().int().min(1, 'Add at least one seat.'),
   guestNames: z.preprocess(blankToNull, z.string().max(4000).nullable()),
   allocationType,
-  override: z.preprocess((v) => v === 'on' || v === 'true', z.boolean()),
+  overrideConfirmation: z.string().trim().max(100),
 });
 
 export async function addAttendeesAction(
@@ -278,28 +343,37 @@ export async function addAttendeesAction(
     seats: formData.get('seats') ?? '',
     guestNames: formData.get('guestNames') ?? '',
     allocationType: formData.get('allocationType') ?? 'EXTRA',
-    override: formData.get('override') ?? 'false',
+    overrideConfirmation: formData.get('overrideConfirmation') ?? '',
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const override = confirmsOverCapacity(parsed.data.overrideConfirmation);
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');
   }
 
+  const party = await partySize(registrationId);
+  const overCap = await assertWithinPartyCap(
+    party.segmentId,
+    parsed.data.seats,
+    party.seats,
+  );
+  if (overCap) return fail(overCap);
+
   try {
     const result = await addAttendees(
       registrationId,
       seatsFrom(parsed.data.seats, parsed.data.guestNames, parsed.data.allocationType),
-      { override: parsed.data.override },
+      { override },
     );
 
-    if (parsed.data.override) {
+    if (override) {
       await writeAuditLog({
         action: 'registration.seats_added_over_capacity',
         entityType: 'registration',
         entityId: registrationId,
         after: result,
-        reason: 'Seats added past the ceiling deliberately.',
+        reason: `Seats added past the ceiling. Confirmation typed: "${parsed.data.overrideConfirmation}".`,
         actorId: admin.id,
       });
     }
@@ -368,7 +442,7 @@ export async function removeAttendeeAction(
 
 const moveSchema = z.object({
   segmentId: z.coerce.number().int().positive('Choose a destination.'),
-  override: z.preprocess((v) => v === 'on' || v === 'true', z.boolean()),
+  overrideConfirmation: z.string().trim().max(100),
 });
 
 export async function moveRegistrationAction(
@@ -381,9 +455,10 @@ export async function moveRegistrationAction(
 
   const parsed = moveSchema.safeParse({
     segmentId: formData.get('segmentId') ?? '',
-    override: formData.get('override') ?? 'false',
+    overrideConfirmation: formData.get('overrideConfirmation') ?? '',
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const override = confirmsOverCapacity(parsed.data.overrideConfirmation);
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');
@@ -394,16 +469,16 @@ export async function moveRegistrationAction(
 
   try {
     const result = await moveRegistration(registrationId, parsed.data.segmentId, {
-      override: parsed.data.override,
+      override,
     });
 
     await writeAuditLog({
-      action: parsed.data.override ? 'registration.moved_over_capacity' : 'registration.moved',
+      action: override ? 'registration.moved_over_capacity' : 'registration.moved',
       entityType: 'registration',
       entityId: registrationId,
       after: { segmentId: parsed.data.segmentId, seats: result.movedSeats },
-      reason: parsed.data.override
-        ? 'Moved into a segment with no room, deliberately.'
+      reason: override
+        ? `Moved into a segment with no room. Confirmation typed: "${parsed.data.overrideConfirmation}".`
         : null,
       actorId: admin.id,
     });

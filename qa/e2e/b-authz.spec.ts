@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
-import { asAdmin, asOperator, reseed, shot, sql } from './b-helpers';
+import { asAdmin, asOperator, SEEDED_IDS, newSql, shot } from './b-helpers';
 
 /**
  * FLOW-13 — anonymous and OPERATOR against module B's two screens and the
@@ -7,9 +7,11 @@ import { asAdmin, asOperator, reseed, shot, sql } from './b-helpers';
  */
 test.describe.configure({ mode: 'serial' });
 
+const sql = newSql();
+
 let ids: Record<string, string>;
 test.beforeAll(() => {
-  ids = reseed();
+  ids = SEEDED_IDS;
 });
 test.afterAll(async () => {
   await sql.end();

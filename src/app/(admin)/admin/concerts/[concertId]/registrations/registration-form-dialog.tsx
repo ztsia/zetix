@@ -11,9 +11,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import type { FormState } from '../../form-state';
 import { toLocalInput } from '../../local-time';
+import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import { createRegistrationAction, updateRegistrationAction } from './actions';
 import type { PlayerOption, RegistrationRow, SegmentOption } from './queries';
 
@@ -39,6 +39,7 @@ export function RegistrationFormDialog({
   players,
   registration,
   trigger,
+  onSuccess,
 }: {
   concertId: number;
   timeZone: string | null;
@@ -47,6 +48,14 @@ export function RegistrationFormDialog({
   /** Absent when creating. */
   registration?: RegistrationRow;
   trigger: ReactNode;
+  /**
+   * What the engine did with the party, for the caller to show.
+   *
+   * "Created" is not the whole answer: the seats may have waitlisted or gone to
+   * review, and a dialog that simply closes would leave the admin believing
+   * otherwise.
+   */
+  onSuccess?: (result: FormState) => void;
 }) {
   const id = useId();
   const editing = registration !== undefined;
@@ -74,6 +83,7 @@ export function RegistrationFormDialog({
       submitLabel={editing ? 'Save registration' : 'Create registration'}
       pendingLabel="Saving…"
       action={action}
+      onSuccess={onSuccess}
     >
       <FieldGroup>
         {!editing && (
@@ -199,10 +209,20 @@ export function RegistrationFormDialog({
                   name="seats"
                   type="number"
                   min={1}
-                  max={50}
+                  // The configured cap for the chosen segment, or none at all —
+                  // never a number this file invented (spec/domain.md §6). The
+                  // Server Action re-resolves and re-checks it; this only saves
+                  // the admin a round trip.
+                  max={segment?.maxTicketsPerResponse ?? undefined}
                   defaultValue={1}
                   required
                 />
+                {segment?.maxTicketsPerResponse != null && (
+                  <FieldDescription>
+                    Up to {segment.maxTicketsPerResponse} seats per party in this
+                    segment.
+                  </FieldDescription>
+                )}
               </Field>
               <Field>
                 <FieldLabel htmlFor={`${id}-type`}>Seat type</FieldLabel>
@@ -239,34 +259,25 @@ export function RegistrationFormDialog({
               </FieldDescription>
             </Field>
 
-            <Field orientation="horizontal">
-              <Checkbox id={`${id}-override`} name="override" value="on" />
-              <FieldContentLabel htmlFor={`${id}-override`}>
-                Seat this party even if the segment or the hall is full
-              </FieldContentLabel>
+            <Field>
+              <FieldLabel htmlFor={`${id}-override`}>
+                Seat them even if the segment or the hall is full
+              </FieldLabel>
+              <Input
+                id={`${id}-override`}
+                name="overrideConfirmation"
+                autoComplete="off"
+                placeholder={`Type ${OVERSELL_PHRASE} to allow it`}
+              />
+              <FieldDescription>
+                Leave it blank and a party that does not fit simply waits. §7.6 makes
+                only the ceiling overridable and only deliberately, so this is typed
+                rather than ticked — and what you type is recorded in the audit log.
+              </FieldDescription>
             </Field>
-            <FieldDescription>
-              Only the ceiling is overridable, and only deliberately — the override is
-              recorded in the audit log with this party&rsquo;s name.
-            </FieldDescription>
           </>
         )}
       </FieldGroup>
     </ActionDialog>
-  );
-}
-
-/** A label that sits beside its control rather than above it. */
-function FieldContentLabel({
-  htmlFor,
-  children,
-}: {
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <FieldLabel htmlFor={htmlFor} className="font-normal">
-      {children}
-    </FieldLabel>
   );
 }

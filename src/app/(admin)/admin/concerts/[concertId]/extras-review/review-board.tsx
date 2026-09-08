@@ -24,7 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { ActionDialog } from '../../action-dialog';
 import { commitReviewAction } from './actions';
-import { OVERSELL_PHRASE } from './confirmation';
+import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import type { ReviewBoardData, ReviewRow, ReviewSegmentOption } from './queries';
 
 /**

@@ -50,6 +50,7 @@ export function ActionDialog({
   pendingLabel,
   submitVariant,
   action,
+  onSuccess,
   children,
   className,
 }: {
@@ -60,6 +61,17 @@ export function ActionDialog({
   pendingLabel: string;
   submitVariant?: 'default' | 'destructive';
   action: (formData: FormData) => Promise<FormState>;
+  /**
+   * Called with the successful result, just before the dialog closes.
+   *
+   * Added by module `B`: several of its actions succeed while telling the admin
+   * something they need — "3 seats confirmed, 1 waitlisted" — and a dialog that
+   * closes on success throws that away, so a party the engine quietly waitlisted
+   * reads as a clean success. Optional and additive, so no existing caller
+   * changes (`modules.md` §4: extend the shared component rather than growing a
+   * second one).
+   */
+  onSuccess?: (result: FormState) => void;
   children: ReactNode;
   className?: string;
 }) {
@@ -76,6 +88,7 @@ export function ActionDialog({
         setError(result.error);
         return;
       }
+      onSuccess?.(result);
       setOpen(false);
       router.refresh();
     });

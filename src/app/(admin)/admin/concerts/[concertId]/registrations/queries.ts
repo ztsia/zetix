@@ -176,6 +176,15 @@ export type SegmentOption = {
   showName: string;
   segmentName: string;
   audienceMode: 'PLAYER_INVITED' | 'PUBLIC';
+  /**
+   * `form.max_tickets_per_response`, **resolved** through the cascade.
+   *
+   * Null means no cap is configured, not zero — the same reading module `C`
+   * applies to the same key. It is read here so the seats field can bound
+   * itself; the Server Action resolves it again and is what actually enforces
+   * it, because a `max` attribute is a convenience and not a check.
+   */
+  maxTicketsPerResponse: number | null;
 };
 
 /**
@@ -191,8 +200,11 @@ export async function listSegmentOptions(concertId: number): Promise<SegmentOpti
     audience_mode: 'PLAYER_INVITED' | 'PUBLIC';
     show_id: string;
     show_name: string;
+    max_tickets: number | null;
   }>(sql`
-    select g.id, g.name, g.audience_mode, g.show_id, s.name as show_name
+    select g.id, g.name, g.audience_mode, g.show_id, s.name as show_name,
+           (resolve_setting('form.max_tickets_per_response', g.id) #>> '{}')::int
+             as max_tickets
       from show_segments g
       join shows s on s.id = g.show_id
      where s.concert_id = ${concertId}
@@ -208,6 +220,7 @@ export async function listSegmentOptions(concertId: number): Promise<SegmentOpti
     showName: row.show_name,
     segmentName: row.name,
     audienceMode: row.audience_mode,
+    maxTicketsPerResponse: row.max_tickets,
   }));
 }
 

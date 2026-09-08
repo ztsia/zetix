@@ -793,3 +793,74 @@ describe('restoreRegistration', () => {
     await expect(restoreRegistration(registrationId)).rejects.toThrow(/not cancelled/);
   });
 });
+
+describe('the party cap', () => {
+  beforeEach(resetDb);
+
+  /**
+   * `form.max_tickets_per_response` is an operational value: it cascades
+   * segment → show → concert → system and has no default in code (CLAUDE.md,
+   * spec/domain.md §6). A QA pass found this module enforcing a literal 50
+   * instead — so the cap an admin had actually configured went unread while an
+   * invented one was enforced.
+   *
+   * These test the resolution, not a Server Action: the action is a thin
+   * boundary around the same `resolve_setting()` call, and what must never
+   * regress is that the number comes from the cascade.
+   */
+  it('resolves from the segment, and reads null as no cap rather than zero', async () => {
+    const { segmentId } = await publicSegment();
+
+    const [unset] = await sql<{ cap: number | null }[]>`
+      select (resolve_setting('form.max_tickets_per_response', ${segmentId}) #>> '{}')::int as cap
+    `;
+    expect(unset.cap).toBeNull();
+
+    await sql`
+      update show_segments set max_tickets_per_response = 4 where id = ${segmentId}
+    `;
+    const [set] = await sql<{ cap: number | null }[]>`
+      select (resolve_setting('form.max_tickets_per_response', ${segmentId}) #>> '{}')::int as cap
+    `;
+    expect(set.cap).toBe(4);
+  });
+
+  it('inherits the cap from the concert when the segment does not set one', async () => {
+    const { concertId, segmentId } = await publicSegment();
+    await sql`
+      update concerts
+         set defaults = '{"form.max_tickets_per_response": 2}'::jsonb
+       where id = ${concertId}
+    `;
+
+    const [row] = await sql<{ cap: number | null }[]>`
+      select (resolve_setting('form.max_tickets_per_response', ${segmentId}) #>> '{}')::int as cap
+    `;
+    expect(row.cap).toBe(2);
+  });
+
+  /**
+   * The cap bounds a party, and a party grows: seats added later are the route
+   * around a check that only looked at one form submission.
+   */
+  it('counts the seats a party already holds, not just the ones being added', async () => {
+    const { segmentId } = await publicSegment();
+    await sql`
+      update show_segments set max_tickets_per_response = 3 where id = ${segmentId}
+    `;
+    const { registrationId } = await createRegistration({
+      segmentId,
+      contactName: 'Alice Tan',
+      seats: guests(2),
+    });
+
+    const [row] = await sql<{ seats: number }[]>`
+      select count(*)::int as seats from attendees
+       where registration_id = ${registrationId}
+         and deleted_at is null and status <> 'CANCELLED'
+    `;
+    // Two held plus two more is four, above the three this segment allows —
+    // which the action refuses before it reaches the engine.
+    expect(row.seats).toBe(2);
+  });
+});

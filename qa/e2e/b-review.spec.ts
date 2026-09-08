@@ -1,7 +1,9 @@
 import { test, expect, type Browser, type Page } from '@playwright/test';
-import { asAdmin, reseed, shot, sql } from './b-helpers';
+import { asAdmin, resetReviewQueue, SEEDED_IDS, newSql, shot } from './b-helpers';
 
 test.describe.configure({ mode: 'serial' });
+
+const sql = newSql();
 test.setTimeout(120_000);
 
 let ids: Record<string, string>;
@@ -10,7 +12,11 @@ let page: Page;
 
 test.beforeAll(async ({ browser }) => {
   browserRef = browser;
-  ids = reseed();
+  // start-b.sh already seeded. Re-seeding here would truncate the tables the
+  // concert layout reads out from under the running dev server (see
+  // `resetReviewQueue`), so the flows reset only their own rows.
+  ids = SEEDED_IDS;
+  await resetReviewQueue(sql, ids);
   const ctx = await asAdmin(browser);
   page = await ctx.newPage();
 });
@@ -31,6 +37,29 @@ async function poolOf(want: number) {
   const [after] = await sql<{ p: Record<string, number> }[]>`
     select segment_pool(${ids.playerSegment}::bigint) as p`;
   expect(after.p.extras_pool).toBe(want);
+  return after.p;
+}
+
+/**
+ * Set the segment's capacity so exactly `want` seats are free.
+ *
+ * The four players in the queue stay active and the rest are deactivated first:
+ * §7.4's base-entitlement guard refuses any capacity below
+ * `base_quota × active players`, which is decision 17 doing its job — it just
+ * has to be respected to reach the over-capacity case at all.
+ */
+async function openSeatsOf(want: number) {
+  await sql`update players set is_active = false
+             where id not in (select distinct player_id from registrations
+                               where segment_id = ${ids.playerSegment}
+                                 and player_id is not null)`;
+  const [p] = await sql<{ p: Record<string, number> }[]>`
+    select segment_pool(${ids.playerSegment}::bigint) as p`;
+  await sql`update show_segments set capacity = ${want + p.p.confirmed}
+             where id = ${ids.playerSegment}`;
+  const [after] = await sql<{ p: Record<string, number> }[]>`
+    select segment_pool(${ids.playerSegment}::bigint) as p`;
+  expect(after.p.open_seats).toBe(want);
   return after.p;
 }
 
@@ -90,7 +119,7 @@ test('FLOW-7 preselect and commit inside the pool', async () => {
 
 /** FLOW-8 — the boundary: never best-fit, and partial when allowed. */
 test('FLOW-8 the walk stops at the boundary and never packs a later request in', async () => {
-  ids = reseed();
+  await resetReviewQueue(sql, ids);
   await sql`update show_segments set allow_partial_grant = false where id = ${ids.playerSegment}`;
   await poolOf(3);
   await page.goto(review());
@@ -117,10 +146,12 @@ test('FLOW-8 the walk stops at the boundary and never packs a later request in',
 
 /** FLOW-9 — tick past the pool, then commit over capacity with the typed phrase. */
 test('FLOW-9 ticking past the pool is flagged; over capacity needs the typed phrase', async () => {
-  ids = reseed();
+  await resetReviewQueue(sql, ids);
+  // Inside capacity but past the pool first: §7.5 says that is allowed and
+  // commits normally — the flag is a warning, not a block.
   await poolOf(2);
   await page.goto(review());
-  await shot(page, 'FLOW-9-step-1-pool-of-2');
+  await shot(page, 'FLOW-9-step-1-past-the-pool-inside-capacity');
 
   // Tick every row: 7 seats against a pool of 2 and 2 free seats.
   for (const box of await page.locator('tbody input[type="checkbox"], tbody [role="checkbox"]').all()) {
@@ -130,7 +161,20 @@ test('FLOW-9 ticking past the pool is flagged; over capacity needs the typed phr
   const granted = await grants();
   console.log('FLOW-9 granted after ticking everything:', granted.join(','));
   await expect(page.getByText(/seats? past the extras pool/)).toBeVisible();
+  const insideCapacity = await page.locator('main').innerText();
+  console.log('FLOW-9 past the pool, inside capacity:',
+    insideCapacity.match(/\d+ seats? past the extras pool[\s\S]{0,220}/)?.[0]);
+  await expect(page.getByRole('button', { name: /^Commit 7 seats$/ })).toBeVisible();
   await shot(page, 'FLOW-9-step-2-overage-flagged');
+
+  // Now past the segment's capacity as well: 7 selected, 3 free.
+  await openSeatsOf(3);
+  await page.goto(review());
+  for (const box of await page.locator('tbody [role="checkbox"]').all()) {
+    if ((await box.getAttribute('aria-checked')) === 'false') await box.click();
+  }
+  console.log('FLOW-9 granted with 3 free seats:', (await grants()).join(','));
+  await shot(page, 'FLOW-9-step-2b-past-capacity');
 
   const commit = page.getByRole('button', { name: /Commit \d+ seats? over capacity/ });
   await expect(commit).toBeVisible();
@@ -141,24 +185,30 @@ test('FLOW-9 ticking past the pool is flagged; over capacity needs the typed phr
   const [before] = await sql<{ n: number }[]>`
     select count(*)::int as n from attendees
      where segment_id = ${ids.playerSegment} and status = 'CONFIRMED'`;
-  await page.getByRole('dialog').locator('input[name="confirmation"]').fill('yes please');
-  await page.getByRole('dialog').getByRole('button', { name: 'Commit over capacity' }).click();
-  await expect(page.locator('main div[role="alert"]').first()).toBeVisible({ timeout: 20_000 });
-  const refusal = await page.locator('main div[role="alert"]').first().innerText();
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('input[name="confirmation"]').fill('yes please');
+  await dialog.getByRole('button', { name: 'Commit over capacity' }).click();
+  await expect(dialog.locator('div[role="alert"]')).toBeVisible({ timeout: 20_000 });
+  const refusal = await dialog.locator('div[role="alert"]').innerText();
   console.log('FLOW-9 wrong phrase ->', refusal);
   await shot(page, 'FLOW-9-step-4-wrong-phrase-refused');
   const [mid] = await sql<{ n: number }[]>`
     select count(*)::int as n from attendees
      where segment_id = ${ids.playerSegment} and status = 'CONFIRMED'`;
   expect(mid.n, 'nothing was written on the wrong phrase').toBe(before.n);
+  expect(refusal).toContain('OVER CAPACITY');
 
-  // Right phrase: commits, and records the override.
-  await commit.click();
-  await page.getByRole('dialog').locator('input[name="confirmation"]').fill('OVER CAPACITY');
-  await page.getByRole('dialog').getByRole('button', { name: 'Commit over capacity' }).click();
+  // Right phrase: commits, and records the override. The dialog is still open.
+  await dialog.locator('input[name="confirmation"]').fill('OVER CAPACITY');
+  await dialog.getByRole('button', { name: 'Commit over capacity' }).click();
   await expect(page.locator('div[role="status"]').first()).toBeVisible({ timeout: 20_000 });
   console.log('FLOW-9 committed:', await page.locator('div[role="status"]').first().innerText());
   await shot(page, 'FLOW-9-step-5-committed-over-capacity');
+
+  const [poolAfter] = await sql<{ p: Record<string, number> }[]>`
+    select segment_pool(${ids.playerSegment}::bigint) as p`;
+  console.log('FLOW-9 pool after the override commit:', JSON.stringify(poolAfter.p));
+  expect(poolAfter.p.over, 'the override really did overfill the segment').toBeGreaterThan(0);
 
   const audit = await sql<{ action: string; reason: string | null }[]>`
     select action, reason from audit_log order by id desc limit 3`;
@@ -178,7 +228,7 @@ test('FLOW-9 ticking past the pool is flagged; over capacity needs the typed phr
 
 /** FLOW-10 — pressing Commit twice must not grant twice. */
 test('FLOW-10 committing twice is a no-op the second time', async () => {
-  ids = reseed();
+  await resetReviewQueue(sql, ids);
   await page.goto(review());
   await page.getByRole('button', { name: /^Commit 7 seats$/ }).click();
   await expect(page.locator('div[role="status"]').first()).toBeVisible({ timeout: 20_000 });
@@ -203,7 +253,7 @@ test('FLOW-10 committing twice is a no-op the second time', async () => {
 
 /** FLOW-11 — order is requested_at, never created_at. */
 test('FLOW-11 the queue orders by requested_at, not created_at', async () => {
-  ids = reseed();
+  await resetReviewQueue(sql, ids);
   // A party entered NOW, but whose form response arrived before everyone else's.
   const [reg] = await sql<{ id: string }[]>`
     insert into registrations (show_id, segment_id, source, contact_name, contact_email,

@@ -1,7 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { asAdmin, reseed, shot, sql } from './b-helpers';
+import { asAdmin, SEEDED_IDS, newSql, shot } from './b-helpers';
 
 test.describe.configure({ mode: 'serial' });
+
+const sql = newSql();
 test.setTimeout(120_000);
 
 let ids: Record<string, string>;
@@ -9,7 +11,7 @@ let page: Page;
 let cancelScreenText = '';
 
 test.beforeAll(async ({ browser }) => {
-  ids = reseed();
+  ids = SEEDED_IDS;
   const ctx = await asAdmin(browser);
   page = await ctx.newPage();
 });

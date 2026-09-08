@@ -6,7 +6,7 @@ import { dbErrorMessage } from '@/db/errors';
 import { requireAdmin } from '@/lib/auth/guards';
 import { commitReview } from '@/lib/registrations/review';
 import type { FormState } from '../../form-state';
-import { OVERSELL_PHRASE } from './confirmation';
+import { confirmsOverCapacity, OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import { segmentInConcert } from '../registrations/queries';
 
 /**
@@ -50,7 +50,7 @@ export async function commitReviewAction(
     return { error: 'That segment does not belong to this concert.', message: null };
   }
 
-  if (override && confirmation.toUpperCase() !== OVERSELL_PHRASE) {
+  if (override && !confirmsOverCapacity(confirmation)) {
     return {
       error: `Type ${OVERSELL_PHRASE} to confirm a commit past the segment's or the hall's capacity.`,
       message: null,

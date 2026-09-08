@@ -4,9 +4,19 @@ import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Ban, Pencil, RotateCcw, Trash2, Undo2 } from 'lucide-react';
 import { Alert, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
@@ -34,6 +44,7 @@ import {
 } from './actions';
 import { RegistrationFormDialog } from './registration-form-dialog';
 import { STATUS_TONE } from './status';
+import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import type {
   AttendeeRow,
   PlayerOption,
@@ -163,6 +174,10 @@ export function RegistrationSheet({
                 <AddSeatsDialog
                   concertId={concertId}
                   registration={registration}
+                  maxTicketsPerResponse={
+                    segments.find((s) => s.id === registration.segmentId)
+                      ?.maxTicketsPerResponse ?? null
+                  }
                   onDone={run}
                 />
               )}
@@ -206,33 +221,103 @@ export function RegistrationSheet({
             concertId={concertId}
             registration={registration}
             segments={segments}
+            onDone={run}
           />
 
           {cancelled ? (
             <RestoreButton concertId={concertId} registrationId={registration.id} onDone={run} />
           ) : (
-            <DeleteButton
-              trigger={
-                <Button variant="destructive" size="sm">
-                  <Ban /> Cancel registration
-                </Button>
+            <CancelButton
+              contactName={registration.contactName}
+              onConfirm={() =>
+                run(() => cancelRegistrationAction(concertId, registration.id))
               }
-              title={`Cancel ${registration.contactName}?`}
-              description={
-                <>
-                  The seats return to the segment immediately and any queued email for
-                  this party is withdrawn. Tickets already delivered stay on record, so
-                  the door can say &ldquo;cancelled — refer to desk&rdquo; rather than
-                  &ldquo;not found&rdquo;. It can be restored afterwards.
-                </>
-              }
-              confirmLabel="Cancel registration"
-              action={() => cancelRegistrationAction(concertId, registration.id)}
             />
           )}
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+
+/**
+ * Cancelling, with somewhere for §7.9's answer to land.
+ *
+ * > Admin sees "N seats freed, M waiting".
+ *
+ * The shared `DeleteButton` renders `result.error` and closes on success, which
+ * is right for a delete whose only interesting outcome is a refusal — but this
+ * action's *success* is the interesting part, and routing it through that
+ * component threw the sentence away. So the confirmation lives here and the
+ * result goes back to the sheet, which shows it beside the seats it just freed.
+ */
+function CancelButton({
+  contactName,
+  onConfirm,
+}: {
+  contactName: string;
+  onConfirm: () => Promise<FormState>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next: boolean) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <AlertDialogTrigger
+        render={
+          <Button variant="destructive" size="sm">
+            <Ban /> Cancel registration
+          </Button>
+        }
+      />
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Cancel {contactName}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The seats return to the segment immediately and any queued email for this
+            party is withdrawn. Tickets already delivered stay on record, so the door
+            can say &ldquo;cancelled — refer to desk&rdquo; rather than &ldquo;not
+            found&rdquo;. Nothing is promoted in their place — that is a separate,
+            deliberate decision, because it sends email. It can be restored afterwards.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        {error && (
+          <Alert variant="destructive" role="alert">
+            <AlertTitle className="text-sm leading-relaxed font-normal whitespace-pre-wrap">
+              {error}
+            </AlertTitle>
+          </Alert>
+        )}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isPending}>Keep it</AlertDialogCancel>
+          <AlertDialogAction
+            nativeButton
+            onClick={(event) => {
+              event.preventDefault();
+              startTransition(async () => {
+                const result = await onConfirm();
+                if (result.error) setError(result.error);
+                else setOpen(false);
+              });
+            }}
+            disabled={isPending}
+          >
+            {isPending && <Spinner />}
+            Cancel registration
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -332,10 +417,13 @@ function SeatRow({
 function AddSeatsDialog({
   concertId,
   registration,
+  maxTicketsPerResponse,
   onDone,
 }: {
   concertId: number;
   registration: RegistrationRow;
+  /** The segment's resolved party cap, or null when none is configured. */
+  maxTicketsPerResponse: number | null;
   onDone: (action: () => Promise<FormState>) => Promise<FormState>;
 }) {
   const id = useId();
@@ -360,7 +448,16 @@ function AddSeatsDialog({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field>
             <FieldLabel htmlFor={`${id}-seats`}>Seats</FieldLabel>
-            <Input id={`${id}-seats`} name="seats" type="number" min={1} max={50} defaultValue={1} />
+            {/* The segment's configured cap, or none — the action re-resolves
+                and re-checks it against the seats this party already holds. */}
+            <Input
+              id={`${id}-seats`}
+              name="seats"
+              type="number"
+              min={1}
+              max={maxTicketsPerResponse ?? undefined}
+              defaultValue={1}
+            />
           </Field>
           <Field>
             <FieldLabel htmlFor={`${id}-type`}>Seat type</FieldLabel>
@@ -384,11 +481,19 @@ function AddSeatsDialog({
             {registration.contactName}&rdquo;.
           </FieldDescription>
         </Field>
-        <Field orientation="horizontal">
-          <Checkbox id={`${id}-override`} name="override" value="on" />
-          <FieldLabel htmlFor={`${id}-override`} className="font-normal">
+        <Field>
+          <FieldLabel htmlFor={`${id}-override`}>
             Seat them even if the segment or hall is full
           </FieldLabel>
+          <Input
+            id={`${id}-override`}
+            name="overrideConfirmation"
+            autoComplete="off"
+            placeholder={`Type ${OVERSELL_PHRASE} to allow it`}
+          />
+          <FieldDescription>
+            Blank means a seat that does not fit waits instead (§7.6).
+          </FieldDescription>
         </Field>
       </FieldGroup>
     </ActionDialog>
@@ -399,10 +504,13 @@ function MoveDialog({
   concertId,
   registration,
   segments,
+  onDone,
 }: {
   concertId: number;
   registration: RegistrationRow;
   segments: SegmentOption[];
+  /** Routes the result through the sheet, so "moved with N seats" is visible. */
+  onDone: (action: () => Promise<FormState>) => Promise<FormState>;
 }) {
   const id = useId();
   const elsewhere = segments.filter((option) => option.id !== registration.segmentId);
@@ -419,7 +527,9 @@ function MoveDialog({
       submitLabel="Move registration"
       pendingLabel="Moving…"
       action={(formData) =>
-        moveRegistrationAction(concertId, registration.id, { error: null }, formData)
+        onDone(() =>
+          moveRegistrationAction(concertId, registration.id, { error: null }, formData),
+        )
       }
     >
       <FieldGroup>
@@ -440,11 +550,19 @@ function MoveDialog({
             extra — a public segment owes nobody a base allocation.
           </FieldDescription>
         </Field>
-        <Field orientation="horizontal">
-          <Checkbox id={`${id}-override`} name="override" value="on" />
-          <FieldLabel htmlFor={`${id}-override`} className="font-normal">
+        <Field>
+          <FieldLabel htmlFor={`${id}-override`}>
             Move even if the destination has no room
           </FieldLabel>
+          <Input
+            id={`${id}-override`}
+            name="overrideConfirmation"
+            autoComplete="off"
+            placeholder={`Type ${OVERSELL_PHRASE} to allow it`}
+          />
+          <FieldDescription>
+            Blank means the move is refused when the destination is full (§7.6).
+          </FieldDescription>
         </Field>
       </FieldGroup>
     </ActionDialog>

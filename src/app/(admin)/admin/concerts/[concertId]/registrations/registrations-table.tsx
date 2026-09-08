@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
+import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
@@ -49,6 +50,14 @@ export function RegistrationsTable({
   players: PlayerOption[];
 }) {
   const [openId, setOpenId] = useState<number | null>(null);
+  /**
+   * What the last create actually did.
+   *
+   * The engine decides the seats, so "created" alone can hide a party that
+   * waitlisted entirely — which is exactly the case the admin needs to know
+   * about, since nobody in it is coming unless they act.
+   */
+  const [outcome, setOutcome] = useState<string | null>(null);
   const [segmentFilter, setSegmentFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
@@ -188,6 +197,14 @@ export function RegistrationsTable({
 
   return (
     <>
+      {outcome && (
+        <Alert role="status" className="mb-4">
+          <AlertTitle className="text-sm leading-relaxed font-normal">
+            {outcome}
+          </AlertTitle>
+        </Alert>
+      )}
+
       <DataTable
         columns={columns}
         data={rows}
@@ -234,6 +251,7 @@ export function RegistrationsTable({
               timeZone={timeZone}
               segments={segments}
               players={players}
+              onSuccess={(result) => setOutcome(result.message ?? null)}
               trigger={
                 <Button size="sm">
                   <Plus /> New registration

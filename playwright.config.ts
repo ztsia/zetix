@@ -39,7 +39,7 @@ export default defineConfig({
      * switch silences Web Audio. Nothing in this suite can speak to those, and
      * nothing in it should be read as if it did. They are settled on real
      * handsets instead, through `/scan/diagnostics` and the 18 Sep rehearsal
-     * (local.md §5e). What this project *does* catch is layout, thumb reach,
+     * (local.md §5f). What this project *does* catch is layout, thumb reach,
      * the offline queue and the manifest — which is most of the surface, and
      * all of it regressible.
      */

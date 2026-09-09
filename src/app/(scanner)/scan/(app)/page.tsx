@@ -124,10 +124,20 @@ export default async function ScannerHomePage() {
         </ul>
       )}
 
-      <p className="text-muted-foreground mt-auto flex items-center gap-2 text-xs">
+      {/* Setup, not door-time: the ushers run this once on their own phone so
+          we know which handsets vibrate, which can be heard, and which fell
+          back to memory storage — none of which any test we can run answers
+          (local.md §5f). Kept out of the way rather than prominent, since it is
+          irrelevant once the queue starts moving. */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-muted-foreground mt-auto"
+        render={<Link href="/scan/diagnostics" />}
+      >
         <ScanLine className="size-3.5" />
-        Scanning is built by module G.
-      </p>
+        Check this phone
+      </Button>
     </main>
   );
 }

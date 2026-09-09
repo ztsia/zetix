@@ -40,10 +40,25 @@ export type Background =
   | { kind: 'PDF'; bytes: Uint8Array }
   | { kind: 'IMAGE'; bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' };
 
+/**
+ * Bytes for an `IMAGE` element's `src`, or null when the store has nothing
+ * there.
+ *
+ * A callback rather than a direct import of the asset store, so this module
+ * stays a pure function of its inputs and keeps being testable without a
+ * filesystem, a bucket or a network (`bindings.ts` makes the same trade for
+ * ticket data). A caller that passes none draws no images, which is what every
+ * seeded default expects.
+ */
+export type AssetLoader = (
+  src: string,
+) => Promise<{ bytes: Uint8Array; contentType: string } | null>;
+
 export type RenderOptions = {
   layout: Layout;
   data: TicketData;
   background?: Background;
+  loadAsset?: AssetLoader;
 };
 
 export type RenderResult = {
@@ -67,7 +82,7 @@ export type RenderResult = {
 };
 
 export async function renderTicket(options: RenderOptions): Promise<RenderResult> {
-  const { layout, data, background = { kind: 'NONE' } } = options;
+  const { layout, data, background = { kind: 'NONE' }, loadAsset } = options;
   const { width_pt: width, height_pt: height } = layout.canvas;
 
   const doc =
@@ -142,16 +157,47 @@ export async function renderTicket(options: RenderOptions): Promise<RenderResult
           y: topDown(element.y, Math.min(element.w, element.h), pageHeight),
         });
         break;
-      case 'IMAGE':
+      case 'IMAGE': {
         /**
-         * Nothing to embed without an asset loader, and the seeded defaults use
-         * none. Skipped rather than failed — an unrenderable decoration must not
-         * cost a guest their ticket — but **reported**, because a silently
-         * missing element is indistinguishable from one that was never there.
-         * Module E adds uploads; until then this is the honest answer.
+         * Skipped rather than failed whenever the bytes cannot be had — an
+         * unrenderable decoration must not cost a guest their ticket — but
+         * **reported**, because a silently missing element is indistinguishable
+         * from one that was never there.
+         *
+         * Every reason is reported separately: "no loader" (a caller that never
+         * offered one), "not in the store" (a deleted asset) and "not a PNG or
+         * JPEG" are three different problems, and one shared message would send
+         * an admin looking in the wrong place.
          */
-        skipped[element.id] = 'IMAGE elements need an asset store, which module E adds';
+        if (!loadAsset) {
+          skipped[element.id] = 'no asset loader was given to the renderer';
+          break;
+        }
+        const asset = await loadAsset(element.src).catch(() => null);
+        if (!asset) {
+          skipped[element.id] = `the asset store has nothing at ${element.src}`;
+          break;
+        }
+        if (asset.contentType !== 'image/png' && asset.contentType !== 'image/jpeg') {
+          // pdf-lib embeds exactly these two. A PDF here would be artwork
+          // someone picked as a decoration; it is not embeddable as an image.
+          skipped[element.id] = `${element.src} is ${asset.contentType}, not a PNG or JPEG`;
+          break;
+        }
+        const image =
+          asset.contentType === 'image/png'
+            ? await doc.embedPng(asset.bytes)
+            : await doc.embedJpg(asset.bytes);
+        page.drawImage(image, {
+          x: element.x,
+          y: topDown(element.y, element.h, pageHeight),
+          width: element.w,
+          height: element.h,
+          rotate: degrees(element.rotation),
+          opacity: element.opacity,
+        });
         break;
+      }
       case 'TEXT': {
         const clipped = await drawText(page, element, data, pageHeight, embedFace);
         if (clipped) truncated.push(element.id);

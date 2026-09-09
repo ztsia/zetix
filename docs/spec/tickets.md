@@ -138,11 +138,38 @@ Admin-only canvas editor:
 - Live preview against a real attendee, plus a **"longest name in this show"** preview so overflow is
   caught before a whole show's tickets go out.
 - Undo/redo. Templates are **versioned** — never mutate a template that has already issued tickets;
-  clone it.
+  clone it. *(V1 ships the versioning; undo/redo, snap, guides, lock, duplicate and multi-select are
+  deliberately out — decision 34.)*
 - **Three seeded default layouts** (Classic Landscape, Minimal Portrait, Wide Banner) that work with no
   background asset, so the system is usable before anyone opens the editor.
 
 Library: **react-konva**, dynamically imported with `ssr: false`.
+
+### The canvas approximates; the PDF preview does not
+
+The editor measures text with whatever fonts the browser has, and the renderer measures it with the
+embedded ones (§10.4). Those disagree, so the canvas is a design tool and not an answer to "does this
+name fit". The editor therefore also renders the **unsaved** layout through the real renderer and
+reports back which elements it clipped and which it could not draw at all. That is what makes the
+longest-name preview a check rather than an impression — and it is the check that has to pass before
+a blast, because the alternative is discovering the overflow at four hundred tickets.
+
+### Uploaded artwork
+
+Backgrounds and `IMAGE` elements are stored through one interface with two backends, and
+`background_asset_path` holds the same opaque path whichever wrote it: **Supabase Storage** (a private
+bucket) in production, and a **local directory** in development, tests and CI, selected by setting
+`TICKET_ASSET_DIR`. The second is not a convenience — a cloud session has no service-role key and no
+route to a bucket's contents (`../local.md` §7), so without it none of the upload, fetch or
+background-render path could be tested at all.
+
+`background_kind` is always derived from the stored path, never passed in beside it: two columns
+describing one fact drift, and `PDF` beside a `.png` sends the renderer down the wrong branch and
+prints a blank ticket.
+
+Uploads are typed by their **leading bytes**, not by the browser's `File.type` or the filename. A
+mistyped upload accepted here fails inside the render of every ticket in the show, with nothing
+pointing back at the upload that caused it.
 
 ## 10.4 Rendering
 
@@ -177,6 +204,20 @@ sent.
 So: **`attendees.ticket_template_id` and `ticket_template_version` are written when the ticket is first
 issued, and rendering always uses the pinned version.** Editing a template creates a new version and
 affects only tickets issued afterwards.
+
+**A version nothing has been issued against is edited in place.** The rule above is "never mutate a
+template that has already issued tickets", and that condition is the whole of it: a version no
+attendee points at has no copy anywhere to disagree with, so rewriting it is invisible. Versioning
+every save instead would mint a version per nudged text box, and "version 34" would tell an admin
+nothing about what changed. The count and the write are one transaction, with the template row locked
+— otherwise a blast issuing tickets between the two would pin attendees to a version whose layout
+changed underneath them, which is this section's failure arriving through a race instead of a design
+mistake.
+
+A new version keeps its predecessor's `is_default` and records what it was edited from in
+`supersedes_id`. **Duplicating** a template is different in kind: it starts a fresh lineage at
+version 1 with no `supersedes_id`, because it is not an edit of the original and nothing about it
+should read as history they share.
 
 Re-rendering an already-issued ticket against a newer template is possible but explicit — an admin
 action, "Reissue tickets with current template", which repins the version, clears `ticket_sent_at` for

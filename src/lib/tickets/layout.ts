@@ -90,11 +90,18 @@ export const textElementSchema = z
      * Static content, with `{{binding}}` placeholders (§10.2's
      * `"Free seating · Doors {{show.doors_open_at}}"`). Only meaningful when
      * `binding` is null.
+     *
+     * **Bounded, because the text fitter's cost grows with it.** A QA pass fed
+     * a one-megabyte string through this and the render never returned — the
+     * line breaker measures substrings, so a pathological length hangs the
+     * function rather than failing it, and on a blast it would hang holding
+     * every ticket behind it. 2,000 characters is far more than a ticket can
+     * physically print and far less than enough to stall anything.
      */
-    text: z.string().optional(),
+    text: z.string().max(2000).optional(),
     /** `date-fns` pattern for a date binding, e.g. `EEE d MMM yyyy, HH:mm`. */
-    format: z.string().optional(),
-    font_family: z.string().default('Inter'),
+    format: z.string().max(200).optional(),
+    font_family: z.string().max(100).default('Inter'),
     font_size: z.number().positive().default(12),
     font_weight: z.number().int().default(400),
     color: colorSchema.default('#1a1a1a'),
@@ -167,10 +174,21 @@ export const canvasSchema = z
   })
   .strict();
 
+/**
+ * The most elements one ticket may carry.
+ *
+ * A cost bound, like the one on `text`, and found the same way: a QA pass built
+ * a layout of 5,000 elements and the render took 28.3 seconds — over the
+ * `maxDuration = 30` the ticket route sets, and multiplied by every attendee in
+ * a blast. A ticket is a postcard; 200 elements is far more than any design
+ * needs and far less than enough to stall a send.
+ */
+export const MAX_ELEMENTS = 200;
+
 export const layoutSchema = z
   .object({
     canvas: canvasSchema,
-    elements: z.array(elementSchema),
+    elements: z.array(elementSchema).max(MAX_ELEMENTS),
   })
   .strict();
 

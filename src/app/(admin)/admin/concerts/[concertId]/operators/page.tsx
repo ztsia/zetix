@@ -81,7 +81,7 @@ export default async function OperatorsPage({
           select array_agg(osa.show_id order by osa.show_id)
           from operator_show_assignments osa
           join shows s on s.id = osa.show_id
-          where osa.user_id = ${appUsers.id} and s.concert_id = ${concertId}
+          where osa.user_id = app_users.id and s.concert_id = ${concertId}
         ), '{}')
       `,
       checkInCount: sql<number>`
@@ -89,7 +89,7 @@ export default async function OperatorsPage({
           select count(*)::int
           from check_ins c
           join shows s on s.id = c.show_id
-          where c.operator_id = ${appUsers.id}
+          where c.operator_id = app_users.id
             and s.concert_id = ${concertId}
             and c.reverted_at is null
         )

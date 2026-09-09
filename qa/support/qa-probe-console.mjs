@@ -1,0 +1,26 @@
+import { chromium, devices } from '@playwright/test';
+const b = await chromium.launch();
+const c = await b.newContext({ ...devices['Pixel 7'], baseURL: 'http://localhost:3100' });
+const p = await c.newPage();
+const errs = [];
+p.on('console', (m) => { if (m.type() === 'error' || m.type()==='warning') errs.push(`[${m.type()}] ${m.text()}`); });
+p.on('pageerror', (e) => errs.push(`[pageerror] ${e.message}`));
+await p.goto('/scan/login');
+await p.fill('#displayName', 'Wei Ling');
+await p.fill('#code', 'qa-op-code');
+await p.click('button[type=submit]');
+await p.waitForURL(/\/scan\/\d+$/);
+await p.waitForTimeout(3000);
+await p.getByRole('tab', { name: 'Stats' }).click();
+await p.waitForTimeout(1000);
+await p.getByRole('tab', { name: 'Search' }).click();
+await p.getByLabel('Search by name or ticket code').fill('Alice Tan');
+await p.getByText('Alice Tan', { exact: true }).click();
+await p.waitForTimeout(1500);
+const overlayText = await p.evaluate(() => {
+  const el = document.querySelector('nextjs-portal');
+  return el?.shadowRoot ? el.shadowRoot.textContent?.slice(0, 1200) : 'no portal shadow';
+});
+console.log('CONSOLE:\n' + errs.join('\n'));
+console.log('\nDEV OVERLAY:\n' + overlayText);
+await b.close();

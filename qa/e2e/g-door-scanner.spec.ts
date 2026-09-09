@@ -62,18 +62,22 @@ async function signInOperator(page: Page) {
 }
 
 /**
- * Drive a scan without a camera.
+ * These specs drive the door through Search and the attendee sheet, which
+ * covers the decision, the queue and the drain but **not** the camera.
  *
- * The camera is a decode source, not the decision — §12.1 gives three
- * independent ways in and the manifest match is common to all of them. Feeding
- * a decoded string directly exercises exactly the code a QR would reach, on a
- * headless browser that has no camera at all.
+ * An earlier version of this file pretended otherwise: it had a `scan()` helper
+ * dispatching a `zetix:test-decode` event that nothing in `src/` ever listened
+ * for, so every assertion named "scan" quietly went through Search and the
+ * result overlay was rendered by no test at all. Two real defects survived a
+ * green suite behind it. Lint had been reporting the helper as unused the whole
+ * time.
+ *
+ * The camera path is covered instead by `qa-g-door.spec.ts`, which feeds
+ * Chromium a generated Y4M of a real QR (`qa/support/qa-qr-y4m.mjs`) so
+ * `@zxing/browser` decodes an actual code. Keep it that way: a helper that
+ * looks like a scan and is not one is worse than no coverage, because it
+ * reports the gap as filled.
  */
-async function scan(page: Page, decoded: string) {
-  await page.evaluate((text) => {
-    window.dispatchEvent(new CustomEvent('zetix:test-decode', { detail: text }));
-  }, decoded);
-}
 
 test.beforeEach(async () => {
   await sql`delete from check_ins`;
@@ -88,9 +92,11 @@ test('the show picker auto-selects a single assignment', async ({ page }) => {
   // damaging setup mistake — an usher admitting against the wrong show.
   await signInOperator(page);
   await page.waitForURL(new RegExp(`/scan/${seed.show1}`));
-  // The pill is a link back to the picker, so an usher on the wrong show can
-  // always get off it (ref.md §1.3).
-  await expect(page.getByRole('link', { name: /Evening Show/ })).toBeVisible();
+  // §12.1: with exactly one assignment the pill renders **read-only**. This
+  // operator is rostered on one show, so there is nowhere to switch to, and a
+  // tappable pill would only offer a way to land on an empty picker mid-queue.
+  await expect(page.locator('[data-slot=show-pill]')).toContainText('Evening Show');
+  await expect(page.getByRole('link', { name: /Evening Show/ })).toHaveCount(0);
   await shot(page, 'picker-autoselected');
 });
 
@@ -213,6 +219,7 @@ test('admits with the network gone, and syncs when it returns', async ({ page, c
   await page.getByText('Priya Nair').click();
   await expect(page.getByRole('button', { name: /^Admit Priya/ })).toBeVisible();
   await shot(page, 'offline-attendee-sheet');
+  const tappedAt = Date.now();
   await page.getByRole('button', { name: /^Admit Priya/ }).click();
 
   // The admission is recorded on the device and visibly owed to the server.
@@ -234,12 +241,29 @@ test('admits with the network gone, and syncs when it returns', async ({ page, c
     }, { timeout: 15000 })
     .toBe(1);
 
-  // The phone's own clock is preserved, and the row is marked as a delayed sync.
   const [row] = await sql`
     select source, scanned_at, synced_at from check_ins limit 1
   `;
-  expect(row.source).toBe('OFFLINE_SYNC');
-  expect(row.synced_at).not.toBeNull();
+
+  /**
+   * **MANUAL, not OFFLINE_SYNC** — and the distinction is the point.
+   *
+   * `source` records *how the admission was decided*, and this one was decided
+   * by a human deliberately tapping Admit in the attendee sheet (§12.1). That
+   * it happened to sync late is a different fact, and it does not need this
+   * column to say so: the gap between `scanned_at` and `synced_at` is exactly
+   * that, which is why the schema carries both.
+   */
+  expect(row.source).toBe('MANUAL');
+
+  // The offline property itself: the phone stamped `scanned_at` when the usher
+  // tapped — while there was no network — and `synced_at` only once the row
+  // reached the server. The gap between them is however long the door was off
+  // the air, which is the whole reason the schema carries both columns.
+  const scannedAt = new Date(row.scanned_at).getTime();
+  const syncedAt = new Date(row.synced_at).getTime();
+  expect(scannedAt).toBeGreaterThanOrEqual(tappedAt - 1000);
+  expect(syncedAt).toBeGreaterThanOrEqual(scannedAt);
 
   // And the badge clears, so the operator can see the queue is empty.
   await expect(page.getByText(/queued/)).toHaveCount(0);

@@ -26,6 +26,16 @@ import { AttendeeSheet } from './attendee-sheet';
 import { SearchTab } from './search-tab';
 import { StatsTab } from './stats-tab';
 
+/**
+ * How long a green result stays up before clearing itself (ref.md §1.2, "~2s").
+ *
+ * Not an operational value in CLAUDE.md's sense — no capacity, quota, deadline
+ * or cap from `context.md` is involved. It is an interaction constant, and it
+ * is longer than the 800ms flash on purpose so the name is still readable once
+ * the colour has gone.
+ */
+const RESULT_AUTO_DISMISS_MS = 2000;
+
 export type ShowSummary = {
   id: number;
   name: string;
@@ -65,11 +75,14 @@ export function ScannerShell({
   operatorName,
   manifestExpiresAt,
   scanDebounceMs,
+  canSwitchShows,
 }: {
   show: ShowSummary;
   operatorName: string;
   manifestExpiresAt: string | null;
   scanDebounceMs: number;
+  /** False for an operator rostered on exactly one show (§12.1). */
+  canSwitchShows: boolean;
 }) {
   const {
     state,
@@ -114,6 +127,20 @@ export function ScannerShell({
     if (flashTimer.current) clearTimeout(flashTimer.current);
   }, []);
 
+  /**
+   * **A green result dismisses itself; amber and red do not** (ref.md §1.2).
+   *
+   * Without this the overlay covers the viewfinder until someone taps "Next",
+   * which is one tap per guest for all four hundred — and the tap happens with
+   * a queue in front of the usher, so it is the tap that gets skipped. Amber
+   * and red deliberately stay: those are the ones with something to read.
+   */
+  useEffect(() => {
+    if (state.result?.outcome !== 'ADMITTED') return;
+    const timer = setTimeout(() => dismissResult(), RESULT_AUTO_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [state.result, dismissResult]);
+
   const handleDecode = useCallback(
     async (text: string) => {
       const result = await submitScan(text);
@@ -144,15 +171,25 @@ export function ScannerShell({
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         {/* The show pill (ref.md §1.3). With three shows in a weekend an usher
             on the wrong one silently rejects every valid ticket, so which show
-            is being admitted is never more than a glance away. */}
-        <Button
-          variant="secondary"
-          size="sm"
-          className="h-9 min-w-0 flex-1 justify-start"
-          render={<Link href="/scan" />}
-        >
-          <span className="truncate font-semibold">{show.name}</span>
-        </Button>
+            is being admitted is never more than a glance away. Read-only when
+            there is nowhere else to go — §12.1. */}
+        {canSwitchShows ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-9 min-w-0 flex-1 justify-start"
+            render={<Link href="/scan" />}
+          >
+            <span className="truncate font-semibold">{show.name}</span>
+          </Button>
+        ) : (
+          <div
+            data-slot="show-pill"
+            className="bg-secondary text-secondary-foreground flex h-9 min-w-0 flex-1 items-center rounded-md px-3"
+          >
+            <span className="truncate text-sm font-semibold">{show.name}</span>
+          </div>
+        )}
 
         <ConnectionBadge online={state.online} pending={state.summary.pending} />
 
@@ -207,6 +244,7 @@ export function ScannerShell({
             {state.result && (
               <ResultOverlay
                 result={state.result}
+                timeZone={show.timezone}
                 onDismiss={dismissResult}
                 onOpenDetail={() => {
                   if (state.result?.entry) {

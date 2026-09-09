@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildManifestIndex, hashQrToken, type ManifestEntry } from '@/lib/checkin/manifest';
-import { evaluateScan, type FeedbackTone, type ScanResult } from '@/lib/checkin/evaluate';
+import {
+  applyServerOutcome,
+  evaluateScan,
+  type FeedbackTone,
+  type ScanResult,
+} from '@/lib/checkin/evaluate';
 import { extractQrToken } from '@/lib/checkin/token';
 import { manifestStaleness, pendingScans, scanSummary, settledScanIds } from '@/lib/checkin/queue';
 import {
@@ -47,6 +52,7 @@ type ReceiptResponse = {
   receipts: {
     qrTokenSha256: string;
     outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND';
+    showName?: string | null;
   }[];
 };
 
@@ -180,7 +186,19 @@ export function useScanner({
         qrTokenSha256,
         // The phone's clock, preserved verbatim through a delayed sync (§12.3).
         scannedAt: new Date().toISOString(),
-        source: navigator.onLine ? source : 'OFFLINE_SYNC',
+        /**
+         * **A deliberate admission stays MANUAL even with no network.**
+         *
+         * §12.1 wants the party control and every override recorded as MANUAL;
+         * §12.3 wants a delayed drain recorded as OFFLINE_SYNC. There is one
+         * column, so they cannot both win, and MANUAL is the one worth keeping:
+         * it records *how the admission was decided* — a human deliberately
+         * tapped — which is the fact a post-mortem on a duplicated party needs.
+         * That it synced late is not lost either, and does not need this column
+         * to say so: the gap between `scanned_at` and `synced_at` is exactly
+         * that, and is why the schema carries both.
+         */
+        source: source === 'MANUAL' ? 'MANUAL' : navigator.onLine ? 'ONLINE' : 'OFFLINE_SYNC',
         deviceId: deviceIdRef.current,
         overrideReason,
       });
@@ -188,6 +206,49 @@ export function useScanner({
       if (navigator.onLine) void drain();
     },
     [showId, drain],
+  );
+
+  /**
+   * What the server makes of a token this device does not recognise.
+   *
+   * One scan, posted for its verdict rather than to be recorded — see the call
+   * site. Any failure returns the local result untouched: a door does not stop
+   * for a question it only asked out of politeness.
+   */
+  const askServer = useCallback(
+    async (qrTokenSha256: string, local: ScanResult): Promise<ScanResult> => {
+      try {
+        const response = await fetch('/api/checkin/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            showId,
+            scans: [
+              {
+                qrTokenSha256,
+                scannedAt: new Date().toISOString(),
+                source: 'ONLINE',
+                deviceId: deviceIdRef.current,
+                overrideReason: null,
+              },
+            ],
+          }),
+        });
+        if (!response.ok) return local;
+
+        const body = (await response.json()) as ReceiptResponse;
+        const receipt = body.receipts[0];
+        if (!receipt) return local;
+
+        return applyServerOutcome(local, {
+          outcome: receipt.outcome === 'WRONG_SHOW' ? 'WRONG_SHOW' : 'NOT_FOUND',
+          showName: receipt.showName ?? null,
+        });
+      } catch {
+        return local;
+      }
+    },
+    [showId],
   );
 
   /**
@@ -221,11 +282,33 @@ export function useScanner({
       // is not a check-in, and enqueuing it would put a phantom in the log.
       if (local.outcome === 'ADMITTED' && hash) {
         await enqueue(hash, 'ONLINE', null);
+        return local;
+      }
+
+      /**
+       * **"Not found" is where the phone runs out of what it can know.**
+       *
+       * The device holds one show's roster, so a ticket for another show is
+       * locally indistinguishable from a forgery — and §12.1's result table
+       * asks for "Wrong show", naming the show the ticket is actually for. The
+       * server sees every show and can answer, so when there is a network, ask
+       * it.
+       *
+       * Safe to send: the write endpoint resolves the digest first and records
+       * **nothing** for a token that is not in this show, so this asks a
+       * question without creating a row. And it is strictly an upgrade — the
+       * flash, the tone and the buzz have already fired from the local
+       * decision, so nothing here delays what the usher sees.
+       */
+      if (local.outcome === 'NOT_FOUND' && hash && navigator.onLine) {
+        const upgraded = await askServer(hash, local);
+        if (upgraded !== local) setResult(upgraded);
+        return upgraded;
       }
 
       return local;
     },
-    [index, showId, scanDebounceMs, enqueue],
+    [index, showId, scanDebounceMs, enqueue, askServer],
   );
 
   /** "Admit anyway" on an amber or red result, and "Admit remaining N". */
@@ -338,7 +421,7 @@ export function useScanner({
 }
 
 /**
- * A stable id for this handset, so the scan log can tell six ushers apart.
+ * A stable id for this handset, so the scan log can tell the door’s phones apart.
  *
  * Not an identity and not a security control — `check_ins.operator_id` is who
  * did it. This answers "which phone", which is what a post-mortem on a

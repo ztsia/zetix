@@ -39,6 +39,23 @@ describe('extractQrToken — origin and path are never validated', () => {
     expect(extractQrToken(`https://example.org/a/b/c/d/${TOKEN}`)).toBe(TOKEN);
   });
 
+  it('takes a non-/t/ path segment even when the trailing-run rule cannot help', () => {
+    /**
+     * **This is the assertion with teeth, and the three above do not have it.**
+     *
+     * A QA mutation that made extraction *require* a `/t/` path left all
+     * fourteen of these tests green, because rule 3 — any 22-character run at
+     * the end of the string — quietly caught every case rule 2 had dropped. The
+     * suite was testing the fallback and reporting it as the path rule.
+     *
+     * A query string after the token is what separates them: the trailing run
+     * is now `1`, so rule 3 cannot fire, and only rule 2 reading the last path
+     * segment can return the token. Break rule 2 and this line fails alone.
+     */
+    expect(extractQrToken(`https://example.org/ticket/${TOKEN}?utm=1`)).toBe(TOKEN);
+    expect(extractQrToken(`https://example.org/scan/${TOKEN}?v=2`)).toBe(TOKEN);
+  });
+
   it('accepts a bare token, with no URL around it at all', () => {
     expect(extractQrToken(TOKEN)).toBe(TOKEN);
   });

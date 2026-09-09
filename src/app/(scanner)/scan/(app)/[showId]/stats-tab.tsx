@@ -15,8 +15,11 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
  * seats**, so the number that matters is the one from this device's own
  * history — which is available offline, and is the only one that is.
  *
- * It is deliberately honest about being partial: with six ushers on six phones,
- * a single device knows only what it admitted itself until everything syncs.
+ * It is deliberately honest about being partial: with several ushers on several
+ * phones, a single device knows only what it admitted itself until everything
+ * syncs. The copy names no count — how many ushers there are is a fact in
+ * `context.md`, and a number from there in a `.ts` file is a bug (`CLAUDE.md`),
+ * even as prose.
  * Presenting that as the house count would be worse than useless on the one
  * night it is consulted, so the copy says whose count it is.
  */
@@ -61,7 +64,7 @@ export function StatsTab({
       <Alert>
         <AlertTitle>This phone&rsquo;s count</AlertTitle>
         <AlertDescription>
-          Six ushers on six phones each see their own admissions until everything syncs. The
+          Every phone at the door sees only its own admissions until everything syncs. The
           dashboard has the house total.
         </AlertDescription>
       </Alert>

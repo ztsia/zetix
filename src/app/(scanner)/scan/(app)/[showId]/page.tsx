@@ -1,8 +1,10 @@
 import { notFound } from 'next/navigation';
 import { and, eq, isNull } from 'drizzle-orm';
+import { count } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { shows } from '@/db/schema/shows';
 import { concerts } from '@/db/schema/concerts';
+import { operatorShowAssignments } from '@/db/schema/people';
 import { resolveSetting } from '@/db/settings';
 import { requireScannerUser } from '@/lib/auth/guards';
 import { canAccessShow } from '@/lib/auth/show-access';
@@ -77,6 +79,29 @@ export default async function ScannerShowPage({
     concertId: show.concertId,
   });
 
+  /**
+   * **With exactly one assignment the show pill is read-only** (§12.1).
+   *
+   * The pill exists so an usher can always see which show they are admitting
+   * to, and the picker exists so they can change it. An operator rostered on
+   * one show has nothing to change it *to* — leaving it tappable only offers a
+   * way to land on an empty picker mid-queue, and §12.1 auto-selects for
+   * exactly this reason: choosing from a list of one is where the single most
+   * damaging setup mistake happens.
+   *
+   * `ADMIN` always keeps the link. They are not rostered at all and legitimately
+   * move between shows.
+   */
+  const assignments =
+    user.role === 'ADMIN'
+      ? null
+      : await db
+          .select({ total: count() })
+          .from(operatorShowAssignments)
+          .where(eq(operatorShowAssignments.userId, user.id));
+
+  const canSwitchShows = user.role === 'ADMIN' || (assignments?.[0]?.total ?? 0) > 1;
+
   return (
     <ScannerShell
       show={{
@@ -88,6 +113,7 @@ export default async function ScannerShowPage({
         timezone: show.timezone,
       }}
       operatorName={user.displayName ?? user.email}
+      canSwitchShows={canSwitchShows}
       manifestExpiresAt={expiresAt}
       scanDebounceMs={debounceMs ?? 0}
     />

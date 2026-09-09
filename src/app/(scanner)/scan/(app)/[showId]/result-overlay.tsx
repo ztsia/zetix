@@ -51,11 +51,14 @@ function Icon({ outcome }: { outcome: ScanResult['outcome'] }) {
 
 export function ResultOverlay({
   result,
+  timeZone,
   onDismiss,
   onOpenDetail,
   onAdmitAnyway,
 }: {
   result: ScanResult;
+  /** `concerts.timezone`. Null when the concert has none set — see below. */
+  timeZone: string | null;
   onDismiss: () => void;
   onOpenDetail: () => void;
   onAdmitAnyway: () => void;
@@ -108,7 +111,7 @@ export function ResultOverlay({
 
       {result.firstScan && (
         <p className="text-sm opacity-80">
-          First scanned {formatTime(result.firstScan.at)}
+          First scanned {formatTime(result.firstScan.at, timeZone)}
           {result.firstScan.operatorName ? ` by ${result.firstScan.operatorName}` : ''}
         </p>
       )}
@@ -148,10 +151,30 @@ export function ResultOverlay({
   );
 }
 
-function formatTime(iso: string): string {
+/**
+ * The first-scan time, **in the concert's zone and never the phone's**
+ * (`CLAUDE.md`, spec/domain.md §6.1).
+ *
+ * This is the one absolute time the door renders, and it is read to decide
+ * whether a duplicate is somebody's second attempt tonight or a scan from an
+ * earlier show. An usher whose phone is set to another timezone — or is simply
+ * roaming — would otherwise be handed a number that is wrong by hours and looks
+ * entirely plausible.
+ *
+ * A null zone falls back to the device's, and says so, because the alternative
+ * is either a hardcoded zone (an operational value in code) or refusing to show
+ * a time the operator needs.
+ */
+function formatTime(iso: string, timeZone: string | null): string {
   try {
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
+    });
   } catch {
-    return iso;
+    // An unknown zone makes Intl throw a RangeError. A wrong-looking time is
+    // still better than an overlay that fails to render at a door.
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 }

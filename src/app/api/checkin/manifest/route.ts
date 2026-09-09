@@ -49,14 +49,23 @@ const querySchema = z.object({
 });
 
 /** One row of `manifest_for_show()`, as PostgREST returns it. */
+/**
+ * One row of `manifest_for_show()`, as PostgREST actually returns it.
+ *
+ * `registration_id` is a `bigint` and arrives as a **string** — JSON has one
+ * number type and it cannot hold the full range, so PostgREST plays safe. The
+ * scanner groups a party by this value, so a stringly-typed id that the client
+ * declares as a number is a comparison waiting to be written the obvious way
+ * and silently fail. Coerced once here, at the boundary, rather than trusted.
+ */
 type ManifestRow = {
   qr_token_sha256: string;
   ticket_code: string | null;
   name: string;
   player_name: string | null;
   status: string;
-  registration_id: number;
-  party_size: number;
+  registration_id: number | string;
+  party_size: number | string;
 };
 
 export async function GET(request: Request) {
@@ -111,8 +120,8 @@ export async function GET(request: Request) {
         name: row.name,
         playerName: row.player_name,
         status: row.status,
-        registrationId: row.registration_id,
-        partySize: row.party_size,
+        registrationId: Number(row.registration_id),
+        partySize: Number(row.party_size),
       })),
     },
     { headers: { 'Cache-Control': 'no-store' } },

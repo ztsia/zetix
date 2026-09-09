@@ -19,7 +19,7 @@ if (!payload || !out) {
 
 const W = 640;
 const H = 480;
-const FRAMES = 60;
+const FRAMES = 20;
 
 const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' });
 const size = qr.modules.size;

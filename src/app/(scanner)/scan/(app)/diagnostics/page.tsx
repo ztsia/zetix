@@ -21,7 +21,7 @@ export const metadata: Metadata = { title: 'Device check' };
  * taps twice, answers two yes/no questions and sends the summary — thirty
  * seconds per handset, done wherever they are, no Mac and no device lab.
  *
- * Six ushers on a mix of Android and iPhone (context.md §6 question 7), and the
+ * The ushers carry a mix of Android and iPhone (context.md §6 question 7), and the
  * rehearsal is 18 Sep — one day before the concert. Running this a week earlier
  * makes the rehearsal a confirmation rather than a discovery.
  */

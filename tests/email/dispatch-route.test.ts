@@ -17,7 +17,15 @@ vi.mock('@/lib/auth/session', () => ({
 }));
 
 const dispatchBatch = vi.fn();
-vi.mock('@/lib/email/dispatch', () => ({ dispatchBatch: () => dispatchBatch() }));
+/**
+ * Only `dispatchBatch` is replaced. `MAX_DISPATCH_SECONDS` comes through from
+ * the real module, because the test below compares it against the route's
+ * `maxDuration` — a mocked constant would compare the file with itself.
+ */
+vi.mock('@/lib/email/dispatch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/email/dispatch')>()),
+  dispatchBatch: () => dispatchBatch(),
+}));
 
 const { POST } = await import('@/app/api/outbox/dispatch/route');
 
@@ -32,6 +40,29 @@ beforeEach(() => {
   delete process.env.CRON_SECRET;
   dispatchBatch.mockResolvedValue({
     sent: 1, failed: 0, remaining: 0, dailyCapReached: false, warnings: [],
+  });
+});
+
+describe('the function limits', () => {
+  /**
+   * The reclaim window in `dispatch.ts` is a multiple of how long a dispatch can
+   * possibly run, and takes that from `MAX_DISPATCH_SECONDS`. Next requires
+   * `maxDuration` to be a literal, so the two cannot share one constant — a
+   * window shorter than the function's own runtime would take rows back from a
+   * dispatch still using them, and send them twice.
+   */
+  it('keeps maxDuration and the reclaim window’s assumption in step', async () => {
+    const route = await import('@/app/api/outbox/dispatch/route');
+    const { MAX_DISPATCH_SECONDS } = await import('@/lib/email/dispatch');
+
+    expect(route.maxDuration).toBe(MAX_DISPATCH_SECONDS);
+    // Vercel Hobby's ceiling (§11.1), against a 10s default.
+    expect(route.maxDuration).toBe(60);
+  });
+
+  it('runs on the Node runtime, because the Edge runtime has no TCP sockets', async () => {
+    const route = await import('@/app/api/outbox/dispatch/route');
+    expect(route.runtime).toBe('nodejs');
   });
 });
 

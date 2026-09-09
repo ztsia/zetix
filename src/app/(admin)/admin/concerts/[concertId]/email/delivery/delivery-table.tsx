@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { DataTable, type DataTableColumn } from '@/components/data-table';
+import { DataTable, selectionColumn, type DataTableColumn } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
@@ -37,6 +37,15 @@ export function DeliveryTable({ rows, timezone }: { rows: DeliveryRow[]; timezon
   const [selected, setSelected] = useState<DeliveryRow[]>([]);
 
   const columns: DataTableColumn<DeliveryRow>[] = [
+    /**
+     * **`enableSelection` alone renders no checkbox.** It turns the feature on;
+     * the column that draws the boxes is a separate opt-in, as every other
+     * selecting table on this project does it (`concerts-table.tsx`,
+     * `players-table.tsx`, `tickets-table.tsx`). Without it both actions below
+     * were permanently disabled, because nothing could ever be selected — the
+     * mutations underneath were correct and unreachable.
+     */
+    selectionColumn<DeliveryRow>(),
     { accessorKey: 'fullName', header: 'Attendee' },
     {
       accessorKey: 'contactName',

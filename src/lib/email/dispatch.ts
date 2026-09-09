@@ -22,6 +22,24 @@ import type { MailTransport } from './transport';
  * (§11.2, decision 23).
  */
 
+/**
+ * The ceiling on how long one dispatch can possibly run, in seconds.
+ *
+ * It mirrors `export const maxDuration = 60` on the route — Vercel Hobby's
+ * limit, which §11.1 sizes `email.max_per_dispatch` against. Next requires that
+ * export to be a literal, so it cannot be computed from here;
+ * `tests/email/dispatch-route.test.ts` asserts the two agree instead, because a
+ * reclaim window shorter than the function's own runtime would take rows back
+ * from a dispatch that is still using them.
+ *
+ * Not an operational value: it describes the runtime rather than the event, and
+ * nothing in `context.md` supplies it (spec/domain.md §6).
+ */
+export const MAX_DISPATCH_SECONDS = 60;
+
+/** Safety factor on {@link MAX_DISPATCH_SECONDS} before a row is called stranded. */
+const RECLAIM_FACTOR = 10;
+
 export type DispatchResult = {
   sent: number;
   failed: number;
@@ -30,6 +48,8 @@ export type DispatchResult = {
   dailyCapReached: boolean;
   /** Render warnings, surfaced rather than swallowed (module `D`). */
   warnings: string[];
+  /** Rows recovered from a dispatch that died mid-batch. See {@link reclaimStranded}. */
+  reclaimed: number;
 };
 
 type ClaimedRow = {
@@ -41,6 +61,7 @@ type ClaimedRow = {
   bodyMd: string;
   attempts: number;
   templateKey: string;
+  context: Record<string, string> | null;
 };
 
 /**
@@ -85,6 +106,7 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
     body_md: string;
     attempts: number;
     template_key: string;
+    context: Record<string, string> | null;
   }>(sql`
     with claimed as (
       select id
@@ -99,8 +121,13 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
        set status = 'SENDING', updated_at = now()
       from claimed
      where o.id = claimed.id
+       -- Re-checked rather than trusted from the CTE. FOR UPDATE SKIP LOCKED
+       -- is what makes two dispatchers take different rows; if that clause were
+       -- ever weakened, this is what still stops one row being claimed twice,
+       -- and a double claim is a double send.
+       and o.status = 'QUEUED'
     returning o.id, o.registration_id, o.to_email, o.to_name, o.subject, o.body_md,
-              o.attempts, o.template_key
+              o.attempts, o.template_key, o.context
   `);
 
   return rows.map((r) => ({
@@ -112,6 +139,7 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
     bodyMd: r.body_md,
     attempts: r.attempts,
     templateKey: r.template_key,
+    context: r.context,
   }));
 }
 
@@ -177,6 +205,35 @@ async function markFailed(row: ClaimedRow, maxAttempts: number, error: unknown):
   `);
 }
 
+/**
+ * Returns rows stranded in `SENDING` to the queue.
+ *
+ * **Without this a dispatch that dies mid-batch loses its rows for ever.**
+ * `claimBatch()` flips the whole batch to `SENDING` up front and then sends
+ * serially, so a function timeout, a deploy, or a crash leaves every unsent row
+ * of that batch in a state nothing writes again. The partial unique index
+ * covers `SENDING`, so `queueBlast()` then refuses to re-prepare those
+ * registrations while `blastSplit()` still counts them pending — §11.4's
+ * "nobody must be silently skipped", broken with no way out from the UI.
+ *
+ * A row is only stranded once it has been `SENDING` for longer than a dispatch
+ * can possibly last, so this can never take work from a run still using it.
+ *
+ * It does **not** stamp or unstamp anything: `ticket_sent_at` is written only
+ * in the same transaction that marks a row `SENT`, so a row that dies before
+ * that point delivered nothing and is safe to send again.
+ */
+async function reclaimStranded(): Promise<number> {
+  const rows = await getDb().execute<{ id: string }>(sql`
+    update email_outbox
+       set status = 'QUEUED', updated_at = now()
+     where status = 'SENDING'
+       and updated_at < now() - (interval '1 second' * ${MAX_DISPATCH_SECONDS * RECLAIM_FACTOR})
+    returning id
+  `);
+  return rows.length;
+}
+
 async function remainingQueued(): Promise<number> {
   const rows = await getDb().execute<{ n: number }>(sql`
     select count(*)::int as n from email_outbox where status = 'QUEUED'
@@ -207,6 +264,13 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       requireSetting<number>('email.max_attachment_mb'),
     ]);
 
+  /**
+   * Before anything else, because a stranded row is invisible to every other
+   * query here: it is neither queued nor sent, and it blocks its registration
+   * from being prepared again.
+   */
+  const reclaimed = await reclaimStranded();
+
   const timezone = await concertTimezone();
   const alreadySentToday = await sentToday(timezone);
   const budget = Math.max(0, maxPerDay - alreadySentToday);
@@ -217,12 +281,13 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       remaining: await remainingQueued(),
       dailyCapReached: true,
       warnings: [],
+      reclaimed,
     };
   }
 
   const batch = await claimBatch(Math.min(maxPerDispatch, budget));
   if (batch.length === 0) {
-    return { sent: 0, failed: 0, remaining: 0, dailyCapReached: false, warnings: [] };
+    return { sent: 0, failed: 0, remaining: 0, dailyCapReached: false, warnings: [], reclaimed };
   }
 
   /**
@@ -248,6 +313,34 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
         const party = carriesTickets(row.templateKey)
           ? await buildPartyAttachments({ registrationId: row.registrationId, mergeAbove })
           : { attendeeIds: [], attachments: [], truncated: [], skipped: [] };
+
+        /**
+         * **The message a person reviewed must not disagree with what is
+         * attached to it.**
+         *
+         * The body is rendered when the batch is prepared; the PDFs are built
+         * now. A seat added in between leaves a message that says "2 ticket(s)"
+         * carrying three — and §11.4's added-guest case makes that a normal
+         * event rather than a freak one.
+         *
+         * Re-rendering here is not the fix: §11.5 requires the dispatcher to
+         * send what was reviewed, verbatim. So the draft is stale, and the
+         * honest move is to refuse it and tell the admin to prepare again —
+         * which costs one click, where sending costs a guest turning up with a
+         * ticket the email did not mention.
+         */
+        const statedCount = Number(row.context?.attendee_count ?? NaN);
+        if (
+          carriesTickets(row.templateKey) &&
+          Number.isInteger(statedCount) &&
+          statedCount !== party.attendeeIds.length
+        ) {
+          throw new Error(
+            `This party had ${statedCount} seat(s) when the message was drafted and has ` +
+              `${party.attendeeIds.length} now, so the reviewed wording no longer matches what ` +
+              'would be attached. Discard the drafts and prepare the blast again.',
+          );
+        }
 
         const encoded = encodedSizeBytes(party.attachments);
         if (encoded > maxAttachmentMb * 1024 * 1024) {
@@ -300,5 +393,12 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     await transport.close();
   }
 
-  return { sent, failed, remaining: await remainingQueued(), dailyCapReached: false, warnings };
+  return {
+    sent,
+    failed,
+    remaining: await remainingQueued(),
+    dailyCapReached: false,
+    warnings,
+    reclaimed,
+  };
 }

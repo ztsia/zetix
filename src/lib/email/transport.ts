@@ -161,7 +161,20 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
     host: config.host,
     port: config.port,
     secure: config.secure,
-    auth: { user: config.user, pass: config.pass },
+    /**
+     * **`auth` is omitted entirely when there is no password**, rather than
+     * passed with an empty one.
+     *
+     * `resolveSmtpConfig()` deliberately allows a blank password for a local
+     * sink — the app password is absent from every cloud environment by design
+     * — but nodemailer treats the *presence* of `auth` as "authenticate", and
+     * refuses with `Missing credentials for "PLAIN"` before it opens a
+     * connection. So the documented development path could not send at all, and
+     * the transport tests did not catch it because they always pass a password.
+     *
+     * That path is the one the 400-ticket dry run takes.
+     */
+    ...(config.pass ? { auth: { user: config.user, pass: config.pass } } : {}),
     pool: true,
     maxConnections: 1,
   });

@@ -86,6 +86,30 @@ export default async function EmailPage({
 
   const split = await blastSplit({ segmentId: Number(segment.id), templateKey });
 
+  /**
+   * §11.4's "Round attribution": `registrations.round_label` is copied from the
+   * form that captured the booking "so the blast screen, exports and reports can
+   * group by round without inferring it from timestamps". The spec's own example
+   * of this screen is headed `Player invited · Round 2`, and a second blast that
+   * cannot say which round it is addressing is the one an admin most needs to
+   * read carefully.
+   */
+  const rounds = await db.execute<{ round_label: string | null; pending: number }>(sql`
+    select r.round_label, count(*)::int as pending
+      from registrations r
+     where r.segment_id = ${Number(segment.id)}
+       and r.status = 'CONFIRMED'
+       and r.deleted_at is null
+       and exists (
+         select 1 from attendees a
+          where a.registration_id = r.id
+            and a.status = 'CONFIRMED'
+            and a.ticket_sent_at is null
+            and a.deleted_at is null)
+     group by r.round_label
+     order by r.round_label nulls last
+  `);
+
   const outbox = await db.execute<{
     id: string;
     to_email: string;
@@ -169,6 +193,14 @@ export default async function EmailPage({
         <CardHeader>
           <CardTitle>
             {segment.name} · {templateKey}
+            {rounds.length > 0 ? (
+              <span className="text-muted-foreground ml-2 font-normal">
+                ·{' '}
+                {rounds
+                  .map((r) => `${r.round_label ?? 'No round'} (${r.pending})`)
+                  .join(', ')}
+              </span>
+            ) : null}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">

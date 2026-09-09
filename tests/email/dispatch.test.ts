@@ -356,3 +356,48 @@ describe('a ticket-bearing template with nothing to attach', () => {
     expect(row.last_error).toContain('no issued ticket');
   });
 });
+
+describe('the reviewed message must match what is attached', () => {
+  /**
+   * The body is rendered when the batch is prepared; the PDFs are built at
+   * dispatch. A seat added in between leaves a message that says "2 ticket(s)"
+   * carrying three — and §11.4's added-guest case makes that a normal event.
+   *
+   * Re-rendering at dispatch is not available: §11.5 requires the stored text to
+   * go out verbatim. So the draft is stale, and refusing it costs one click
+   * where sending costs a guest arriving with a ticket the email never mentioned.
+   */
+  it('refuses a draft whose party has grown since it was reviewed', async () => {
+    const { concertId, showId, segmentId, registrationId } = await seedParty({ seats: 2 });
+    await sql`update email_outbox set context = ${'{"attendee_count":"2"}'}::jsonb`;
+
+    await seedAttendees({ registrationId, showId, segmentId, count: 1, allocationType: 'EXTRA' });
+    await issueTickets({ concertId, showId });
+
+    const transport = recordingTransport();
+    const result = await dispatchBatch({ transport });
+
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(transport.messages).toHaveLength(0);
+    const [row] = await sql<{ last_error: string }[]>`select last_error from email_outbox`;
+    expect(row.last_error).toContain('2 seat(s) when the message was drafted');
+
+    // And nothing was stamped, so the party is still pending rather than lost.
+    for (const stamp of await attendeeStamps(registrationId)) {
+      expect(stamp.ticket_sent_at).toBeNull();
+    }
+  });
+
+  it('sends normally when the party is unchanged', async () => {
+    const { registrationId } = await seedParty({ seats: 2 });
+    await sql`update email_outbox set context = ${'{"attendee_count":"2"}'}::jsonb`;
+
+    const transport = recordingTransport();
+    const result = await dispatchBatch({ transport });
+
+    expect(result.sent).toBe(1);
+    expect(transport.messages[0].attachments).toHaveLength(2);
+    expect(registrationId).toBeGreaterThan(0);
+  });
+});

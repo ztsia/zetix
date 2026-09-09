@@ -137,6 +137,38 @@ describe('the SMTP conversation', () => {
   });
 });
 
+describe('the local sink path', () => {
+  /**
+   * **The documented development path had never been wired to a transport.**
+   *
+   * `resolveSmtpConfig()` deliberately allows a blank password — the Gmail app
+   * password is absent from every cloud environment by design (`local.md` §7) —
+   * but `createSmtpTransport()` passed `auth` regardless, and nodemailer treats
+   * the presence of `auth` as "authenticate", refusing with
+   * `Missing credentials for "PLAIN"` before opening a connection.
+   *
+   * Every test here passed a password, so the branch `config.test.ts` asserts
+   * was never exercised end to end. That path is the one the 400-ticket dry run
+   * takes.
+   */
+  it('sends with no credential at all', async () => {
+    sink = await startSmtpSink();
+    transport = createSmtpTransport({
+      host: '127.0.0.1',
+      port: sink.port,
+      secure: false,
+      user: 'tickets@example.org',
+      pass: '',
+      fromName: 'Lakeside Community Orchestra',
+    });
+
+    const result = await transport.send(message);
+
+    expect(result.accepted).toEqual(['player@example.com']);
+    expect(sink.messages).toHaveLength(1);
+  });
+});
+
 describe('the normalized result', () => {
   /**
    * `accepted` / `rejected` / `response` exist **only** on the real SMTP

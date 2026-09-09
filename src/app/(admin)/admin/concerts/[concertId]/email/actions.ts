@@ -159,10 +159,28 @@ const delivery = z.object({
   reason: z.string().trim().min(1, 'A short reason is required — it goes in the audit log.'),
 });
 
+/**
+ * The selection travels through a hidden field as JSON, so it arrives as an
+ * untrusted string.
+ *
+ * `JSON.parse` running before `zod` and outside a `try` throws a raw
+ * `SyntaxError` at the Server Action boundary — a stack rather than the
+ * structured error every other failure here returns (`CLAUDE.md` conventions:
+ * validation failure returns a structured error, never a thrown stack).
+ * Malformed input is a `null` the schema then rejects with a sentence.
+ */
+function parseIds(raw: FormDataEntryValue | null): unknown {
+  try {
+    return JSON.parse(String(raw ?? '[]'));
+  } catch {
+    return null;
+  }
+}
+
 export async function markDeliveredAction(formData: FormData): Promise<FormState> {
   const user = await requireAdmin();
   const parsed = delivery.safeParse({
-    attendeeIds: JSON.parse(String(formData.get('attendeeIds') ?? '[]')),
+    attendeeIds: parseIds(formData.get('attendeeIds')),
     reason: String(formData.get('reason') ?? ''),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Malformed request.' };
@@ -190,7 +208,7 @@ const resend = delivery.extend({ confirmation: z.string() });
 export async function resendTicketsAction(formData: FormData): Promise<FormState> {
   const user = await requireAdmin();
   const parsed = resend.safeParse({
-    attendeeIds: JSON.parse(String(formData.get('attendeeIds') ?? '[]')),
+    attendeeIds: parseIds(formData.get('attendeeIds')),
     reason: String(formData.get('reason') ?? ''),
     confirmation: String(formData.get('confirmation') ?? ''),
   });

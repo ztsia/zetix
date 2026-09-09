@@ -181,3 +181,33 @@ describe('a reason is required before a stamp moves', () => {
     expect(stub.markDelivered).not.toHaveBeenCalled();
   });
 });
+
+describe('malformed input is an error, not a stack', () => {
+  /**
+   * The selection travels through a hidden field as JSON, so it arrives as an
+   * untrusted string. `JSON.parse` running before `zod` and outside a `try`
+   * throws a raw `SyntaxError` across the Server Action boundary — where every
+   * other failure here returns a structured error (`CLAUDE.md` conventions).
+   */
+  const HOSTILE = ['oops', '{', 'null', '"1"', '[1,', 'undefined'];
+
+  it.each(HOSTILE)('rejects %j on mark-delivered without throwing', async (raw) => {
+    sessionUser.mockResolvedValue(admin);
+
+    const result = await actions.markDeliveredAction(form({ attendeeIds: raw, reason: 'x' }));
+
+    expect(result.error).toBeTruthy();
+    expect(stub.markDelivered).not.toHaveBeenCalled();
+  });
+
+  it.each(HOSTILE)('rejects %j on resend without throwing', async (raw) => {
+    sessionUser.mockResolvedValue(admin);
+
+    const result = await actions.resendTicketsAction(
+      form({ attendeeIds: raw, reason: 'x', confirmation: RESEND_PHRASE }),
+    );
+
+    expect(result.error).toBeTruthy();
+    expect(stub.clearDeliveryForResend).not.toHaveBeenCalled();
+  });
+});

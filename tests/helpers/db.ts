@@ -83,17 +83,40 @@ export async function resetDb(): Promise<void> {
     await migrate(db, { migrationsFolder: './drizzle' });
     migrated = true;
   }
-  // `restart identity` so ids are stable per test and a failure message names
-  // the same row number every run.
-  await sql`
-    truncate table
-      audit_log, check_ins, portal_notes, email_outbox, attendees, registrations,
-      form_responses, registration_forms, import_batches, mapping_profiles,
-      player_allocations, players, operator_show_assignments, app_users,
-      booklets, show_segments, shows, ticket_templates, concerts, system_settings,
-      auth_failures
-    restart identity cascade
-  `;
+  /**
+   * **The table list is derived from the catalog, never written out.**
+   *
+   * It used to name twenty-one tables. `email_templates` arrived as the
+   * twenty-second and was not added to it, so rows survived `resetDb()` and
+   * leaked between test files — a seed test counting eight inserts saw seven,
+   * because another file had already written one of them. Nothing failed at the
+   * point of the mistake; it failed somewhere else, later, in a way that read
+   * like a bug in the code under test.
+   *
+   * This is `F2`'s own lesson in a second costume. `drizzle/0003` enabled RLS on
+   * a named seven and that was the bug `0004` had to fix, which is why
+   * `tests/schema/rls-lockdown.test.ts` derives its list from the database
+   * instead of restating it. A list of tables is a thing the next module
+   * forgets to add to, so there should not be one.
+   *
+   * `restart identity` so ids are stable per test and a failure message names
+   * the same row number every run; `cascade` because the order no longer has to
+   * be worked out by hand.
+   */
+  await sql.unsafe(`
+    do $$
+    declare stmt text;
+    begin
+      select 'truncate table '
+             || string_agg(format('%I.%I', schemaname, tablename), ', ')
+             || ' restart identity cascade'
+        into stmt
+        from pg_tables
+       where schemaname = 'public'
+         and tablename <> '__drizzle_migrations';
+      if stmt is not null then execute stmt; end if;
+    end $$;
+  `);
 }
 
 export async function closeDb(): Promise<void> {

@@ -41,6 +41,28 @@ const schema = z.object({
   ADMIN_EMAIL: z.string().email().optional(),
   GMAIL_USER: z.string().optional(),
   GMAIL_APP_PASSWORD: z.string().optional(),
+
+  /**
+   * SMTP coordinates, which exist so the transport can be pointed at a local
+   * sink without touching code (spec/email.md §11.1, `local.md` §7).
+   *
+   * Unset in production, where the Gmail defaults in `src/lib/email/config.ts`
+   * apply. Set to `127.0.0.1` and a sink's port in development, because
+   * `smtp.gmail.com` is blocked on both 465 and 587 from any container and the
+   * app password is deliberately not in a cloud environment — an unsupervised
+   * session that could send is one that could blast the real players by
+   * accident.
+   *
+   * These are infrastructure coordinates, not operational values: nothing here
+   * is a capacity, quota, deadline or cap, and none of it comes from
+   * `context.md`. Batch sizes and delays resolve through the cascade instead.
+   */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export type Env = z.infer<typeof schema>;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
-import { DEFAULT_TEMPLATES, seedDefaultTemplates } from '@/lib/email/defaults';
+import { seedDefaultTemplates } from '@/lib/email/defaults';
+import { DEFAULT_TEMPLATES } from '@/lib/email/default-templates';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { renderTemplate } from '@/lib/email/render';
 
@@ -59,5 +60,40 @@ describe('the seeded defaults', () => {
       select subject from email_templates where key = 'public_ticket'
     `;
     expect(row.subject).toBe('Edited by the committee');
+  });
+});
+
+describe('the copy is importable from plain Node', () => {
+  /**
+   * **`scripts/seed-email-templates.ts` runs under `tsx`, not Next.**
+   *
+   * `defaults.ts` carries `import 'server-only'`, which throws outside a server
+   * component — so the script cannot import from it, and the wording lives in
+   * `default-templates.ts` with no such import. That is not a style choice: the
+   * script failed at startup until they were split.
+   *
+   * This test fails if `server-only` is ever added to the data module, or if the
+   * script's import is pointed back at `defaults.ts` — either of which breaks
+   * seeding production and would otherwise only be discovered by running it.
+   */
+  it('has no server-only import in the data module or the script', async () => {
+    const { readFileSync } = await import('node:fs');
+
+    const data = readFileSync('src/lib/email/default-templates.ts', 'utf8');
+    expect(data, 'default-templates.ts must stay importable from a plain Node script').not.toMatch(
+      /["']server-only["']/,
+    );
+
+    const script = readFileSync('scripts/seed-email-templates.ts', 'utf8');
+    expect(script, 'the script must import the data module, not the server-only one').toContain(
+      "from '../src/lib/email/default-templates'",
+    );
+    expect(script).not.toContain("from '../src/lib/email/defaults'");
+  });
+
+  /** The seeded set and the writer must not drift apart across the split. */
+  it('seeds exactly the templates the data module declares', async () => {
+    const result = await seedDefaultTemplates();
+    expect(result.inserted).toBe(Object.keys(DEFAULT_TEMPLATES).length);
   });
 });

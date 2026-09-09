@@ -17,6 +17,7 @@
     "db:local:reset": "./scripts/local-db.sh reset",
     "db:seed": "tsx scripts/seed-settings.ts",
     "db:seed:dev": "tsx scripts/seed-dev.ts",
+    "db:seed:email": "tsx scripts/seed-email-templates.ts",
     "bootstrap-admin": "tsx scripts/bootstrap-admin.ts"
   },
   "dependencies": {

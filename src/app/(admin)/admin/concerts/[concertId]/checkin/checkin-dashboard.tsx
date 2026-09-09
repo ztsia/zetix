@@ -25,6 +25,7 @@ import type { ArrivalBucket, CheckinStats, OperatorCount, ScanLogRow } from '@/l
 import { formatInZone } from '@/lib/export';
 import type { ExportColumn } from '@/lib/export';
 import { RevertScanButton } from './revert-scan-button';
+import { buildDashboardQuery, type DashboardChange } from './dashboard-url';
 
 type ShowOption = { id: number; name: string; startsAt: string | null };
 
@@ -101,44 +102,25 @@ export function CheckinDashboard({
     );
   }
 
+  // Bound after the guard above: the narrowing to `number` does not follow
+  // `showId` into the closure below, and widening the builder to accept null
+  // would let a real "no show selected" bug through the type system.
+  const currentShowId = showId;
+
   /** Table and show state live in the URL, so a narrowed view is a shareable link. */
-  function apply(next: {
-    show?: number;
-    pageIndex?: number;
-    pageSize?: number;
-    sorting?: SortingState;
-    search?: string;
-    includeReverted?: boolean;
-  }) {
-    const params = new URLSearchParams();
-    const show = next.show ?? showId;
-    if (show !== shows[0]!.id) params.set('show', String(show));
-
-    // Changing the show, the search or the reverted filter resets to page 1:
-    // page 4 of a different result set is a page that may not exist.
-    const resets =
-      next.show !== undefined ||
-      next.search !== undefined ||
-      next.includeReverted !== undefined;
-    const page = resets ? 0 : (next.pageIndex ?? pageIndex);
-    if (page > 0) params.set('page', String(page));
-
-    const size = next.pageSize ?? pageSize;
-    if (size !== 25) params.set('size', String(size));
-
-    const nextSorting = next.sorting ?? sorting;
-    if (nextSorting[0]) {
-      params.set('sort', nextSorting[0].id);
-      if (nextSorting[0].desc) params.set('dir', 'desc');
-    }
-
-    const nextSearch = next.search ?? search;
-    if (nextSearch) params.set('q', nextSearch);
-
-    const nextReverted = next.includeReverted ?? includeReverted;
-    if (nextReverted) params.set('reverted', '1');
-
-    const query = params.toString();
+  function apply(next: DashboardChange) {
+    const query = buildDashboardQuery(
+      {
+        showId: currentShowId,
+        defaultShowId: shows[0]!.id,
+        pageIndex,
+        pageSize,
+        sorting,
+        search,
+        includeReverted,
+      },
+      next,
+    );
     const base = `/admin/concerts/${concertId}/checkin`;
     startTransition(() => router.replace(query ? `${base}?${query}` : base));
   }
@@ -418,13 +400,7 @@ function ScanLog({
   search: string;
   includeReverted: boolean;
   isPending: boolean;
-  onApply: (next: {
-    pageIndex?: number;
-    pageSize?: number;
-    sorting?: SortingState;
-    search?: string;
-    includeReverted?: boolean;
-  }) => void;
+  onApply: (next: DashboardChange) => void;
 }) {
   const columns: DataTableColumn<ScanLogRow>[] = useMemo(
     () => [

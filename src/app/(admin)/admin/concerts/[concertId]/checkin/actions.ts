@@ -40,8 +40,10 @@ export async function revertCheckInAction(input: {
   const parsed = schema.safeParse({ ...input, reason: input.reason ?? null });
   if (!parsed.success) return { error: 'Malformed request.' };
 
-  // 404-shaped refusal, as everywhere else that takes a showId: probing ids must
-  // not distinguish "not yours" from "not there" (modules.md §5.2.1).
+  // Deliberately the same sentence whether the show is someone else's or does
+  // not exist. A Server Action has no status code to make this a 404, but the
+  // reasoning behind the 404s on `/api/checkin/*` applies unchanged: probing ids
+  // must not distinguish "not yours" from "not there" (modules.md §5.2.1).
   if (!(await canAccessShow(admin, parsed.data.showId))) {
     return { error: 'That show is not available.' };
   }

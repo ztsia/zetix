@@ -14,7 +14,9 @@ import {
   getScanLog,
   type ScanLogSort,
 } from '@/lib/checkin/dashboard';
+import { getRejectedSyncs } from '@/lib/checkin/rejected-sync';
 import { CheckinDashboard } from './checkin-dashboard';
+import { nearestShowId } from './dashboard-url';
 
 export const metadata: Metadata = { title: 'Check-in' };
 
@@ -93,6 +95,8 @@ export default async function CheckinPage({
         arrivals={[]}
         bucketMinutes={ARRIVAL_BUCKET_MINUTES}
         operatorCounts={[]}
+        rejectedSyncs={[]}
+        defaultShowId={0}
         scanLog={{ rows: [], total: 0 }}
         pageIndex={0}
         pageSize={25}
@@ -108,7 +112,7 @@ export default async function CheckinPage({
   const requested = Number(query.show);
   const showId = showOptions.some((show) => show.id === requested)
     ? requested
-    : showOptions[0]!.id;
+    : nearestShowId(showOptions);
 
   const pageIndex = Math.max(0, Number(query.page ?? 0) || 0);
   const requestedSize = Number(query.size ?? 25);
@@ -120,10 +124,11 @@ export default async function CheckinPage({
   const search = (query.q ?? '').trim();
   const includeReverted = query.reverted === '1';
 
-  const [stats, arrivals, operatorCounts, scanLog] = await Promise.all([
+  const [stats, arrivals, operatorCounts, rejectedSyncs, scanLog] = await Promise.all([
     getCheckinStats(showId),
     getArrivalBuckets(showId),
     getOperatorCounts(showId),
+    getRejectedSyncs(showId),
     getScanLog({
       showId,
       pageIndex,
@@ -150,6 +155,10 @@ export default async function CheckinPage({
       arrivals={arrivals}
       bucketMinutes={ARRIVAL_BUCKET_MINUTES}
       operatorCounts={operatorCounts}
+      rejectedSyncs={rejectedSyncs}
+      // The client omits this id from the query string, so it must be the same
+      // default this page applies — otherwise a shared link reopens elsewhere.
+      defaultShowId={nearestShowId(showOptions)}
       scanLog={scanLog}
       pageIndex={pageIndex}
       pageSize={pageSize}

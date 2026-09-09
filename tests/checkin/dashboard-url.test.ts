@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDashboardQuery,
+  nearestShowId,
   type DashboardState,
 } from '@/app/(admin)/admin/concerts/[concertId]/checkin/dashboard-url';
 
@@ -98,5 +99,43 @@ describe('buildDashboardQuery', () => {
     // text the operator just deleted.
     const state = { ...base, search: 'alice', pageIndex: 2 };
     expect(buildDashboardQuery(state, { search: '' })).toBe('');
+  });
+});
+
+describe('nearestShowId', () => {
+  const shows = [
+    { id: 1, startsAt: '2026-09-19T06:00:00Z' }, // matinee
+    { id: 2, startsAt: '2026-09-19T11:00:00Z' }, // evening
+  ];
+
+  it('opens on the matinee while the matinee is running', () => {
+    expect(nearestShowId(shows, new Date('2026-09-19T06:30:00Z'))).toBe(1);
+  });
+
+  it('opens on the evening once the evening has started', () => {
+    // The regression: opening on the earliest show puts the desk in front of a
+    // finished door — full house, empty queue — which reads as "everyone is in"
+    // rather than "wrong show".
+    expect(nearestShowId(shows, new Date('2026-09-19T11:30:00Z'))).toBe(2);
+  });
+
+  it('opens on the first show before any doors have opened', () => {
+    expect(nearestShowId(shows, new Date('2026-09-18T09:00:00Z'))).toBe(1);
+  });
+
+  it('falls back to the first show when none carries a start time', () => {
+    expect(nearestShowId([{ id: 7, startsAt: null }, { id: 8, startsAt: null }])).toBe(7);
+  });
+
+  it('ignores an undated show rather than letting it win', () => {
+    const mixed = [
+      { id: 5, startsAt: null },
+      { id: 6, startsAt: '2026-09-19T06:00:00Z' },
+    ];
+    expect(nearestShowId(mixed, new Date('2026-09-19T07:00:00Z'))).toBe(6);
+  });
+
+  it('refuses an empty list rather than inventing an id', () => {
+    expect(() => nearestShowId([])).toThrow();
   });
 });

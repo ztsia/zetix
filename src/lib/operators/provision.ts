@@ -93,7 +93,29 @@ export async function createOperator(
   }
 
   const accessCode = generateAccessCode();
-  const created = await auth.createUser(email, accessCode);
+
+  let created: { id: string };
+  try {
+    created = await auth.createUser(email, accessCode);
+  } catch (error) {
+    /**
+     * Supabase Auth already holds this address while `app_users` does not.
+     *
+     * The two can drift — a row deleted by hand, or a create that failed after
+     * the Auth user existed — and the provider's own message names an email the
+     * admin never typed and the usher will never see, which reads as a bug in
+     * something else entirely. Say what actually has to happen instead.
+     */
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already|exists|registered|duplicate/i.test(message)) {
+      throw new OperatorProvisionError(
+        `Supabase Auth already holds an account for "${name}" (${email}), but this ` +
+          'system has no operator by that name. Either give the new usher a fuller ' +
+          'name, or remove the stale user from the Supabase dashboard first.',
+      );
+    }
+    throw error;
+  }
 
   try {
     await db.insert(appUsers).values({

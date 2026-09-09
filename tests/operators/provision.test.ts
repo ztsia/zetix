@@ -166,6 +166,36 @@ describe('createOperator', () => {
     expect(rows.map((r) => r.email)).toEqual(['taken@example.test']);
   });
 
+  it('explains a Supabase address that app_users does not know about', async () => {
+    // The two can drift — a row deleted by hand, or a create that failed after
+    // the Auth user existed. The provider's own message names an address the
+    // admin never typed and the usher never sees.
+    const { auth } = fakeAuth({
+      async createUser() {
+        throw new Error('A user with this email address has already been registered');
+      },
+    });
+
+    await expect(
+      createOperator({ displayName: 'Wei', actorId: ADMIN_ID }, auth),
+    ).rejects.toBeInstanceOf(OperatorProvisionError);
+    await expect(
+      createOperator({ displayName: 'Wei', actorId: ADMIN_ID }, auth),
+    ).rejects.toThrow(/Supabase dashboard/);
+  });
+
+  it('does not disguise an unrelated Auth failure as a name clash', async () => {
+    const { auth } = fakeAuth({
+      async createUser() {
+        throw new Error('service unavailable');
+      },
+    });
+
+    await expect(
+      createOperator({ displayName: 'Wei', actorId: ADMIN_ID }, auth),
+    ).rejects.toThrow('service unavailable');
+  });
+
   it('never writes the access code to the audit log', async () => {
     const { auth } = fakeAuth();
     const operator = await createOperator({ displayName: 'Wei', actorId: ADMIN_ID }, auth);

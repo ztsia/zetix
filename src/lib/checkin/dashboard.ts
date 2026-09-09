@@ -238,18 +238,36 @@ export async function getScanLog(
   const { showId, pageIndex, pageSize, sort, desc, search, includeReverted } = query;
   const db = getDb();
 
-  const like = `%${search.trim()}%`;
+  /**
+   * `%`, `_` and `\` are escaped before the term is wrapped.
+   *
+   * They are `ILIKE` metacharacters, so an unescaped `%` matches everything and
+   * a search for it silently returns the whole log — which reads as "no filter
+   * applied" rather than "nothing found". Device ids are among the searched
+   * columns and are the field most likely to contain an underscore.
+   *
+   * The term is parameterised either way, so this is about the search meaning
+   * what it says, not about injection.
+   */
+  const escaped = search.trim().replace(/([\\%_])/g, '\\$1');
+  const like = `%${escaped}%`;
   const searching = search.trim().length > 0;
+
+  // A caller passing 0 or a negative page size would otherwise reach Postgres as
+  // `LIMIT -1` and throw. The page clamps its own input; this makes the library
+  // safe for any caller.
+  const limit = Math.max(1, Math.trunc(pageSize));
+  const offset = Math.max(0, Math.trunc(pageIndex)) * limit;
 
   const where = sql`
     c.show_id = ${showId}
     ${includeReverted ? sql`` : sql`and c.reverted_at is null`}
     ${
       searching
-        ? sql`and (a.full_name ilike ${like}
-                or a.ticket_code ilike ${like}
-                or u.display_name ilike ${like}
-                or c.device_id ilike ${like})`
+        ? sql`and (a.full_name ilike ${like} escape '\\'
+                or a.ticket_code ilike ${like} escape '\\'
+                or u.display_name ilike ${like} escape '\\'
+                or c.device_id ilike ${like} escape '\\')`
         : sql``
     }
   `;
@@ -296,7 +314,7 @@ export async function getScanLog(
     -- Ties are broken by id so a row cannot appear on two pages, or on neither,
     -- when many scans share a second.
     order by ${orderColumn} ${direction} nulls last, c.id desc
-    limit ${pageSize} offset ${pageIndex * pageSize}
+    limit ${limit} offset ${offset}
   `);
 
   const totals = await db.execute<{ total: number }>(sql`

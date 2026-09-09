@@ -6,7 +6,6 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import type { SortingState } from '@tanstack/react-table';
 import { DoorOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   ChartContainer,
@@ -22,9 +21,11 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { DataTable, DataTableColumnHeader, type DataTableColumn } from '@/components/data-table';
 import type { ArrivalBucket, CheckinStats, OperatorCount, ScanLogRow } from '@/lib/checkin/dashboard';
+import type { RejectedSync } from '@/lib/checkin/rejected-sync';
 import { formatInZone } from '@/lib/export';
 import type { ExportColumn } from '@/lib/export';
 import { RevertScanButton } from './revert-scan-button';
+import { RejectedSyncsAlert } from './rejected-syncs-alert';
 import { buildDashboardQuery, type DashboardChange } from './dashboard-url';
 
 type ShowOption = { id: number; name: string; startsAt: string | null };
@@ -57,6 +58,8 @@ export function CheckinDashboard({
   arrivals,
   bucketMinutes,
   operatorCounts,
+  rejectedSyncs,
+  defaultShowId,
   scanLog,
   pageIndex,
   pageSize,
@@ -73,6 +76,9 @@ export function CheckinDashboard({
   arrivals: ArrivalBucket[];
   bucketMinutes: number;
   operatorCounts: OperatorCount[];
+  rejectedSyncs: RejectedSync[];
+  /** The id the page defaults to, which the query string therefore omits. */
+  defaultShowId: number;
   scanLog: { rows: ScanLogRow[]; total: number };
   pageIndex: number;
   pageSize: number;
@@ -112,7 +118,7 @@ export function CheckinDashboard({
     const query = buildDashboardQuery(
       {
         showId: currentShowId,
-        defaultShowId: shows[0]!.id,
+        defaultShowId,
         pageIndex,
         pageSize,
         sorting,
@@ -147,6 +153,8 @@ export function CheckinDashboard({
       </DashboardHeader>
 
       <LiveRefresh />
+
+      <RejectedSyncsAlert rejected={rejectedSyncs} timeZone={timeZone} />
 
       <StatCards stats={stats} />
 
@@ -342,7 +350,10 @@ function OperatorCounts({ counts }: { counts: OperatorCount[] }) {
     <Card>
       <CardHeader>
         <CardTitle className="text-base">By operator</CardTitle>
-        <p className="text-muted-foreground text-sm">Guests admitted, busiest first.</p>
+        <p className="text-muted-foreground text-sm">
+          Guests admitted, busiest first. One guest scanned on two phones counts for each
+          usher, so these can add up to more than the arrivals above.
+        </p>
       </CardHeader>
       <CardContent>
         {counts.length === 0 ? (

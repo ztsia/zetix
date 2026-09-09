@@ -1,0 +1,160 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { sql } from 'drizzle-orm';
+import { getDb } from '@/db/client';
+import { requireAdmin } from '@/lib/auth/guards';
+import { seedDefaultTemplates } from '@/lib/email/defaults';
+import { TEMPLATE_KEYS } from '@/lib/email/templates';
+import { Button } from '@/components/ui/button';
+import { TemplateEditor, type PreviewRecipient } from './template-editor';
+
+export const metadata: Metadata = { title: 'Email templates' };
+
+/**
+ * `/admin/concerts/{id}/email/templates` — the editor of §11.3.
+ *
+ * Templates are seeded lazily on first view, so the system can send before
+ * anyone has opened this screen (the argument decision 10 makes for ticket
+ * templates). Seeding never overwrites, so opening this page cannot undo an
+ * edit.
+ */
+export default async function TemplatesPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ concertId: string }>;
+  searchParams: Promise<{ key?: string }>;
+}) {
+  await requireAdmin();
+
+  const { concertId: rawConcertId } = await params;
+  const concertId = Number(rawConcertId);
+  if (!Number.isInteger(concertId) || concertId <= 0) notFound();
+
+  await seedDefaultTemplates();
+
+  const { key } = await searchParams;
+  const templateKey = TEMPLATE_KEYS.includes(key as never) ? (key as string) : 'public_ticket';
+
+  const db = getDb();
+  const rows = await db.execute<{ key: string; name: string; subject: string; body_md: string }>(sql`
+    select key, name, subject, body_md from email_templates where key = ${templateKey}
+  `);
+  if (rows.length === 0) notFound();
+
+  /**
+   * §11.5: preview against a **real** recipient, "with a 'longest name' and a
+   * 'no player linked' case in the picker — template bugs are almost always
+   * data-shape bugs".
+   *
+   * Both are selected by the database rather than assembled here, so the picker
+   * offers rows that genuinely exist in this concert.
+   */
+  const previewRows = await db.execute<{
+    label: string;
+    concert_name: string;
+    show_name: string;
+    venue_name: string | null;
+    venue_address: string | null;
+    segment_name: string;
+    contact_name: string | null;
+    contact_email: string;
+    round_label: string | null;
+    attendee_count: number;
+    attendee_names: string[];
+  }>(sql`
+    (select 'Longest name: ' || coalesce(r.contact_name, '(none)') as label,
+            c.name as concert_name, s.name as show_name, s.venue_name, s.venue_address,
+            seg.name as segment_name, r.contact_name, r.contact_email, r.round_label,
+            counts.attendee_count, counts.attendee_names
+       from registrations r
+       join show_segments seg on seg.id = r.segment_id
+       join shows s on s.id = r.show_id
+       join concerts c on c.id = s.concert_id
+       join lateral (
+         select count(*)::int as attendee_count,
+                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names
+           from attendees a where a.registration_id = r.id and a.deleted_at is null
+       ) counts on true
+      where s.concert_id = ${concertId} and r.deleted_at is null
+      order by length(coalesce(r.contact_name, '')) desc, r.id
+      limit 1)
+    union all
+    (select 'No player linked: ' || coalesce(r.contact_name, '(none)') as label,
+            c.name, s.name, s.venue_name, s.venue_address,
+            seg.name, r.contact_name, r.contact_email, r.round_label,
+            counts.attendee_count, counts.attendee_names
+       from registrations r
+       join show_segments seg on seg.id = r.segment_id
+       join shows s on s.id = r.show_id
+       join concerts c on c.id = s.concert_id
+       join lateral (
+         select count(*)::int as attendee_count,
+                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names
+           from attendees a where a.registration_id = r.id and a.deleted_at is null
+       ) counts on true
+      where s.concert_id = ${concertId} and r.deleted_at is null and r.player_id is null
+      order by r.id
+      limit 1)
+  `);
+
+  const recipients: PreviewRecipient[] = previewRows.map((row) => ({
+    label: row.label,
+    context: {
+      'concert.name': row.concert_name,
+      'show.name': row.show_name,
+      'show.starts_at': '',
+      'show.doors_open_at': '',
+      'show.venue_name': row.venue_name ?? '',
+      'show.venue_address': row.venue_address ?? '',
+      'segment.name': row.segment_name,
+      'registration.contact_name': row.contact_name ?? '',
+      'registration.contact_email': row.contact_email,
+      'registration.round_label': row.round_label ?? '',
+      attendee_count: String(row.attendee_count),
+      attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
+      ticket_links: '(one link per ticket)',
+    },
+  }));
+
+  return (
+    <div className="space-y-6 p-6">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Email templates</h1>
+          <p className="text-muted-foreground text-sm">
+            Markdown with merge fields. A plain-text alternative is generated when the message is sent.
+          </p>
+        </div>
+        <Button variant="outline" render={<Link href={`/admin/concerts/${concertId}/email`} />}>
+          Back to blast
+        </Button>
+      </header>
+
+      <div className="flex flex-wrap gap-2">
+        {TEMPLATE_KEYS.map((templateName) => (
+          <Button
+            key={templateName}
+            size="sm"
+            variant={templateName === templateKey ? 'secondary' : 'ghost'}
+            render={
+              <Link href={`/admin/concerts/${concertId}/email/templates?key=${templateName}`} />
+            }
+          >
+            {templateName}
+          </Button>
+        ))}
+      </div>
+
+      <TemplateEditor
+        key={templateKey}
+        templateKey={rows[0].key}
+        name={rows[0].name}
+        subject={rows[0].subject}
+        bodyMd={rows[0].body_md}
+        recipients={recipients}
+      />
+    </div>
+  );
+}

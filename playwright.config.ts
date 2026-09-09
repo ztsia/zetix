@@ -23,7 +23,29 @@ export default defineConfig({
     trace: 'retain-on-failure',
     video: 'off',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    /**
+     * The door scanner is the one surface that is phone-only (spec/surfaces.md
+     * §15.4), and the ushers carry a mix of Android and iPhone (context.md §6
+     * question 7). Both shapes run, because the two differ in the ways that
+     * break this screen: viewport height, safe-area insets at the bottom, and
+     * how much room the tab bar has once the browser chrome is counted.
+     *
+     * **Both are Chromium, and that is a real limit worth stating.** Only the
+     * Chromium engine is installed here, so `iphone` reproduces an iPhone's
+     * *metrics*, never Safari's *behaviour* — the Vibration API it does not
+     * have, the autoplay rules it applies to `AudioContext`, whether the ringer
+     * switch silences Web Audio. Nothing in this suite can speak to those, and
+     * nothing in it should be read as if it did. They are settled on real
+     * handsets instead, through `/scan/diagnostics` and the 18 Sep rehearsal
+     * (local.md §5e). What this project *does* catch is layout, thumb reach,
+     * the offline queue and the manifest — which is most of the surface, and
+     * all of it regressible.
+     */
+    { name: 'android', use: { ...devices['Pixel 7'] } },
+    { name: 'iphone', use: { ...devices['iPhone 15'] } },
+  ],
   webServer: {
     command: `pnpm dev --port ${PORT}`,
     url: `http://localhost:${PORT}`,

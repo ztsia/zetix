@@ -249,7 +249,17 @@ export function ScannerShell({
 
         <TabsList
           variant="line"
-          className="h-auto shrink-0 justify-around rounded-none border-t bg-transparent p-0 pb-[env(safe-area-inset-bottom)]"
+          /**
+           * `w-full` and the variant-prefixed height override are both load
+           * bearing. `tabsListVariants` ships `w-fit` and
+           * `group-data-horizontal/tabs:h-8`, and a bare `h-auto` does not beat
+           * a variant-prefixed class — tailwind-merge treats them as different
+           * keys, so both survive and the prefixed one wins. Without these the
+           * bar renders 152×32px in the corner instead of a full-width row of
+           * 64px targets, which a DOM snapshot shows as perfectly correct and a
+           * thumb in a dark foyer does not.
+           */
+          className="h-auto w-full shrink-0 justify-around rounded-none border-t bg-transparent p-0 pb-[env(safe-area-inset-bottom)] group-data-horizontal/tabs:h-auto"
         >
           <BottomTab value="scan" icon={<ScanLine />} label="Scan" />
           <BottomTab value="search" icon={<SearchIcon />} label="Search" />

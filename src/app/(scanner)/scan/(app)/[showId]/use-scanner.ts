@@ -65,7 +65,6 @@ export function useScanner({
   /** Last time each token fired, for `checkin.scan_debounce_ms` (§12.1). */
   const lastSeenRef = useRef<Map<string, number>>(new Map());
   const drainingRef = useRef(false);
-  const bootedRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [durable, setDurable] = useState(true);
@@ -223,13 +222,19 @@ export function useScanner({
     [enqueue],
   );
 
-  // Boot: open storage, load whatever this device already has, and only then
-  // reach for the network. A phone that arrives at the venue with no signal
-  // must come up fully usable from its own IndexedDB.
+  /**
+   * Boot: open storage, load whatever this device already has, and only then
+   * reach for the network. A phone that arrives at the venue with no signal
+   * must come up fully usable from its own IndexedDB.
+   *
+   * **Deliberately re-runnable.** An earlier version guarded this with a
+   * "have I booted" ref, which deadlocked the screen on a spinner: React mounts,
+   * unmounts and remounts in development and may remount at any time in
+   * production, so the first pass was cancelled by its own cleanup and the
+   * second returned early at the guard — leaving `ready` false forever. Opening
+   * IndexedDB twice is cheap and idempotent; a door stuck on a spinner is not.
+   */
   useEffect(() => {
-    if (bootedRef.current) return;
-    bootedRef.current = true;
-
     let cancelled = false;
     void (async () => {
       const store = await openCheckinStore();

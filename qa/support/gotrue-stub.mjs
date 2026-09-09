@@ -10,9 +10,43 @@
  */
 import { createServer } from 'node:http';
 import { createHmac, randomUUID } from 'node:crypto';
+import postgres from 'postgres';
 
 const PORT = Number(process.env.STUB_PORT ?? 54321);
 const USERS = JSON.parse(process.env.STUB_USERS ?? '[]'); // [{id,email,password}]
+
+/**
+ * A minimal PostgREST face, for the one RPC the application makes.
+ *
+ * Module `G`'s manifest route must reach the roster through
+ * `.rpc('manifest_for_show')` and is forbidden the Drizzle path by lint and by
+ * `tests/auth/manifest-call-site.test.ts` (decision 20b). Without this, the
+ * scanner cannot load a manifest under QA at all — and stubbing the *response*
+ * would test nothing, because the whole point of that function is that it
+ * re-checks the caller's assignment itself.
+ *
+ * So this does not fake it. It sets `request.jwt.claims` from the bearer token
+ * exactly as PostgREST would and calls the real function, which means the
+ * second authorization layer is genuinely exercised: an operator asking for a
+ * show they are not rostered on gets zero rows from Postgres, not from here.
+ *
+ * Only active when QA_DATABASE_URL is set, so modules that do not need it are
+ * unaffected.
+ */
+const RPC_DB = process.env.QA_DATABASE_URL
+  ? postgres(process.env.QA_DATABASE_URL, { prepare: false, max: 2 })
+  : null;
+
+function claimsFrom(authorization) {
+  const token = (authorization ?? '').replace(/^Bearer\s+/i, '');
+  const [, payload] = token.split('.');
+  if (!payload) return null;
+  try {
+    return Buffer.from(payload, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 function jwt(user, ttl = 3600) {
@@ -63,6 +97,25 @@ createServer(async (req, res) => {
   let body = {};
   try { body = raw ? JSON.parse(raw) : {}; } catch {}
   calls.push({ method: req.method, path: url.pathname, grant: url.searchParams.get('grant_type') });
+
+  if (url.pathname.startsWith('/rest/v1/rpc/') && req.method === 'POST') {
+    if (!RPC_DB) return json(res, 500, { message: 'QA_DATABASE_URL not set' });
+    const fn = url.pathname.slice('/rest/v1/rpc/'.length);
+    if (fn !== 'manifest_for_show') return json(res, 404, { message: `no stub rpc ${fn}` });
+    const claims = claimsFrom(req.headers.authorization);
+    try {
+      const rows = await RPC_DB.begin(async (tx) => {
+        // Exactly what PostgREST does before it calls a function, and what
+        // `public.jwt_sub()` reads. A missing or malformed claim resolves to
+        // nobody, which is the behaviour the function is written against.
+        await tx`select set_config('request.jwt.claims', ${claims ?? ''}, true)`;
+        return tx`select * from manifest_for_show(${Number(body.p_show_id)}::bigint)`;
+      });
+      return json(res, 200, rows);
+    } catch (cause) {
+      return json(res, 500, { message: String(cause) });
+    }
+  }
 
   if (url.pathname === '/__qa/calls') return json(res, 200, calls);
   if (url.pathname === '/__qa/reset') { calls = []; return json(res, 200, { ok: true }); }

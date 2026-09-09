@@ -31,29 +31,38 @@ the short version is that anything still true next week belongs in `docs/spec/`,
 
 ## Where the build is
 
-Scaffold only — no schema, no domain code yet. `pnpm dev`, `pnpm test`, `pnpm build` and CI all pass.
+**Both foundations and seven of the eight wave-2 modules have merged.** `pnpm dev`, `pnpm test`,
+`pnpm build` and CI all pass.
 
-| Done | Not started |
+| Merged | Not started |
 |---|---|
-| Next.js 16 + Tailwind 4 + all 61 shadcn components | **All eight wave-2 modules** — `A`–`I` (`docs/modules.md` §3) |
-| `F1`: Drizzle schema, settings cascade, `claim_seats()` — merged | `D` ticket render, then `F` outbox — the critical path |
-| `F2`: auth, admin shell, `DataTable`, and the manifest authorization boundary | The rendered `/login` console, never yet watched by anyone (`docs/local.md` §5) |
+| `F1` schema, settings cascade, `claim_seats()` · `F2` auth, admin shell, `DataTable` | **`H`** check-in dashboard, operator accounts, scan-log revert |
+| `A` config & people · `B` registrations & extras · `C` spreadsheet import | **`I`** read-only `/t/{token}` — until it lands, a scanned ticket QR 404s |
+| `D` ticket render · `E` template editor · `F` outbox & blast | |
+| `G` door scanner, incl. `/scan/diagnostics` | |
 | CI: typecheck/lint/test/build on a real Postgres 16 | |
-| Schema, seed and admin account live on Supabase | |
 
-**Next task**: wave 2 opens the moment `F2` merges — eight branches that touch different route groups
-and share only `DataTable` and the schema (`docs/modules.md` §5.1). Start `D`; it is the longest chain
-to the 13 Sep ticket deadline and `F` cannot begin until it lands.
+**Next task**: `H` and `I`. Both are genuinely parallel, both are off the critical path, and both
+branches exist holding only a handoff — they are 130+ commits behind `main`, so merge `main` first.
 
-Deployment state: Supabase project live and **the schema is now on it** — migrations `0000`–`0004`
-applied 5 Sep, system settings seeded, the shared `ADMIN` account created, and the manifest
-authorization boundary verified from outside with the publishable key and with a real signed-in
-session (`docs/local.md` §5a). Public sign-ups off, email confirmation on, all three extensions
+**The larger risk is no longer code.** Seven modules shipped without anyone ever signing in and
+looking at them — every module's handoff records this, always for the same reason (the admin code
+lives only in `.env.local`). F2's one browser pass caught four bugs that typecheck and build had both
+passed. A local session with a browser is worth more right now than another module.
+
+Deployment state: Supabase live with migrations `0000`–`0006` applied (10 Sep, 22 tables), system
+settings seeded, the shared `ADMIN` account created, the manifest authorization boundary verified
+from outside, and the private `ticket-assets` bucket created and its privacy proved
+(`docs/local.md` §4, §5a, §8). Public sign-ups off, email confirmation on, all three extensions
 installed. Vercel project `zetix` live in `sin1` with the GitHub repo connected and Production
-env vars set; `main` is branch-protected requiring `ci`. What is still outstanding, and who must do
-it, is in `docs/local.md`.
+env vars set; `main` is branch-protected requiring `ci`.
 
-**`pnpm test` must never point at Supabase.** The suite truncates all 21 tables. Put the local
+**The system is configured with nothing.** No capacity, quota or deadline exists in code, seed or
+database — by design (§2.1). Until someone enters this concert through the admin UI,
+`segment_pool()` refuses to return figures and allocation, import and the blast all stop rather than
+guess. That, and the outstanding human tasks, are in `docs/local.md`.
+
+**`pnpm test` must never point at Supabase.** The suite truncates every table. Put the local
 Postgres URL in `.env.test.local`, which vitest loads ahead of `.env.local`; `tests/helpers/db.ts`
 refuses a non-local hostname outright (`docs/local.md` §6.1).
 

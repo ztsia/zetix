@@ -18,6 +18,7 @@ export * from './people';
 export * from './imports';
 export * from './registrations';
 export * from './email';
+export * from './email-templates';
 export * from './checkin';
 export * from './portal';
 export * from './audit';

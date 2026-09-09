@@ -1,31 +1,31 @@
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
 import { and, eq, isNull } from 'drizzle-orm';
-import { Camera, ChevronLeft } from 'lucide-react';
+import { count } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { shows } from '@/db/schema/shows';
+import { concerts } from '@/db/schema/concerts';
+import { operatorShowAssignments } from '@/db/schema/people';
+import { resolveSetting } from '@/db/settings';
 import { requireScannerUser } from '@/lib/auth/guards';
 import { canAccessShow } from '@/lib/auth/show-access';
-import { Button } from '@/components/ui/button';
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty';
-import { Badge } from '@/components/ui/badge';
+import { ScannerShell } from './scanner-shell';
 
 /**
- * One show, at the door. Module `G` builds the Scan / Search / Stats tabs here.
+ * One show, at the door (spec/checkin.md §12, spec/surfaces.md §15.4).
  *
- * **The assignment check is F2's and it is enforced here, before anything is
- * rendered.** Reaching a show by typing its id must fail exactly as reaching it
- * from the list would — an operator who is not rostered on this show gets a 404,
- * not a scanner (decision 20, spec/checkin.md §12.3).
+ * **The assignment check is enforced here, before anything renders**, and F2
+ * wrote it that way for a reason worth keeping: reaching a show by typing its
+ * id must fail exactly as reaching it from the list would. A 404 rather than a
+ * 403, so "you may not see this show" and "this show does not exist" are
+ * indistinguishable to someone probing ids (decision 20, modules.md §5.2.1).
  *
- * A 404 rather than a 403 on purpose: "you may not see this show" and "this show
- * does not exist" should be indistinguishable to someone probing ids.
+ * Everything below this line is client-side, because everything below this line
+ * has to work with the network gone. This component's whole job is to hand the
+ * shell the few server facts it cannot derive offline — chiefly **when the
+ * manifest expires**, which is show start plus `checkin.manifest_ttl_hours`
+ * resolved through the four-level cascade. That is computed here rather than on
+ * the phone because a device with a wrong clock is most of why a TTL fails at a
+ * door.
  */
 export default async function ScannerShowPage({
   params,
@@ -39,43 +39,83 @@ export default async function ScannerShowPage({
 
   const db = getDb();
   const rows = await db
-    .select({ id: shows.id, name: shows.name, venueName: shows.venueName })
+    .select({
+      id: shows.id,
+      name: shows.name,
+      venueName: shows.venueName,
+      startsAt: shows.startsAt,
+      doorsOpenAt: shows.doorsOpenAt,
+      concertId: shows.concertId,
+      timezone: concerts.timezone,
+    })
     .from(shows)
+    .innerJoin(concerts, eq(concerts.id, shows.concertId))
     .where(and(eq(shows.id, id), isNull(shows.deletedAt)))
     .limit(1);
+
   const show = rows[0];
   if (!show) notFound();
-
   if (!(await canAccessShow(user, id))) notFound();
 
-  return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" render={<Link href="/scan" />}>
-          <ChevronLeft />
-          <span className="sr-only">Back to shows</span>
-        </Button>
-        <div className="flex-1">
-          <h1 className="font-semibold">{show.name}</h1>
-          {show.venueName && (
-            <p className="text-muted-foreground text-xs">{show.venueName}</p>
-          )}
-        </div>
-        <Badge variant="secondary">Admitting</Badge>
-      </div>
+  /**
+   * **No operational value reaches code** (`CLAUDE.md`). The TTL is a settings
+   * key, resolved segment → show → concert → system, and `null` is a real
+   * answer meaning nobody has set one. The scanner treats that as "never
+   * expires" rather than refusing to work, because a door is not improved by
+   * waiting on an admin to fill in a field.
+   */
+  const ttlHours = await resolveSetting<number>('checkin.manifest_ttl_hours', {
+    showId: id,
+    concertId: show.concertId,
+  });
 
-      <Empty className="border-border flex-1 rounded-lg border border-dashed">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Camera />
-          </EmptyMedia>
-          <EmptyTitle>Scanner not built yet</EmptyTitle>
-          <EmptyDescription>
-            Camera scanning, name search and live stats are module G. You are
-            signed in and assigned to this show, so it will work here.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    </main>
+  const expiresAt =
+    ttlHours != null && show.startsAt
+      ? new Date(show.startsAt.getTime() + ttlHours * 3_600_000).toISOString()
+      : null;
+
+  const debounceMs = await resolveSetting<number>('checkin.scan_debounce_ms', {
+    showId: id,
+    concertId: show.concertId,
+  });
+
+  /**
+   * **With exactly one assignment the show pill is read-only** (§12.1).
+   *
+   * The pill exists so an usher can always see which show they are admitting
+   * to, and the picker exists so they can change it. An operator rostered on
+   * one show has nothing to change it *to* — leaving it tappable only offers a
+   * way to land on an empty picker mid-queue, and §12.1 auto-selects for
+   * exactly this reason: choosing from a list of one is where the single most
+   * damaging setup mistake happens.
+   *
+   * `ADMIN` always keeps the link. They are not rostered at all and legitimately
+   * move between shows.
+   */
+  const assignments =
+    user.role === 'ADMIN'
+      ? null
+      : await db
+          .select({ total: count() })
+          .from(operatorShowAssignments)
+          .where(eq(operatorShowAssignments.userId, user.id));
+
+  const canSwitchShows = user.role === 'ADMIN' || (assignments?.[0]?.total ?? 0) > 1;
+
+  return (
+    <ScannerShell
+      show={{
+        id: show.id,
+        name: show.name,
+        venueName: show.venueName,
+        startsAt: show.startsAt?.toISOString() ?? null,
+        doorsOpenAt: show.doorsOpenAt?.toISOString() ?? null,
+        timezone: show.timezone,
+      }}
+      operatorName={user.displayName ?? user.email}
+      canSwitchShows={canSwitchShows}
+      manifestExpiresAt={expiresAt}
+      scanDebounceMs={debounceMs ?? 0}
+    />
   );
 }

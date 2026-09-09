@@ -114,39 +114,55 @@ export function useScanner({
     const store = storeRef.current;
     if (!store || drainingRef.current) return;
 
-    const all = await store.allScans(showId);
-    const pending = pendingScans(all);
-    if (pending.length === 0) {
-      setScans(all);
-      return;
-    }
-
     drainingRef.current = true;
     try {
-      const response = await fetch('/api/checkin/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          showId,
-          scans: pending.map((s) => ({
-            qrTokenSha256: s.qrTokenSha256,
-            scannedAt: s.scannedAt,
-            source: s.source,
-            deviceId: s.deviceId,
-            overrideReason: s.overrideReason ?? null,
-          })),
-        }),
-      });
-      if (!response.ok) return;
+      /**
+       * **Loop until the queue is actually empty, not until one batch is sent.**
+       *
+       * Scans made *while* a drain is in flight are the normal case, not an
+       * edge one: "Admit remaining 3" enqueues four rows in a tight loop, and
+       * the re-entry guard below turns the last three into no-ops. An earlier
+       * version stopped after the first batch, which left three of the four
+       * stranded until the network next blipped — at a door, that is three
+       * people admitted and unrecorded, and the stats tab wrong for the rest of
+       * the night, which is exactly the failure the party control exists to
+       * prevent.
+       */
+      for (;;) {
+        const all = await store.allScans(showId);
+        const pending = pendingScans(all);
+        setScans(all);
+        if (pending.length === 0) return;
 
-      const body = (await response.json()) as ReceiptResponse;
-      const settled = settledScanIds(pending, body.receipts, pending);
-      if (settled.length > 0) await store.markSynced(settled, new Date().toISOString());
-      setScans(await store.allScans(showId));
+        const response = await fetch('/api/checkin/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            showId,
+            scans: pending.map((s) => ({
+              qrTokenSha256: s.qrTokenSha256,
+              scannedAt: s.scannedAt,
+              source: s.source,
+              deviceId: s.deviceId,
+              overrideReason: s.overrideReason ?? null,
+            })),
+          }),
+        });
+        if (!response.ok) return;
+
+        const body = (await response.json()) as ReceiptResponse;
+        const settled = settledScanIds(pending, body.receipts, pending);
+        // Nothing settled means another pass would send the same rows forever.
+        // Stop and let the next reconnect try again.
+        if (settled.length === 0) return;
+        await store.markSynced(settled, new Date().toISOString());
+      }
     } catch {
       // Still offline. The queue keeps its rows and the next `online` retries.
     } finally {
       drainingRef.current = false;
+      const latest = await store.allScans(showId);
+      setScans(latest);
     }
   }, [showId]);
 

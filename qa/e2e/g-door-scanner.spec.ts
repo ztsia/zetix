@@ -185,3 +185,98 @@ test('the manifest carries no raw token, only digests', async ({ page }) => {
     expect(a.qrTokenSha256).toMatch(/^[0-9a-f]{64}$/);
   }
 });
+
+/**
+ * The module's stated acceptance criterion: **a ticket admits with the phone
+ * offline, and queued scans sync when the network returns** (docs/modules.md,
+ * spec/checkin.md §12.3).
+ *
+ * Driven through Search rather than the camera, deliberately. §12.1 gives three
+ * independent ways in and the manifest match is common to all of them, so this
+ * exercises the same decision, queue and drain a QR would reach — on a headless
+ * browser that has no camera to give it.
+ */
+test('admits with the network gone, and syncs when it returns', async ({ page, context }) => {
+  await signInOperator(page);
+  await page.waitForURL(new RegExp(`/scan/${seed.show1}`));
+  // Let the manifest land while there is still a network.
+  await expect
+    .poll(async () => page.evaluate(async (id) => (await fetch(`/api/checkin/manifest?showId=${id}`)).status, seed.show1))
+    .toBe(200);
+  await page.getByRole('tab', { name: 'Search' }).click();
+  await page.getByLabel('Search by name or ticket code').fill('Priya');
+  await expect(page.getByText('Priya Nair')).toBeVisible();
+
+  // --- the venue wifi drops ---
+  await context.setOffline(true);
+
+  await page.getByText('Priya Nair').click();
+  await expect(page.getByRole('button', { name: /^Admit Priya/ })).toBeVisible();
+  await shot(page, 'offline-attendee-sheet');
+  await page.getByRole('button', { name: /^Admit Priya/ }).click();
+
+  // The admission is recorded on the device and visibly owed to the server.
+  await expect(page.getByText(/queued/)).toBeVisible();
+  await shot(page, 'offline-queued');
+
+  // Nothing has reached the database yet — that is what "offline" means.
+  const [{ count: before }] = await sql`select count(*)::int as count from check_ins`;
+  expect(before).toBe(0);
+
+  // --- the wifi comes back ---
+  await context.setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+
+  await expect
+    .poll(async () => {
+      const [{ count }] = await sql`select count(*)::int as count from check_ins`;
+      return count;
+    }, { timeout: 15000 })
+    .toBe(1);
+
+  // The phone's own clock is preserved, and the row is marked as a delayed sync.
+  const [row] = await sql`
+    select source, scanned_at, synced_at from check_ins limit 1
+  `;
+  expect(row.source).toBe('OFFLINE_SYNC');
+  expect(row.synced_at).not.toBeNull();
+
+  // And the badge clears, so the operator can see the queue is empty.
+  await expect(page.getByText(/queued/)).toHaveCount(0);
+  await shot(page, 'after-sync');
+});
+
+test('admits a whole party in one tap, which is what stops the stats going wrong', async ({
+  page,
+}) => {
+  // §12.1: a family of four holds four PDFs in one email and the person at the
+  // front shows the first while the other three walk in behind them.
+  await signInOperator(page);
+  await page.waitForURL(new RegExp(`/scan/${seed.show1}`));
+  await expect
+    .poll(async () => page.evaluate(async (id) => (await fetch(`/api/checkin/manifest?showId=${id}`)).status, seed.show1))
+    .toBe(200);
+
+  await page.getByRole('tab', { name: 'Search' }).click();
+  await page.getByLabel('Search by name or ticket code').fill('Alice Tan');
+  await page.getByText('Alice Tan', { exact: true }).click();
+
+  await expect(page.getByText('Party of 4')).toBeVisible();
+  await shot(page, 'party-sheet');
+  await page.getByRole('button', { name: /Admit remaining 4/ }).click();
+
+  await expect
+    .poll(async () => {
+      const [{ count }] = await sql`select count(*)::int as count from check_ins`;
+      return count;
+    }, { timeout: 15000 })
+    .toBe(4);
+
+  // Recorded as a manual admission with a reason, per §12.1.
+  const rows = await sql`select source, override_reason from check_ins`;
+  for (const row of rows) {
+    expect(row.source).toBe('MANUAL');
+    expect(row.override_reason).toContain('party');
+  }
+});
+

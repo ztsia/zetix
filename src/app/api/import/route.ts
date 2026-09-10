@@ -39,6 +39,23 @@ const profileSchema = z.unknown();
 
 const actionSchema = z.enum(['inspect', 'dry-run', 'commit']);
 
+/**
+ * Player choices made on the dry-run screen, as `{ "cell value": playerId }`
+ * (spec/import.md §9.3).
+ *
+ * Sent with the dry run *and* the commit, because both re-plan from the file and
+ * a commit that dropped them would silently reinstate every block the admin just
+ * cleared. The ids are re-validated against this concert in
+ * `loadPlayerOverrides` — this only checks the shape.
+ */
+const overridesSchema = z.record(z.string(), z.number().int().positive());
+
+function readPlayerOverrides(raw: FormDataEntryValue | null): Map<string, number> {
+  if (typeof raw !== 'string' || raw === '') return new Map();
+  const parsed = overridesSchema.safeParse(JSON.parse(raw));
+  return parsed.success ? new Map(Object.entries(parsed.data)) : new Map();
+}
+
 /** The typed confirmation the commit requires (§9.6, mirroring §7.5). */
 const commitSchema = z.object({
   confirmation: z.string().min(1),
@@ -173,7 +190,14 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  const context = await buildPlanContext(target, profile, rows);
+  let playerOverrides: Map<string, number>;
+  try {
+    playerOverrides = readPlayerOverrides(form.get('playerOverrides'));
+  } catch {
+    return NextResponse.json({ error: 'Player choices could not be read.' }, { status: 400 });
+  }
+
+  const context = await buildPlanContext(target, profile, rows, playerOverrides);
   const plan = planImport(rows, profile, context);
 
   const payload = {

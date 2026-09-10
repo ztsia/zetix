@@ -117,6 +117,17 @@ player roster is loaded from a name list that carries no addresses, and the pers
 form is not necessarily the player. Choosing `EMAIL` against a roster with no addresses says so on
 the mapping step rather than at the dry run.
 
+**Confirming and correcting happens on the dry run**, not in the spreadsheet. Every name that
+matched nothing, or matched below the threshold, is listed there with its best suggestion: accept it
+in one click, or pick the right player from the roster. Choices are keyed by the cell value, so one
+decision covers every row that wrote the same name, and they are sent with the commit as well as the
+dry run — a commit that dropped them would silently reinstate the blocks the admin just cleared. The
+ids are re-validated against the concert on both, and an overridden player is still refused by §7.6
+if they already hold a registration: choosing by hand is not a way round the one-per-player rule.
+
+Correcting in the sheet instead is always available, but it means editing responses after they were
+collected, and the sheet stops being the source of truth at import (§9.1).
+
 Unmatched players are listed and can be created inline or skipped. It applies to `PLAYER_INVITED`
 segments only.
 

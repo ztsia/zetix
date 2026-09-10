@@ -40,7 +40,8 @@ the short version is that anything still true next week belongs in `docs/spec/`,
 | `D` ticket render · `E` template editor · `F` outbox & blast |
 | `G` door scanner · `H` check-in & operators · `I` read-only `/t/{token}` |
 
-**The whole flow has now been driven end to end against production in a real browser (10 Sep).**
+**The whole flow has now been driven end to end against production in a real browser (10 Sep),**
+**including a real operator account.**
 Concert → show → two segments → four registrations → allocation → ticket issue → PDF → blast →
 five real emails → QR scan off a camera → manual admit by name and by ticket code. What that pass
 found, and the test data it left behind, is in `docs/local.md` §5h.

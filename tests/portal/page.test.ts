@@ -21,10 +21,9 @@ import {
  * How it looks on a real phone is a browser job, and belongs to the QA pass.
  */
 
-class NotFoundSignal extends Error {}
 vi.mock('next/navigation', () => ({
   notFound: () => {
-    throw new NotFoundSignal('notFound');
+    throw new Error('notFound() must not be reached: see the note in page.tsx');
   },
   redirect: (to: string) => {
     throw new Error(`redirect:${to}`);
@@ -51,15 +50,16 @@ function hasQr(html: string): boolean {
   return html.includes('shape-rendering="crispEdges"');
 }
 
-async function outcome(token: string): Promise<string> {
-  try {
-    await render(token);
-    return 'rendered';
-  } catch (error) {
-    if (error instanceof NotFoundSignal) return 'notFound';
-    throw error;
-  }
-}
+/**
+ * The friendly copy, as the *server* sends it.
+ *
+ * This is the regression guard for the one thing QA found: `notFound()` in a
+ * dynamic Server Component leaves the server sending an empty body and the
+ * copy arriving only once client JavaScript runs. `renderToStaticMarkup` is
+ * exactly the right instrument — it is the server's output and nothing else,
+ * so a page that only paints after hydration fails here.
+ */
+const NOT_FOUND_COPY = 'We could not find that ticket';
 
 let concertId: number;
 let showId: number;
@@ -255,20 +255,48 @@ describe('a ticket that has been cancelled', () => {
 });
 
 describe('a token that resolves to nothing', () => {
-  it('is a 404 for an unknown token', async () => {
-    expect(await outcome('ZzZzZzZzZzZzZzZzZzZzZz')).toBe('notFound');
+  it('server-renders the friendly copy for an unknown token', async () => {
+    const html = await render('ZzZzZzZzZzZzZzZzZzZzZz');
+    expect(html).toContain(NOT_FOUND_COPY);
+    expect(hasQr(html)).toBe(false);
   });
 
-  it('is a 404 for junk, not a crash', async () => {
+  it('server-renders it for junk too, rather than crashing', async () => {
     for (const junk of ['', 'x', '../../etc/passwd', "' or 1=1--", `${token}x`]) {
-      expect(await outcome(junk)).toBe('notFound');
+      expect(await render(junk)).toContain(NOT_FOUND_COPY);
     }
   });
 
-  it('is a 404 for a soft-deleted seat, telling nobody which it was', async () => {
+  it('server-renders it for a soft-deleted seat', async () => {
     await withDirectAttendeeWrites(
       (tx) => tx`update attendees set deleted_at = now() where id = ${attendeeId}`,
     );
-    expect(await outcome(token)).toBe('notFound');
+    const html = await render(token);
+    expect(html).toContain(NOT_FOUND_COPY);
+    expect(html).not.toContain('Guest 1');
+  });
+
+  it('tells nobody which reason it was', async () => {
+    /**
+     * The property the status code was never carrying: an unknown token, a
+     * malformed one and a soft-deleted seat must be indistinguishable to
+     * anyone working through candidates. Byte-identical output is the
+     * assertion, not "all three 404".
+     */
+    await withDirectAttendeeWrites(
+      (tx) => tx`update attendees set deleted_at = now() where id = ${attendeeId}`,
+    );
+    const [deleted, unknown, malformed] = await Promise.all([
+      render(token),
+      render('ZzZzZzZzZzZzZzZzZzZzZz'),
+      render('short'),
+    ]);
+    expect(unknown).toBe(deleted);
+    expect(malformed).toBe(deleted);
+  });
+
+  it('never reaches notFound(), which would blank the page on 3G', async () => {
+    // The mock throws a distinct error if the page ever goes back to throwing.
+    await expect(render('ZzZzZzZzZzZzZzZzZzZzZz')).resolves.toContain(NOT_FOUND_COPY);
   });
 });

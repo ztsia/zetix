@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 import { CalendarDaysIcon, CircleCheckIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +14,7 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } f
 import { countdownTo, formatDate, formatDateTime, formatTime, venueMapUrl } from '@/lib/portal/format';
 import { qrSvg } from '@/lib/portal/qr';
 import { ticketStatus } from '@/lib/portal/status';
+import { TicketNotFound } from '../../ticket-not-found';
 import { Countdown } from './countdown';
 
 /**
@@ -68,9 +68,35 @@ export default async function TicketStatusPage({
   /**
    * One response for "no such ticket", "malformed token" and "soft-deleted".
    * A ticket holder cannot act on the difference, and anyone probing tokens
-   * must not learn it.
+   * must not learn it — the three render byte-identical pages.
+   *
+   * **Rendered, not thrown, and that costs the 404 status deliberately.**
+   * `notFound()` inside a dynamic Server Component discards the shell: Next
+   * puts the boundary's content behind a Suspense swap, so the server sends an
+   * empty `<body>` and the friendly copy only arrives once client JavaScript
+   * runs. Measured on this page in a production build, that is 6.5s of blank
+   * white on Regular 3G, and nothing at all with JavaScript off — while the
+   * same request for a *valid* token paints in 562ms. Every route this branch
+   * tried keeps that behaviour: co-locating a `not-found.tsx` at this segment
+   * does not change it, and dropping `force-dynamic` costs the happy path its
+   * server render too.
+   *
+   * So the choice is a correct status code with a blank page, or the page with
+   * a 200. The spec picks for us, twice and literally: this page exists because
+   * "a 404 there is a support call on concert night" (spec/README.md §4.1), and
+   * a curious ticket holder "must get something friendly, not a 404"
+   * (spec/v2.md §13.2). The people who land here are holding a superseded
+   * ticket or a clipped QR, outside a hall, on venue wifi — the blank screen is
+   * the failure this module was written to prevent.
+   *
+   * What the status is *not* carrying: it never distinguished a real ticket
+   * from a missing one to anyone who did not already have the token, because
+   * the body always did that. Unknown and malformed tokens stay
+   * indistinguishable from each other, which is the property that matters. And
+   * nothing machine-readable reads this surface — it is `noindex`, has no API
+   * clients, and admission never touches it (decision 28).
    */
-  if (!status) notFound();
+  if (!status) return <TicketNotFound />;
 
   const { show, timeZone } = status;
   const cancelled = status.state === 'CANCELLED';

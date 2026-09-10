@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
+import { players } from '@/db/schema/people';
 import { shows, showSegments } from '@/db/schema/shows';
 import { ImportFlow, type SegmentOption } from './import-flow';
 
@@ -53,6 +54,25 @@ export default async function ImportPage({
     )
     .orderBy(asc(shows.startsAt), asc(showSegments.displayOrder));
 
+  /**
+   * How many active players carry an email address.
+   *
+   * The import screen needs this to pick a sensible player-matching strategy
+   * and, more importantly, to say why. Matching registrations to players by
+   * email is the obvious choice and is silently useless when the player list
+   * was loaded from a roster that never had addresses in it — every row blocks
+   * with PLAYER_NOT_MATCHED and the reason is two screens away (§9.3).
+   */
+  const [playerCounts] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      withEmail: sql<number>`count(email)::int`,
+    })
+    .from(players)
+    .where(
+      and(eq(players.concertId, id), eq(players.isActive, true), isNull(players.deletedAt)),
+    );
+
   const segments: SegmentOption[] = rows.map((r) => ({
     segmentId: r.segmentId,
     showId: r.showId,
@@ -62,6 +82,14 @@ export default async function ImportPage({
   }));
 
   return (
-    <ImportFlow concertId={id} segments={segments} timeZone={concert?.timezone ?? 'UTC'} />
+    <ImportFlow
+      concertId={id}
+      segments={segments}
+      timeZone={concert?.timezone ?? 'UTC'}
+      playerEmails={{
+        total: Number(playerCounts?.total ?? 0),
+        withEmail: Number(playerCounts?.withEmail ?? 0),
+      }}
+    />
   );
 }

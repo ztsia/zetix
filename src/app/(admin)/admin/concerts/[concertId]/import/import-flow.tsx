@@ -92,15 +92,47 @@ type Mapping = {
 
 type AllocationMode = 'UNIFORM' | 'COLUMN';
 
+export type PlayerMatchStrategy = 'EMAIL' | 'NAME' | 'NAME_FUZZY';
+
+/**
+ * Labels for the strategies, in one place because the trigger needs them too.
+ *
+ * Base UI's `Select.Value` renders the raw *value* unless it is given a function
+ * to format it, so a control whose value and label differ shows `NAME_FUZZY` on
+ * the trigger while the open list reads correctly. Every other Select on this
+ * screen picks a spreadsheet column, where the value is the label, which is why
+ * this is the first place it comes up.
+ */
+/**
+ * Renders the sentinel these column pickers use for "nothing chosen".
+ *
+ * A Base UI `Select` has no empty value, so unmapped is carried as the string
+ * `__none__` — and `Select.Value` renders the raw value, so the trigger read
+ * literally `__none__` while the open list said "Not mapped". `placeholder` does
+ * not cover it either: a sentinel *is* a selected value, so the placeholder
+ * never shows.
+ */
+const columnValue = (label: string) => (v: string | null) =>
+  v == null || v === '__none__' ? label : v;
+
+const PLAYER_MATCH_LABELS: Record<PlayerMatchStrategy, string> = {
+  NAME_FUZZY: 'Player name, close match',
+  NAME: 'Player name, exact',
+  EMAIL: 'Player email',
+};
+
 export function ImportFlow({
   concertId,
   segments,
   timeZone,
+  playerEmails,
 }: {
   concertId: number;
   segments: SegmentOption[];
   /** The concert's zone, never the viewer's (`CLAUDE.md`). */
   timeZone: string;
+  /** Active players on this concert, and how many of them have an email. */
+  playerEmails: { total: number; withEmail: number };
 }) {
   const [step, setStep] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
@@ -112,6 +144,19 @@ export function ImportFlow({
   const [sheet, setSheet] = React.useState<string>('');
   const [headerRow, setHeaderRow] = React.useState<number>(1);
   const [mapping, setMapping] = React.useState<Mapping | null>(null);
+
+  /**
+   * An explicit player-matching choice, or `null` to follow the default below.
+   *
+   * Kept as an override rather than seeded into state, for the same reason
+   * `effectiveMode` is derived: the default depends on `mapping`, which arrives
+   * asynchronously from inspect, and state seeded from it would spend one render
+   * holding a column that does not exist in this file.
+   */
+  const [playerMatchOverride, setPlayerMatchOverride] = React.useState<{
+    column: string | null;
+    strategy: PlayerMatchStrategy;
+  } | null>(null);
 
   const [allocationMode, setAllocationMode] = React.useState<AllocationMode>('UNIFORM');
   const [uniformType, setUniformType] = React.useState<'BASE' | 'EXTRA'>('EXTRA');
@@ -148,6 +193,36 @@ export function ImportFlow({
    */
   const effectiveMode: AllocationMode = isPublic ? 'UNIFORM' : allocationMode;
   const effectiveType: 'BASE' | 'EXTRA' = isPublic ? 'EXTRA' : uniformType;
+
+  /**
+   * How a row is tied back to a player (§9.3), for `PLAYER_INVITED` only.
+   *
+   * **Names, not email.** This screen used to hardcode `EMAIL` against the
+   * contact email column, with no way to change it. That is the obvious choice
+   * and it is the wrong one twice over: the player roster is loaded from a name
+   * list and carries no addresses at all, so nothing can ever match; and even
+   * with addresses, the person filling in the form is not necessarily the
+   * player — a parent registering for a child would miss. The result was every
+   * party blocking on PLAYER_NOT_MATCHED with nothing on the mapping screen
+   * saying why.
+   *
+   * `NAME_FUZZY` is the measured recommendation for a form people type their own
+   * names into (`local.md` §5h): trigrams are order- and whitespace-insensitive,
+   * so a reordered or double-spaced full name still matches, while a genuinely
+   * partial name falls below `import.fuzzy_match_threshold` and is flagged in
+   * the dry run rather than guessed at.
+   *
+   * All three strategies stay selectable, because the engine and the profile
+   * format support all three and a roster loaded from a system that does have
+   * addresses would want `EMAIL`. It is simply no longer the default, and
+   * choosing it against a roster with no addresses now says so.
+   *
+   * A null column means no matching at all. That is a real configuration rather
+   * than an error — the parties import with no player attached, and are
+   * therefore owed no base allocation.
+   */
+  const playerMatch: { column: string | null; strategy: PlayerMatchStrategy } =
+    playerMatchOverride ?? { column: mapping?.contact_name ?? null, strategy: 'NAME_FUZZY' };
 
   const loadProfiles = React.useCallback(async (showId: number | null) => {
     try {
@@ -197,6 +272,17 @@ export function ImportFlow({
         allocation_type: parsedProfile.columns.allocationType,
         group_key: parsedProfile.columns.groupKey,
       });
+      setPlayerMatchOverride(
+        parsedProfile.playerMatch
+          ? {
+              column: parsedProfile.playerMatch.column,
+              strategy: parsedProfile.playerMatch.strategy,
+            }
+          : // A saved profile with no player match said so deliberately, so it
+            // has to survive being re-applied rather than falling back to the
+            // suggestion.
+            { column: null, strategy: 'EMAIL' },
+      );
       if (parsedProfile.columns.allocationType) {
         setAllocationMode('COLUMN');
         const next: Record<string, 'BASE' | 'EXTRA' | ''> = {};
@@ -275,8 +361,8 @@ export function ImportFlow({
       header_row: headerRow,
       columns,
       player_match:
-        segment?.audienceMode === 'PLAYER_INVITED' && mapping?.contact_email
-          ? { column: mapping.contact_email, strategy: 'EMAIL' }
+        segment?.audienceMode === 'PLAYER_INVITED' && playerMatch.column
+          ? { column: playerMatch.column, strategy: playerMatch.strategy }
           : null,
       allocation_type_values: values,
       default_allocation_type: effectiveType,
@@ -524,7 +610,7 @@ export function ImportFlow({
                         }
                       >
                         <SelectTrigger id={key} className="w-64">
-                          <SelectValue placeholder="Not mapped" />
+                          <SelectValue>{columnValue('Not mapped')}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">Not mapped</SelectItem>
@@ -549,6 +635,102 @@ export function ImportFlow({
                   </Alert>
                 ) : null}
               </FieldSet>
+
+              {!isPublic ? (
+                <FieldSet>
+                  <FieldLegend>Match to player</FieldLegend>
+                  <FieldDescription>
+                    A player-invited party is owed base seats through the player it belongs to, so
+                    each row has to name one. Unmatched parties block the dry run rather than
+                    importing with no entitlement.
+                  </FieldDescription>
+
+                  <FieldGroup className="mt-2 max-w-2xl">
+                    <Field orientation="horizontal">
+                      <FieldLabel htmlFor="player-match-column">Column to match on</FieldLabel>
+                      <Select
+                        value={playerMatch.column ?? '__none__'}
+                        onValueChange={(v) =>
+                          setPlayerMatchOverride({
+                            ...playerMatch,
+                            column: v === '__none__' ? null : v,
+                          })
+                        }
+                      >
+                        <SelectTrigger id="player-match-column" className="w-64">
+                          <SelectValue>{columnValue('Do not match players')}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Do not match players</SelectItem>
+                          {inspect.headers.map((h) => (
+                            <SelectItem key={h} value={h}>
+                              {h}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+
+                    {playerMatch.column ? (
+                      <Field orientation="horizontal">
+                        <FieldLabel htmlFor="player-match-strategy">Compare it against</FieldLabel>
+                        <Select
+                          value={playerMatch.strategy}
+                          onValueChange={(v) =>
+                            setPlayerMatchOverride({
+                              ...playerMatch,
+                              strategy: v as PlayerMatchStrategy,
+                            })
+                          }
+                        >
+                          <SelectTrigger id="player-match-strategy" className="w-64">
+                            <SelectValue>
+                              {(v: PlayerMatchStrategy) => PLAYER_MATCH_LABELS[v]}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(
+                              ['NAME_FUZZY', 'NAME', 'EMAIL'] as const
+                            ).map((v) => (
+                              <SelectItem key={v} value={v}>
+                                {PLAYER_MATCH_LABELS[v]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    ) : null}
+                  </FieldGroup>
+
+                  {playerMatch.column && playerMatch.strategy === 'EMAIL' &&
+                  playerEmails.withEmail === 0 ? (
+                    <Alert variant="destructive" className="mt-4">
+                      <CircleAlert />
+                      <AlertTitle>
+                        No player on this concert has an email address, so nothing will match
+                      </AlertTitle>
+                      <AlertDescription>
+                        All {playerEmails.total} active players were loaded without one. Every party
+                        would block on &ldquo;no player matches&rdquo; and none of them would
+                        import. Match on a name column instead, or add addresses to the player list
+                        first.
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {playerMatch.column === null ? (
+                    <Alert className="mt-4">
+                      <CircleAlert />
+                      <AlertTitle>These parties will import with no player attached</AlertTitle>
+                      <AlertDescription>
+                        Base entitlement is counted per player, so a BASE seat with no player has
+                        nothing to draw against and is waitlisted. Only choose this if every row
+                        here is an EXTRA.
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </FieldSet>
+              ) : null}
 
               <FieldSet>
                 <FieldLegend>Seat type</FieldLegend>
@@ -634,7 +816,7 @@ export function ImportFlow({
                                 }}
                               >
                                 <SelectTrigger className="w-64">
-                                  <SelectValue placeholder="Which column?" />
+                                  <SelectValue>{columnValue('Which column?')}</SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="__none__">Not mapped</SelectItem>

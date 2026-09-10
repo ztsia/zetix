@@ -111,6 +111,12 @@ in. With two registration rounds this matters more, not less.
 
 `player_match.strategy`: `EMAIL` (exact, case-insensitive), `NAME` (normalised exact), or `NAME_FUZZY`
 (trigram similarity; anything below `import.fuzzy_match_threshold` requires explicit confirmation).
+**`NAME_FUZZY` is the default, and email matching is not.** Both the column and the strategy are
+chosen on the mapping step. Matching on email is the obvious choice and is usually wrong here: the
+player roster is loaded from a name list that carries no addresses, and the person filling in the
+form is not necessarily the player. Choosing `EMAIL` against a roster with no addresses says so on
+the mapping step rather than at the dry run.
+
 Unmatched players are listed and can be created inline or skipped. It applies to `PLAYER_INVITED`
 segments only.
 

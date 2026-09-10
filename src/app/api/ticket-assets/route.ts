@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { writeAuditLog } from '@/lib/audit';
-import {
-  MAX_ASSET_BYTES,
-  assetKind,
-  putAsset,
-  sniffContentType,
-} from '@/lib/tickets/assets';
+import { MAX_ASSET_BYTES, tooLargeMessage } from '@/lib/tickets/asset-limits';
+import { assetKind, putAsset, sniffContentType } from '@/lib/tickets/assets';
 
 /**
  * `POST /api/ticket-assets` — upload a template background or decoration
@@ -45,15 +41,12 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: 'No file was uploaded.' }, { status: 400 });
   }
+  // The editor checks this before sending, so reaching here means a caller that
+  // is not the editor — or one running older code. Kept because the limit is
+  // what stops the *platform* rejecting the body instead, and that failure has
+  // no message in it (see `asset-limits.ts`).
   if (file.size > MAX_ASSET_BYTES) {
-    return NextResponse.json(
-      {
-        error: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${
-          MAX_ASSET_BYTES / 1024 / 1024
-        } MB.`,
-      },
-      { status: 413 },
-    );
+    return NextResponse.json({ error: tooLargeMessage(file.size) }, { status: 413 });
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());

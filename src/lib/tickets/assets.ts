@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { MAX_ASSET_BYTES } from './asset-limits';
 
 /**
  * Where a template's artwork lives (spec/tickets.md §10.3).
@@ -53,15 +54,10 @@ export function isAssetContentType(value: string): value is AssetContentType {
 }
 
 /**
- * The upload ceiling, **4 MB**.
- *
- * A platform limit rather than an operational value (`CLAUDE.md`): a Vercel
- * serverless function rejects a request body over about 4.5 MB before any of
- * this code runs, so a larger cap here would only move the failure to a place
- * with no error message. Nothing an admin can usefully tune, so it is not a
- * cascade setting.
+ * Re-exported so the server side of this module keeps its single import, while
+ * the editor can reach the same number without pulling `node:fs` in with it.
  */
-export const MAX_ASSET_BYTES = 4 * 1024 * 1024;
+export { MAX_ASSET_BYTES, formatBytes, tooLargeMessage } from './asset-limits';
 
 export type StoredAsset = {
   path: string;

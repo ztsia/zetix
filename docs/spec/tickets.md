@@ -171,6 +171,13 @@ Uploads are typed by their **leading bytes**, not by the browser's `File.type` o
 mistyped upload accepted here fails inside the render of every ticket in the show, with nothing
 pointing back at the upload that caused it.
 
+**Artwork is capped at 4 MB, and the cap is enforced in the browser first.** The number is chosen to
+stay under the ~4.5 MB request body the platform accepts: past that the upload is rejected before
+any of this code runs, as `text/plain` the editor cannot parse, so the admin sees only "the upload
+failed" with no size and no limit in it and no way to know how much to shrink by. Refusing locally is
+the only place the real numbers are still available to say, and the editor states the limit on the
+field as well. The route keeps its own check for callers that are not the editor.
+
 ## 10.4 Rendering
 
 Server-side, deterministic, consuming the same layout JSON as the editor:

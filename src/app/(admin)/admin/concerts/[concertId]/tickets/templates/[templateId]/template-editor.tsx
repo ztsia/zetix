@@ -31,6 +31,11 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import {
+  MAX_ASSET_BYTES,
+  formatBytes,
+  tooLargeMessage,
+} from '@/lib/tickets/asset-limits';
 import type { TicketData } from '@/lib/tickets/bindings';
 import {
   canvasSizeFor,
@@ -170,13 +175,38 @@ export function TemplateEditor({
   };
 
   async function upload(file: File): Promise<{ path: string; kind: string } | null> {
+    /**
+     * Size is checked here, before the request is made, because past a point
+     * the request never reaches our route at all.
+     *
+     * Vercel rejects a body over about 4.5 MB itself, answering
+     * `FUNCTION_PAYLOAD_TOO_LARGE` as `text/plain` — so `response.json()` below
+     * throws, `payload` is null, and an 8 MB background produced "The upload
+     * failed" with no size and no limit in it. The admin's next move is to guess
+     * how much to shrink the artwork by. Refusing locally is the only place the
+     * real numbers are still available to say.
+     */
+    if (file.size > MAX_ASSET_BYTES) {
+      setFeedback({ ok: false, text: tooLargeMessage(file.size) });
+      return null;
+    }
+
     const body = new FormData();
     body.set('concertId', String(concertId));
     body.set('file', file);
     const response = await fetch('/api/ticket-assets', { method: 'POST', body });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      setFeedback({ ok: false, text: payload?.error ?? 'The upload failed.' });
+      setFeedback({
+        ok: false,
+        text:
+          payload?.error ??
+          // Belt and braces for the same platform rejection: a file under our
+          // limit can still cross Vercel's once the multipart envelope is added.
+          (response.status === 413
+            ? `That file is ${formatBytes(file.size)}, which the server would not accept. Try one under ${formatBytes(MAX_ASSET_BYTES)}.`
+            : 'The upload failed.'),
+      });
       return null;
     }
     return payload;
@@ -553,7 +583,11 @@ export function TemplateEditor({
                   </Button>
                 )}
               </ButtonGroup>
-              <FieldDescription>PNG, JPEG or a PDF whose page 1 is the ticket.</FieldDescription>
+              <FieldDescription>
+                PNG, JPEG or a PDF whose page 1 is the ticket, up to{' '}
+                {formatBytes(MAX_ASSET_BYTES)}. Artwork above that has to be exported smaller —
+                an A4 ticket needs no more than 300 dpi.
+              </FieldDescription>
 
               {/*
                 The page size is derived from the artwork, and for an image that

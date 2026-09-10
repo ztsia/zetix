@@ -79,6 +79,64 @@ describe('by ticket code', () => {
   });
 });
 
+describe('by partial ticket code', () => {
+  /*
+   * The whole reason this exists: `ORC` is a constant prefix, so what an usher
+   * reads off a printed ticket and types is the four-symbol body.
+   */
+  it('finds a ticket from the body alone, without the prefix', () => {
+    const hits = searchManifest(INDEX, '7K4Q');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].entry.name).toBe('Alice Tan');
+    expect(hits[0].matchedOn).toBe('ticketCodePartial');
+  });
+
+  it('finds one from a prefix of the body, part-way through typing', () => {
+    expect(searchManifest(INDEX, '9M2').map((h) => h.entry.name)).toEqual(['Zoë Fernandez']);
+  });
+
+  it('still forgives confusables in a partial', () => {
+    // O -> 0, so a typed `4T8B` and `4t8b` land on the same normalised body.
+    expect(searchManifest(INDEX, '4t8b').map((h) => h.entry.name)).toEqual(['Marcus Lee']);
+  });
+
+  it('ignores fragments shorter than the minimum', () => {
+    // `4` appears in ORC-7K4Q and ORC-4T8B; two characters of noise at a door
+    // is worse than nothing.
+    expect(searchManifest(INDEX, '4')).toHaveLength(0);
+  });
+
+  it('an exact match still comes first', () => {
+    const index = buildManifestIndex([
+      entry({ qrTokenSha256: 'a'.repeat(64), name: 'Exact', ticketCode: 'ORC-8B4T' }),
+      entry({ qrTokenSha256: 'b'.repeat(64), name: 'Contains', ticketCode: 'ORC-8B4T9' }),
+    ]);
+    const hits = searchManifest(index, 'ORC-8B4T');
+    expect(hits[0].entry.name).toBe('Exact');
+    expect(hits[0].matchedOn).toBe('ticketCode');
+  });
+
+  it('a name match outranks a code that merely contains the same letters', () => {
+    // Typing a surname must not be buried by whoever happens to hold a code
+    // with those characters inside it.
+    const index = buildManifestIndex([
+      entry({ qrTokenSha256: 'c'.repeat(64), name: 'Someone Else', ticketCode: 'ORC-B4TZ' }),
+      entry({ qrTokenSha256: 'd'.repeat(64), name: 'B4T Person', ticketCode: 'ORC-9999' }),
+    ]);
+    const hits = searchManifest(index, 'b4t');
+    expect(hits[0].entry.name).toBe('B4T Person');
+    expect(hits[0].matchedOn).toBe('name');
+    expect(hits[1].matchedOn).toBe('ticketCodePartial');
+  });
+
+  it('never returns the same attendee twice', () => {
+    const index = buildManifestIndex([
+      entry({ qrTokenSha256: 'e'.repeat(64), name: '7K4Q', ticketCode: 'ORC-7K4Q' }),
+    ]);
+    expect(searchManifest(index, '7K4Q')).toHaveLength(1);
+  });
+});
+
 describe('by name', () => {
   it('finds a partial name', () => {
     expect(searchManifest(INDEX, 'alice').map((h) => h.entry.name)).toEqual([

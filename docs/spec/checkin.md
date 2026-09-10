@@ -44,7 +44,10 @@ The session persists on the device, so an usher signs in once during setup rathe
   single most damaging setup mistake: an usher admitting against the wrong show.
 - Camera scan via `@zxing/browser`. HTTPS required.
 - Continuous scanning with `checkin.scan_debounce_ms` per token to stop double-fires.
-- Manual fallback: type or search `ticket_code`, or search by attendee name.
+- Manual fallback: type or search `ticket_code`, or search by attendee name. The code matches from
+  three characters up, not only in full: `ORC` is a constant prefix, so what an usher reads off a
+  printed ticket and types is the four-symbol body, and requiring the whole string meant `7KTD`
+  found nothing while `ORC-7KTD` found the ticket.
 
 **Parties arrive together, and only one phone comes out.** A family of four holds four PDFs in one
 email, and in practice the person at the front shows the first one while the other three walk in behind

@@ -62,8 +62,21 @@ export function normaliseName(input: string): string {
 export type SearchHit = {
   entry: ManifestEntry;
   /** Why it matched, so the UI can show the code when that is what was typed. */
-  matchedOn: 'ticketCode' | 'name';
+  matchedOn: 'ticketCode' | 'ticketCodePartial' | 'name';
 };
+
+/**
+ * Shortest query that may match part of a code rather than all of it.
+ *
+ * A `ticket_code` body is four Crockford symbols (`identifiers.ts`), so three
+ * is "nearly all of it" while still being enough to be deliberate. Below that
+ * a single letter typed towards a name would match a third of the roster on
+ * codes alone, and the usher would be reading past noise while a queue builds.
+ *
+ * Not an operational value (`CLAUDE.md`): it is a property of the code format,
+ * not of this concert, and it does not belong in the settings cascade.
+ */
+const MIN_PARTIAL_CODE_LENGTH = 3;
 
 /**
  * Search the manifest by `ticket_code` or attendee name.
@@ -72,6 +85,14 @@ export type SearchHit = {
  * wants that person, not everyone whose name happens to contain those letters.
  * Name matching is a substring on the normalised form, which handles "tan"
  * finding "Alice Tan" and a partial first name finding the rest.
+ *
+ * **A partial code matches too**, from `MIN_PARTIAL_CODE_LENGTH` characters up.
+ * Codes read `ORC-7KTD`, where `ORC` is a constant prefix, so the part an usher
+ * reads off a printed ticket and types is the four-symbol body — and requiring
+ * the whole string meant `7KTD` found nothing while `ORC-7KTD` found the ticket.
+ * That reads as "code search does not work", because the difference between a
+ * lookup that needs the prefix and one that does not is invisible from the
+ * door.
  *
  * Cancelled attendees are **included**, and deliberately — the whole reason
  * they are in the manifest is so the door can say "cancelled — refer to desk"
@@ -90,12 +111,19 @@ export function searchManifest(
   const code = normaliseTicketCode(raw);
   const name = normaliseName(raw);
   const hits: SearchHit[] = [];
+  const partial: SearchHit[] = [];
   const seen = new Set<string>();
 
   for (const entry of index.entries) {
-    if (entry.ticketCode && normaliseTicketCode(entry.ticketCode) === code) {
+    if (!entry.ticketCode) continue;
+    const entryCode = normaliseTicketCode(entry.ticketCode);
+    if (entryCode === code) {
       hits.push({ entry, matchedOn: 'ticketCode' });
       seen.add(entry.qrTokenSha256);
+    } else if (code.length >= MIN_PARTIAL_CODE_LENGTH && entryCode.includes(code)) {
+      // Held back rather than pushed, so a name query that happens to look like
+      // part of a code cannot bury the person the usher was actually typing.
+      partial.push({ entry, matchedOn: 'ticketCodePartial' });
     }
   }
 
@@ -106,6 +134,21 @@ export function searchManifest(
         hits.push({ entry, matchedOn: 'name' });
         seen.add(entry.qrTokenSha256);
       }
+    }
+  }
+
+  /*
+   * Exact code, then names, then partial codes.
+   *
+   * A code fragment matches no name, so when a fragment is what was typed the
+   * partial hits are the only hits and lead anyway. The ordering only bites the
+   * other way round — typing a surname that also appears inside somebody's code
+   * — and there the name is what was meant.
+   */
+  for (const hit of partial) {
+    if (!seen.has(hit.entry.qrTokenSha256)) {
+      hits.push(hit);
+      seen.add(hit.entry.qrTokenSha256);
     }
   }
 

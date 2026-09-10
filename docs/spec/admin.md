@@ -128,6 +128,13 @@ one generates a display name slug and a random access code, shown **once** on sc
 pass on. Codes can be regenerated; operators can be deactivated, which invalidates their session at the
 next request.
 
+**There is no delete, and the list defaults to hiding deactivated accounts.** Deactivation is the
+retirement path: `check_ins.operator_id` is `on delete set null`, so removing the row would anonymise
+every scan that usher recorded, and Supabase Auth would keep the address either way — blocking the
+name for anyone provisioned after them. Accounts are also global rather than per concert, so the list
+only grows. A status filter next to the search box carries the count of each group, defaults to
+**Active**, and offers Deactivated and All; reactivating is a row action, not a database task.
+
 Assignment is a checkbox grid of shows per operator, editable at any time. Revoking an assignment takes
 effect immediately on the server, including for a device that is currently offline — its queued scans
 are rejected on sync and surfaced to the admin rather than silently dropped.

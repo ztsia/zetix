@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { DataTable, DataTableColumnHeader, type DataTableColumn } from '@/components/data-table';
 import { formatInZone } from '@/lib/export';
@@ -140,6 +141,23 @@ export function OperatorsScreen({
   );
 }
 
+/**
+ * Which operators the table shows.
+ *
+ * **Deactivated ushers are hidden by default.** There is no delete on this
+ * screen and there deliberately is not one: handing the phone back is a
+ * deactivation (spec/admin.md §14.3), and `check_ins.operator_id` is
+ * `on delete set null`, so removing the row would anonymise every scan that
+ * usher recorded. The consequence is a list that only ever grows — accounts are
+ * global, so it accumulates across every concert anyone has worked — and a
+ * roster of six live ushers would end up being read past rather than read.
+ *
+ * Hiding them is a default, not a policy. The filter carries the count of each
+ * group so that "are there deactivated accounts?" is answered without switching
+ * to find out, and reactivating one is two clicks away rather than hidden.
+ */
+type StatusFilter = 'active' | 'inactive' | 'all';
+
 function OperatorsTable({
   concertId,
   timeZone,
@@ -154,6 +172,21 @@ function OperatorsTable({
   onIssued: (issued: IssuedCode) => void;
 }) {
   const showsById = useMemo(() => new Map(shows.map((show) => [show.id, show])), [shows]);
+
+  const [status, setStatus] = useState<StatusFilter>('active');
+
+  const counts = useMemo(() => {
+    const active = operators.filter((operator) => operator.isActive).length;
+    return { active, inactive: operators.length - active, all: operators.length };
+  }, [operators]);
+
+  const visible = useMemo(
+    () =>
+      status === 'all'
+        ? operators
+        : operators.filter((operator) => operator.isActive === (status === 'active')),
+    [operators, status],
+  );
 
   const columns: DataTableColumn<OperatorRow>[] = useMemo(
     () => [
@@ -248,12 +281,46 @@ function OperatorsTable({
     [concertId, onIssued, shows, showsById, timeZone],
   );
 
+  /**
+   * The empty state has to say which filter emptied it, or "No operators" reads
+   * as "you have not created any" on a screen where six of them exist and are
+   * simply deactivated. `all` cannot be empty here — the parent renders its own
+   * empty card when nobody is provisioned at all.
+   */
+  const empty =
+    status === 'inactive'
+      ? {
+          title: 'No deactivated operators',
+          description: 'Everyone provisioned for this concert is still active.',
+        }
+      : {
+          title: 'No active operators',
+          description:
+            'Every operator has been deactivated. Switch this filter to All to see them, ' +
+            'and reactivate whoever is working the door.',
+        };
+
   return (
     <DataTable
       columns={columns}
-      data={operators}
+      data={visible}
       getRowId={(row) => row.id}
       searchPlaceholder="Search operators…"
+      emptyTitle={empty.title}
+      emptyDescription={empty.description}
+      emptyFilteredDescription="No operator matches this search."
+      toolbar={
+        <NativeSelect
+          value={status}
+          onChange={(event) => setStatus(event.target.value as StatusFilter)}
+          aria-label="Filter by status"
+          className="w-auto"
+        >
+          <option value="active">Active ({counts.active})</option>
+          <option value="inactive">Deactivated ({counts.inactive})</option>
+          <option value="all">All ({counts.all})</option>
+        </NativeSelect>
+      }
     />
   );
 }

@@ -63,6 +63,20 @@ export default async function ImportPage({
    * was loaded from a roster that never had addresses in it — every row blocks
    * with PLAYER_NOT_MATCHED and the reason is two screens away (§9.3).
    */
+  /**
+   * The roster, for the dry run's "choose a different player" picker (§9.3).
+   *
+   * Loaded with the page rather than fetched when the picker opens: it is one
+   * concert's players, it is needed the moment a match needs correcting, and a
+   * round trip at that moment is a round trip in the middle of the admin's
+   * decision.
+   */
+  const rosterRows = await db
+    .select({ id: players.id, fullName: players.fullName })
+    .from(players)
+    .where(and(eq(players.concertId, id), eq(players.isActive, true), isNull(players.deletedAt)))
+    .orderBy(asc(players.fullName));
+
   const [playerCounts] = await db
     .select({
       total: sql<number>`count(*)::int`,
@@ -90,6 +104,7 @@ export default async function ImportPage({
         total: Number(playerCounts?.total ?? 0),
         withEmail: Number(playerCounts?.withEmail ?? 0),
       }}
+      roster={rosterRows.map((r) => ({ id: r.id, fullName: r.fullName }))}
     />
   );
 }

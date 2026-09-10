@@ -1,12 +1,21 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, CircleAlert, Info, Users } from 'lucide-react';
+import { AlertTriangle, Check, CircleAlert, Info, UserSearch, Users } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Spinner } from '@/components/ui/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DataTable, DataTableColumnHeader, type DataTableColumn } from '@/components/data-table';
-import type { PlanResponse } from './types';
+import type { PlanResponse, RosterPlayer } from './types';
 
 /**
  * Step 5 — the dry run (spec/import.md §9.6).
@@ -146,7 +155,192 @@ const columns: DataTableColumn<ReportRow>[] = [
   },
 ];
 
-export function DryRunReport({ plan, timeZone }: { plan: PlanResponse; timeZone: string }) {
+/**
+ * The player decisions this plan is waiting on (spec/import.md §9.3).
+ *
+ * §9.3 says an unmatched or under-threshold player is "confirmed or corrected",
+ * and until now there was nowhere to do either: both codes are BLOCKING, the
+ * report offered only "fix them in the sheet and dry run again", and correcting
+ * a name in the sheet means editing the responses after they were collected. So
+ * a 39% match — which is what an annotated roster entry like
+ * "HARUTO LIM (only 19/9)" scores against the name someone actually types — was
+ * a dead end.
+ *
+ * One row per distinct cell value rather than per party: the decision is about
+ * the name, and two parties that wrote the same thing have the same answer.
+ */
+function decisions(plan: PlanResponse) {
+  const out = new Map<
+    string,
+    {
+      needle: string;
+      playerId?: number;
+      playerName?: string;
+      confidence?: number;
+      parties: number;
+    }
+  >();
+  for (const f of plan.findings) {
+    if (f.code !== 'PLAYER_MATCH_UNCONFIRMED' && f.code !== 'PLAYER_NOT_MATCHED') continue;
+    if (!f.match) continue;
+    const current = out.get(f.match.needle);
+    if (current) current.parties += 1;
+    else out.set(f.match.needle, { ...f.match, parties: 1 });
+  }
+  return [...out.values()];
+}
+
+function DecisionPanel({
+  plan,
+  roster,
+  overrides,
+  onOverride,
+  onRerun,
+  busy,
+}: {
+  plan: PlanResponse;
+  roster: RosterPlayer[];
+  overrides: Record<string, number>;
+  onOverride: (needle: string, playerId: number | null) => void;
+  onRerun: () => void;
+  busy: boolean;
+}) {
+  const pending = React.useMemo(() => decisions(plan), [plan]);
+  const rosterById = React.useMemo(() => new Map(roster.map((p) => [p.id, p.fullName])), [roster]);
+
+  /*
+   * Choices taken but not yet re-planned. The plan on screen was computed
+   * without them, so it still shows these parties as skipped — the panel says
+   * how many are waiting rather than letting the counts above look final.
+   */
+  const decided = pending.filter((d) => overrides[d.needle] != null).length;
+
+  if (pending.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <UserSearch className="size-4" />
+            {pending.length} {pending.length === 1 ? 'name needs' : 'names need'} a decision
+          </div>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Confirm the suggestion or choose the right player. Nothing is written until you commit,
+            and every choice is re-checked against the roster then.
+          </p>
+        </div>
+        <Button onClick={onRerun} disabled={busy || decided === 0}>
+          {busy ? <Spinner /> : null}
+          Apply {decided > 0 ? `${decided} ` : ''}and dry run again
+        </Button>
+      </div>
+
+      <ul className="divide-y">
+        {pending.map((d) => {
+          const chosen = overrides[d.needle];
+          return (
+            <li key={d.needle} className="flex flex-wrap items-center gap-3 p-4">
+              <div className="min-w-56 flex-1">
+                <div className="font-medium">{d.needle}</div>
+                <p className="text-muted-foreground text-sm">
+                  {d.playerName ? (
+                    <>
+                      Closest is {d.playerName}
+                      {d.confidence == null ? null : (
+                        <>
+                          {' at '}
+                          {/*
+                            A weak suggestion is coloured rather than withheld.
+                            `NAME_FUZZY` always returns a best match, so a name
+                            nobody on the roster resembles still arrives with one
+                            — 13% here means "no", while the 39% an annotated
+                            roster entry scores against a real name means "yes".
+                            No cutoff separates those two honestly, so the number
+                            is made loud instead of a threshold being invented.
+                          */}
+                          <span
+                            className={
+                              d.confidence < 0.4 ? 'text-destructive font-medium' : 'font-medium'
+                            }
+                          >
+                            {(d.confidence * 100).toFixed(0)}%
+                          </span>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    'Nothing on the roster matched'
+                  )}
+                  {d.parties > 1 ? ` · ${d.parties} parties` : ''}
+                </p>
+              </div>
+
+              {chosen != null ? (
+                <div className="flex items-center gap-2">
+                  <Badge>
+                    <Check className="size-3" />
+                    {rosterById.get(chosen) ?? `#${chosen}`}
+                  </Badge>
+                  <Button variant="ghost" size="sm" onClick={() => onOverride(d.needle, null)}>
+                    Undo
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {/*
+                    Only offered when there is a suggestion to accept. For a name
+                    nothing matched, "confirm" would be confirming nothing.
+                  */}
+                  {d.playerId != null ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => onOverride(d.needle, d.playerId as number)}
+                    >
+                      <Check />
+                      Confirm {d.playerName}
+                    </Button>
+                  ) : null}
+                  <Select value={null} onValueChange={(v) => v && onOverride(d.needle, Number(v))}>
+                    <SelectTrigger size="sm" className="w-56">
+                      <SelectValue placeholder="Choose a player…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roster.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.fullName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export function DryRunReport({
+  plan,
+  timeZone,
+  roster,
+  overrides,
+  onOverride,
+  onRerun,
+  busy,
+}: {
+  plan: PlanResponse;
+  timeZone: string;
+  roster: RosterPlayer[];
+  overrides: Record<string, number>;
+  onOverride: (needle: string, playerId: number | null) => void;
+  onRerun: () => void;
+  busy: boolean;
+}) {
   const [level, setLevel] = React.useState<string>('ALL');
   const all = React.useMemo(() => toReportRows(plan), [plan]);
   const rows = React.useMemo(
@@ -174,13 +368,23 @@ export function DryRunReport({ plan, timeZone }: { plan: PlanResponse; timeZone:
               {plan.parties.some((p) => p.blocked) ? (
                 <li>
                   {plan.parties.filter((p) => p.blocked).length} of {plan.counts.parties} parties
-                  will be skipped. Fix them in the sheet and dry run again, or commit without them.
+                  will be skipped. Settle any player decisions below, fix the rest in the sheet and
+                  dry run again, or commit without them.
                 </li>
               ) : null}
             </ul>
           </AlertDescription>
         </Alert>
       ) : null}
+
+      <DecisionPanel
+        plan={plan}
+        roster={roster}
+        overrides={overrides}
+        onOverride={onOverride}
+        onRerun={onRerun}
+        busy={busy}
+      />
 
       {/*
         The grouping check. This is what makes decision 33 safe: the reshaping

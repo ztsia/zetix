@@ -19,6 +19,23 @@ export type Finding = {
   /** 1-based sheet row. Absent on a file-level finding. */
   rowNumber?: number;
   partyKey?: string;
+  /**
+   * The player decision this finding is waiting on, for the two codes that can
+   * be resolved from the dry-run screen rather than by editing the sheet.
+   *
+   * The message alone cannot drive that: the screen needs the cell value to key
+   * the choice by, and the suggestion to offer as the one-click answer. Carried
+   * as data rather than parsed back out of English.
+   */
+  match?: {
+    /** The cell value that was matched on — the key an override is stored under. */
+    needle: string;
+    /** The best suggestion, when there was one. Absent for PLAYER_NOT_MATCHED. */
+    playerId?: number;
+    playerName?: string;
+    /** `pg_trgm` similarity, 0–1. */
+    confidence?: number;
+  };
 };
 
 export type PlannedSeat = {
@@ -84,6 +101,17 @@ export type PlanContext = {
    * TypeScript would give a second answer to the same question.
    */
   playerMatches: ReadonlyMap<string, PlayerMatch>;
+  /**
+   * Players the admin chose explicitly on the dry-run screen, keyed by cell
+   * value (§9.3). Resolved and re-validated by `loadPlayerOverrides`.
+   *
+   * An override wins over whatever matching produced, including over nothing at
+   * all — so it answers `PLAYER_NOT_MATCHED` and `PLAYER_MATCH_UNCONFIRMED`
+   * alike. Keyed by cell value rather than by party so that one decision about
+   * "Haruto Lim Wei Kang" covers every row that says it, and so that it
+   * survives a re-run of the same file.
+   */
+  playerOverrides: ReadonlyMap<string, { playerId: number; fullName: string }>;
 };
 
 export type ImportPlan = {
@@ -364,7 +392,25 @@ export function planImport(
       const raw = firstRow ? cell(firstRow, matchColumn, profile.transforms) : null;
       const match = raw == null ? null : (context.playerMatches.get(raw) ?? null);
 
-      if (!match) {
+      /**
+       * An explicit choice from the dry-run screen outranks matching entirely.
+       *
+       * It is checked before `!match` rather than after, because the case that
+       * most needs it is the one where nothing matched at all — a name the
+       * roster spells differently, which no threshold can rescue.
+       */
+      const override = raw == null ? undefined : context.playerOverrides.get(raw);
+      if (override) {
+        draft.playerId = override.playerId;
+        draft.playerName = override.fullName;
+        add({
+          level: 'INFO',
+          code: 'PLAYER_MATCH_OVERRIDDEN',
+          rowNumber: draft.rowNumbers[0],
+          partyKey: key,
+          message: `"${raw}" was set to ${override.fullName} by hand.`,
+        });
+      } else if (!match) {
         draft.blocked = true;
         add({
           level: 'BLOCKING',
@@ -372,32 +418,42 @@ export function planImport(
           rowNumber: draft.rowNumbers[0],
           partyKey: key,
           message: raw
-            ? `No player matches "${raw}". Create them inline or skip these rows - a player-invited seat with no player is owed no base allocation.`
+            ? `No player matches "${raw}". Choose one on this screen, add them on the players screen, or skip these rows - a player-invited seat with no player is owed no base allocation.`
             : `Row ${draft.rowNumbers[0]} has nothing in "${matchColumn}", so no player can be matched.`,
+          ...(raw ? { match: { needle: raw } } : {}),
         });
         continue;
+      } else {
+        draft.playerId = match.playerId;
+        draft.playerName = match.fullName;
+        if (match.needsConfirmation) {
+          draft.blocked = true;
+          add({
+            level: 'BLOCKING',
+            code: 'PLAYER_MATCH_UNCONFIRMED',
+            rowNumber: draft.rowNumbers[0],
+            partyKey: key,
+            message: `"${raw}" matched ${match.fullName} at ${(match.confidence * 100).toFixed(0)}% similarity, below the confirmation threshold. Confirm or correct it.`,
+            match: {
+              needle: raw!,
+              playerId: match.playerId,
+              playerName: match.fullName,
+              confidence: match.confidence,
+            },
+          });
+        }
       }
-
-      draft.playerId = match.playerId;
-      draft.playerName = match.fullName;
-      if (match.needsConfirmation) {
-        draft.blocked = true;
-        add({
-          level: 'BLOCKING',
-          code: 'PLAYER_MATCH_UNCONFIRMED',
-          rowNumber: draft.rowNumbers[0],
-          partyKey: key,
-          message: `"${raw}" matched ${match.fullName} at ${(match.confidence * 100).toFixed(0)}% similarity, below the confirmation threshold. Confirm or correct it.`,
-        });
-      }
-      if (context.playersWithExistingRegistration.has(match.playerId)) {
+      // Reads the draft rather than `match`, so an overridden player is checked
+      // against §7.6 exactly as a matched one is. Choosing a player by hand must
+      // not be a way round the one-registration-per-player rule.
+      if (draft.playerId != null && context.playersWithExistingRegistration.has(draft.playerId)) {
         draft.blocked = true;
         add({
           level: 'BLOCKING',
           code: 'PLAYER_ALREADY_REGISTERED',
           rowNumber: draft.rowNumbers[0],
           partyKey: key,
-          message: `${match.fullName} already has a registration for this show. Skipped - edit the existing one instead (§7.6).`,
+          message: `${draft.playerName} already has a registration for this show. Skipped - edit the existing one instead (§7.6).`,
         });
       }
     }

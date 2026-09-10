@@ -59,6 +59,7 @@ function context(over: Partial<PlanContext> = {}): PlanContext {
     baseAlreadyClaimed: new Map(),
     playersWithExistingRegistration: new Set(),
     playerMatches: new Map(),
+    playerOverrides: new Map(),
     ...over,
   };
 }
@@ -324,6 +325,109 @@ describe('player matching (§9.3, §9.4)', () => {
     );
 
     expect(codes(plan)).toContain('PLAYER_MATCH_UNCONFIRMED');
+    expect(plan.parties[0].blocked).toBe(true);
+  });
+
+  it('carries the cell value and the suggestion on an unconfirmed finding', () => {
+    // The dry-run screen keys its choice by the cell value and offers the
+    // suggestion as the one-click answer, so both have to be data on the
+    // finding rather than English inside `message`.
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'NAME_FUZZY' } }),
+      context({
+        playerMatches: new Map([
+          ['p@example.com', { playerId: 7, fullName: 'Pat Lim', confidence: 0.39, needsConfirmation: true }],
+        ]),
+      }),
+    );
+
+    const finding = plan.findings.find((f) => f.code === 'PLAYER_MATCH_UNCONFIRMED');
+    expect(finding?.match).toEqual({
+      needle: 'p@example.com',
+      playerId: 7,
+      playerName: 'Pat Lim',
+      confidence: 0.39,
+    });
+  });
+
+  it('names the cell value on an unmatched finding, so one can be chosen for it', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'nobody@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({ playerMatches: new Map() }),
+    );
+
+    expect(plan.findings.find((f) => f.code === 'PLAYER_NOT_MATCHED')?.match).toEqual({
+      needle: 'nobody@example.com',
+    });
+  });
+
+  it('an override clears an unconfirmed match', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'NAME_FUZZY' } }),
+      context({
+        playerMatches: new Map([
+          ['p@example.com', { playerId: 7, fullName: 'Pat Lim', confidence: 0.39, needsConfirmation: true }],
+        ]),
+        playerOverrides: new Map([['p@example.com', { playerId: 7, fullName: 'Pat Lim' }]]),
+      }),
+    );
+
+    expect(codes(plan)).not.toContain('PLAYER_MATCH_UNCONFIRMED');
+    expect(plan.parties[0].blocked).toBe(false);
+    expect(plan.parties[0].playerId).toBe(7);
+  });
+
+  it('an override rescues a party nothing matched at all', () => {
+    // The case that most needs it: a name the roster spells differently, which
+    // no threshold can rescue.
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'nobody@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        playerMatches: new Map(),
+        playerOverrides: new Map([['nobody@example.com', { playerId: 9, fullName: 'Wei Ling' }]]),
+      }),
+    );
+
+    expect(codes(plan)).not.toContain('PLAYER_NOT_MATCHED');
+    expect(plan.parties[0].blocked).toBe(false);
+    expect(plan.parties[0].playerId).toBe(9);
+    expect(plan.parties[0].playerName).toBe('Wei Ling');
+  });
+
+  it('an override can send a party to a different player than the suggestion', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'p@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'NAME_FUZZY' } }),
+      context({
+        playerMatches: new Map([
+          ['p@example.com', { playerId: 7, fullName: 'Pat Lim', confidence: 0.39, needsConfirmation: true }],
+        ]),
+        playerOverrides: new Map([['p@example.com', { playerId: 12, fullName: 'Someone Else' }]]),
+      }),
+    );
+
+    expect(plan.parties[0].playerId).toBe(12);
+    expect(plan.parties[0].playerName).toBe('Someone Else');
+  });
+
+  it('an override is still refused a player who already registered (§7.6)', () => {
+    // Choosing by hand must not be a way round the one-registration-per-player
+    // rule — the check reads the draft, not the fuzzy match.
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'X', [HEADERS.email]: 'nobody@example.com', [HEADERS.name]: 'X', [HEADERS.type]: 'Extra' }, 2)],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        playerMatches: new Map(),
+        playerOverrides: new Map([['nobody@example.com', { playerId: 9, fullName: 'Wei Ling' }]]),
+        playersWithExistingRegistration: new Set([9]),
+      }),
+    );
+
+    expect(codes(plan)).toContain('PLAYER_ALREADY_REGISTERED');
     expect(plan.parties[0].blocked).toBe(true);
   });
 

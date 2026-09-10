@@ -49,7 +49,7 @@ import { defaultProfileFor } from '@/lib/import/template';
 import { parseMappingProfile } from '@/lib/import/profile';
 import { DryRunReport } from './dry-run-report';
 import { PrepareStep } from './prepare-step';
-import type { InspectResponse, PlanResponse } from './types';
+import type { InspectResponse, PlanResponse, RosterPlayer } from './types';
 
 export type SegmentOption = {
   segmentId: number;
@@ -126,6 +126,7 @@ export function ImportFlow({
   segments,
   timeZone,
   playerEmails,
+  roster,
 }: {
   concertId: number;
   segments: SegmentOption[];
@@ -133,6 +134,8 @@ export function ImportFlow({
   timeZone: string;
   /** Active players on this concert, and how many of them have an email. */
   playerEmails: { total: number; withEmail: number };
+  /** Active players, for correcting a match on the dry run (§9.3). */
+  roster: RosterPlayer[];
 }) {
   const [step, setStep] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
@@ -157,6 +160,17 @@ export function ImportFlow({
     column: string | null;
     strategy: PlayerMatchStrategy;
   } | null>(null);
+
+  /**
+   * Player decisions taken on the dry run, keyed by the cell value they were
+   * made against (§9.3).
+   *
+   * Held here rather than in the report, because the commit re-plans from the
+   * file and has to send them too — a commit that dropped them would silently
+   * reinstate every block the admin had just cleared, under a button that says
+   * how many registrations it is about to write.
+   */
+  const [playerOverrides, setPlayerOverrides] = React.useState<Record<string, number>>({});
 
   const [allocationMode, setAllocationMode] = React.useState<AllocationMode>('UNIFORM');
   const [uniformType, setUniformType] = React.useState<'BASE' | 'EXTRA'>('EXTRA');
@@ -901,7 +915,36 @@ export function ImportFlow({
             </div>
           ) : null}
 
-          {step === 4 && plan ? <DryRunReport plan={plan} timeZone={timeZone} /> : null}
+          {step === 4 && plan ? (
+            <DryRunReport
+              plan={plan}
+              timeZone={timeZone}
+              roster={roster}
+              overrides={playerOverrides}
+              onOverride={(needle, playerId) =>
+                setPlayerOverrides((current) => {
+                  if (playerId == null) {
+                    const rest = { ...current };
+                    delete rest[needle];
+                    return rest;
+                  }
+                  return { ...current, [needle]: playerId };
+                })
+              }
+              // Re-planning is the only honest way to show the effect: the plan
+              // on screen was computed without these choices, and seat counts,
+              // promotions and the pool all move when a party stops being
+              // skipped.
+              onRerun={async () => {
+                const json = (await post('dry-run', {
+                  profile: buildProfile(),
+                  playerOverrides: JSON.stringify(playerOverrides),
+                })) as PlanResponse | null;
+                if (json) setPlan(json);
+              }}
+              busy={busy}
+            />
+          ) : null}
 
           {step === 5 ? (
             committed?.outcome ? (
@@ -984,6 +1027,7 @@ export function ImportFlow({
                 onClick={async () => {
                   const json = (await post('dry-run', {
                     profile: buildProfile(),
+                    playerOverrides: JSON.stringify(playerOverrides),
                   })) as PlanResponse | null;
                   if (json) {
                     setPlan(json);
@@ -1041,6 +1085,7 @@ export function ImportFlow({
                         const json = (await post('commit', {
                           profile: buildProfile(),
                           confirmation,
+                          playerOverrides: JSON.stringify(playerOverrides),
                         })) as PlanResponse | null;
                         if (json) setCommitted(json);
                         else setStep(4);

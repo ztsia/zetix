@@ -28,6 +28,7 @@ const baseContext: PlanContext = {
   baseAlreadyClaimed: new Map(),
   playersWithExistingRegistration: new Set(),
   playerMatches: new Map(),
+  playerOverrides: new Map(),
 };
 
 describe('the template maps itself', () => {

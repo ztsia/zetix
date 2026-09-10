@@ -212,10 +212,50 @@ export async function loadPlayersWithRegistration(showId: number): Promise<Set<n
   }
 }
 
+/**
+ * Resolves an admin's explicit player choices, keyed by the cell value they were
+ * made against (§9.3, "confirm or correct it").
+ *
+ * **The ids are re-read rather than trusted.** They arrive from a form, and a
+ * player id from another concert would attach a registration to a stranger and
+ * spend a quota that is not this concert's. Anything that is not an active,
+ * undeleted player of this concert is dropped, which means the party goes back
+ * to blocking — the safe direction, and visible in the next dry run.
+ */
+export async function loadPlayerOverrides(
+  concertId: number,
+  wanted: ReadonlyMap<string, number>,
+): Promise<Map<string, { playerId: number; fullName: string }>> {
+  const out = new Map<string, { playerId: number; fullName: string }>();
+  const ids = [...new Set(wanted.values())];
+  if (ids.length === 0) return out;
+
+  try {
+    const rows = await getDb().execute<{ id: string; full_name: string }>(sql`
+      select id, full_name
+        from players
+       where concert_id = ${concertId}
+         and is_active
+         and deleted_at is null
+         and id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+    `);
+    const byId = new Map(rows.map((r) => [Number(r.id), r.full_name]));
+    for (const [needle, playerId] of wanted) {
+      const fullName = byId.get(playerId);
+      if (fullName != null) out.set(needle, { playerId, fullName });
+    }
+    return out;
+  } catch (error) {
+    rethrowDbError(error);
+  }
+}
+
 export async function buildPlanContext(
   target: SegmentTarget,
   profile: MappingProfile,
   rows: readonly SheetRow[],
+  /** Explicit player choices from the dry-run screen, keyed by cell value. */
+  playerOverrides: ReadonlyMap<string, number> = new Map(),
 ): Promise<PlanContext> {
   const ctx = {
     segmentId: target.segmentId,
@@ -273,5 +313,9 @@ export async function buildPlanContext(
     baseAlreadyClaimed,
     playersWithExistingRegistration: existing,
     playerMatches,
+    playerOverrides:
+      target.audienceMode === 'PLAYER_INVITED'
+        ? await loadPlayerOverrides(target.concertId, playerOverrides)
+        : new Map(),
   };
 }

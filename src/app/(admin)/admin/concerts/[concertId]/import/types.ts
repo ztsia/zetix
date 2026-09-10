@@ -8,6 +8,9 @@ import type { SuggestedColumns } from '@/lib/import/template';
  * a type error on the screen rather than an `undefined` in a table cell.
  */
 
+/** One active player of this concert, for the dry run's match picker (§9.3). */
+export type RosterPlayer = { id: number; fullName: string };
+
 export type InspectResponse = {
   audienceMode: 'PUBLIC' | 'PLAYER_INVITED';
   sheets: { name: string; rowCount: number; detectedHeaderRow: number }[];

@@ -31,24 +31,24 @@ the short version is that anything still true next week belongs in `docs/spec/`,
 
 ## Where the build is
 
-**Both foundations and seven of the eight wave-2 modules have merged.** `pnpm dev`, `pnpm test`,
-`pnpm build` and CI all pass.
+**V1 is complete — all ten modules merged.** `pnpm dev`, `pnpm test`, `pnpm build` and CI all pass.
 
-| Merged | Not started |
-|---|---|
-| `F1` schema, settings cascade, `claim_seats()` · `F2` auth, admin shell, `DataTable` | **`H`** check-in dashboard, operator accounts, scan-log revert |
-| `A` config & people · `B` registrations & extras · `C` spreadsheet import | **`I`** read-only `/t/{token}` — until it lands, a scanned ticket QR 404s |
-| `D` ticket render · `E` template editor · `F` outbox & blast | |
-| `G` door scanner, incl. `/scan/diagnostics` | |
-| CI: typecheck/lint/test/build on a real Postgres 16 | |
+| Merged |
+|---|
+| `F1` schema, settings cascade, `claim_seats()` · `F2` auth, admin shell, `DataTable` |
+| `A` config & people · `B` registrations & extras · `C` spreadsheet import |
+| `D` ticket render · `E` template editor · `F` outbox & blast |
+| `G` door scanner · `H` check-in & operators · `I` read-only `/t/{token}` |
 
-**Next task**: `H` and `I`. Both are genuinely parallel, both are off the critical path, and both
-branches exist holding only a handoff — they are 130+ commits behind `main`, so merge `main` first.
+**The whole flow has now been driven end to end against production in a real browser (10 Sep).**
+Concert → show → two segments → four registrations → allocation → ticket issue → PDF → blast →
+five real emails → QR scan off a camera → manual admit by name and by ticket code. What that pass
+found, and the test data it left behind, is in `docs/local.md` §5h.
 
-**The larger risk is no longer code.** Seven modules shipped without anyone ever signing in and
-looking at them — every module's handoff records this, always for the same reason (the admin code
-lives only in `.env.local`). F2's one browser pass caught four bugs that typecheck and build had both
-passed. A local session with a browser is worth more right now than another module.
+**Next task**: the real 19 Sep concert still has to be configured by hand, and it cannot be until the
+`TBC`s in `docs/context.md` §6 are answered (start time, doors, venue, public party cap, base claim
+deadline). Then the two pre-blast gates: a printed ticket scanned on a real usher phone, and the
+400-ticket dry run.
 
 Deployment state: Supabase live with migrations `0000`–`0006` applied (10 Sep, 22 tables), system
 settings seeded, the shared `ADMIN` account created, the manifest authorization boundary verified
@@ -140,8 +140,13 @@ pnpm tsc --noEmit
 pnpm exec playwright test # end-to-end; Chromium is preinstalled, never `playwright install`
 ```
 
-Two database URLs, not one: `DATABASE_URL` is the transaction pooler on `6543` with
-`prepare: false`; `DIRECT_URL` is the session pooler on `5432` for migrations (`docs/spec/platform.md` §16.2).
+Two database URLs, not one. `DIRECT_URL` is the session pooler on `5432`, for migrations.
+
+**`DATABASE_URL` was moved to the session pooler on `5432` on 10 Sep** and no longer matches
+`docs/spec/platform.md` §16.2, which still says the transaction pooler on `6543`. That pooler
+intermittently kills the first query on a fresh connection with a spurious `57014`, and `max: 1`
+turns one wedged query into every route timing out at once. Evidence, and what to check before
+moving it back, are in `docs/local.md` §5g. `prepare: false` stays either way.
 
 The allocation engine is developed against a **local Postgres 16**, not Supabase — it needs `citext`,
 `pg_trgm` and `pgcrypto` and nothing else (`docs/spec/platform.md` §16.4).

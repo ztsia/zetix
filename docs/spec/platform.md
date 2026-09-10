@@ -65,6 +65,13 @@ through Supavisor, the connection pooler, on different ports and in different mo
 Serverless also means many short-lived connections: keep the runtime pool small (`max: 1` per function
 instance) and let the pooler do the multiplexing.
 
+> **Superseded in production since 10 Sep.** `DATABASE_URL` now points at the **session** pooler on
+> `5432`. The transaction pooler intermittently answers the first query on a fresh connection with a
+> spurious `57014 canceling statement due to statement timeout`, and `max: 1` turns one wedged query
+> into every route timing out at once. The table above is left as written because it is the right
+> shape once that pooler is healthy; `docs/local.md` §5g carries the evidence and the conditions for
+> reverting.
+
 ### 16.3 Barcode decoding: `@zxing/browser`, with a native fast path
 
 `@zxing/browser` is a JavaScript port of the ZXing barcode library. It pulls frames from a `<video>`

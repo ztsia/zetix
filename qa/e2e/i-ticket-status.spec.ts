@@ -135,8 +135,10 @@ test('FLOW-2  the QR on the page decodes to the printed ticket payload', async (
 });
 
 test('FLOW-3  a stranger guesses a token', async ({ page }) => {
+  // The status is 200 by the deliberate trade recorded at 6db8190 and judged in
+  // 01-acceptance.md; what this asserts is the content, and that it is server-sent.
   const res = await page.goto(`/t/${T.unknown}`);
-  expect(res?.status()).toBe(404);
+  expect(res?.status()).toBe(200);
   await expect(page.getByText('We could not find that ticket')).toBeVisible();
   await shot(page, 'FLOW-3-step-1-unknown-token');
   const body = await page.locator('body').innerText();
@@ -159,7 +161,8 @@ test('FLOW-4  hostile input in the token segment', async ({ page }) => {
   });
   for (const [name, value] of hostile) {
     const res = await page.goto(`/t/${value}`);
-    expect(res?.status(), name).toBe(404);
+    // Never a 500 is the criterion (AC-3'); the exact 2xx/4xx is the trade above.
+    expect(res?.status(), name).toBeLessThan(500);
     await expect(page.getByText('We could not find that ticket')).toBeVisible();
     const body = await page.locator('body').innerText();
     expect(body, name).not.toMatch(/node_modules|node:internal|postgres|syntax error/i);
@@ -250,13 +253,13 @@ test('FLOW-10a  the ticket itself works with JavaScript unavailable', async ({ b
 });
 
 /**
- * The sad half, and the one that fails.
+ * The sad half — the regression guard for the finding this QA pass raised.
  *
- * `notFound()` thrown inside the Server Component leaves an **empty `<body>`**
- * in the server-rendered HTML: the friendly page is only inside the RSC flight
- * payload, so it paints after hydration and never at all without JS. The happy
- * path is fully server-rendered (FLOW-10a), so this is specific to the
- * not-found branch — which is the branch this module exists for
+ * At `bca6bab` the page threw `notFound()`, which inside a dynamic Server
+ * Component leaves an **empty `<body>`**: the copy lived only in the RSC flight
+ * payload, so it painted after hydration and never at all without JS. `6db8190`
+ * returns the component instead. If anyone puts `notFound()` back, this goes
+ * red rather than the blank page reaching a guest outside a hall
  * (spec/v2.md §13.2, spec/surfaces.md §15.3).
  */
 test('FLOW-10b  the not-found page with JavaScript unavailable', async ({ browser }) => {
@@ -265,8 +268,7 @@ test('FLOW-10b  the not-found page with JavaScript unavailable', async ({ browse
     viewport: { width: 390, height: 844 },
   });
   const page = await ctx.newPage();
-  const res = await page.goto(`/t/${T.unknown}`);
-  expect(res?.status()).toBe(404);
+  await page.goto(`/t/${T.unknown}`);
   await shot(page, 'FLOW-10-step-2-not-found-no-javascript');
   const body = await page.locator('body').innerText();
   await ctx.close();
@@ -275,11 +277,59 @@ test('FLOW-10b  the not-found page with JavaScript unavailable', async ({ browse
   );
 });
 
+/**
+ * AC-33 — the regression guard on the road not taken.
+ *
+ * Dropping `force-dynamic` was one of the ways to get the not-found copy into
+ * the server-rendered body; it would have cost the *ticket* its own server
+ * render, which is the worse trade. This pins the happy path so that fix can
+ * never be reintroduced quietly.
+ */
+test('FLOW-15  the ticket itself is still fully server-rendered', async ({ request }) => {
+  const res = await request.get(`/t/${T.issued}`);
+  expect(res.status()).toBe(200);
+  // A cancelled ticket must never be served from a cache.
+  expect(res.headers()['cache-control']).toMatch(/no-store/);
+  const html = await res.text();
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<svg[\s\S]*?<\/svg>/g, '[SVG]');
+  for (const needed of [
+    'Aisyah Binti Rahman',
+    'Evening Concert',
+    'Sat 19 Sep 2026',
+    'Doors open ',
+    '19:00',
+    'Dewan Filharmonik Petronas',
+  ]) {
+    expect(stripped, needed).toContain(needed);
+  }
+  // The QR too — inlined, not fetched.
+  expect(html).toContain('shape-rendering="crispEdges"');
+  expect(html).not.toMatch(/<img[^>]+src=/);
+});
+
+/**
+ * AC-32' — the three reasons a token can fail must be indistinguishable.
+ *
+ * Byte-identical output once the echoed token is normalised, which is the
+ * assertion the status code was never actually making.
+ */
+test('FLOW-16  unknown, malformed and soft-deleted are one response', async ({ request }) => {
+  const norm = async (token: string) =>
+    (await (await request.get(`/t/${token}`)).text()).split(token).join('TOKEN');
+  const unknown = await norm(T.unknown);
+  const deleted = await norm(T.deleted);
+  expect(unknown).toBe(deleted);
+  // And none of them says who the soft-deleted seat belonged to.
+  expect(deleted).not.toContain('Deleted Guest');
+  expect(unknown).toContain('We could not find that ticket');
+});
+
 test('FLOW-11  a soft-deleted seat is indistinguishable from a token that never existed', async ({
   page,
 }) => {
-  const res = await page.goto(`/t/${T.deleted}`);
-  expect(res?.status()).toBe(404);
+  await page.goto(`/t/${T.deleted}`);
   await expect(page.getByText('We could not find that ticket')).toBeVisible();
   const body = await page.locator('body').innerText();
   expect(body).not.toContain('Deleted Guest');

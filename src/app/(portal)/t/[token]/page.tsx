@@ -74,20 +74,32 @@ export default async function TicketStatusPage({
    * `notFound()` inside a dynamic Server Component discards the shell: Next
    * puts the boundary's content behind a Suspense swap, so the server sends an
    * empty `<body>` and the friendly copy only arrives once client JavaScript
-   * runs. Measured on this page in a production build, that is 6.5s of blank
-   * white on Regular 3G, and nothing at all with JavaScript off — while the
-   * same request for a *valid* token paints in 562ms. Every route this branch
+   * runs. Measured on this page in a production build on Regular 3G, that was
+   * roughly **5.2s of blank white** — the wait for the full bundle — against a
+   * ~0.45s server paint, and **nothing at all** with JavaScript off. (An
+   * earlier draft of this comment said 6.5s, from a measurement that compared
+   * a cold load against a warm one. The JavaScript-off case is what set the
+   * severity, and it was never a matter of degree.) Every route this branch
    * tried keeps that behaviour: co-locating a `not-found.tsx` at this segment
    * does not change it, and dropping `force-dynamic` costs the happy path its
    * server render too.
    *
    * So the choice is a correct status code with a blank page, or the page with
-   * a 200. The spec picks for us, twice and literally: this page exists because
-   * "a 404 there is a support call on concert night" (spec/README.md §4.1), and
-   * a curious ticket holder "must get something friendly, not a 404"
-   * (spec/v2.md §13.2). The people who land here are holding a superseded
-   * ticket or a clipped QR, outside a hall, on venue wifi — the blank screen is
-   * the failure this module was written to prevent.
+   * a 200.
+   *
+   * **The spec does not decide this, and it is worth being honest about that.**
+   * §13.2's table covers Issued, Admitted and Cancelled — three states of a
+   * real ticket — and "must get something friendly, not a 404" is about a
+   * holder scanning *their own* QR early, not about a token that resolves to
+   * nothing. An independent QA pass made exactly that objection to an earlier
+   * version of this comment, which quoted those sentences as though they
+   * settled it. §13.2 now carries a fourth row so the next reader is not left
+   * to infer one.
+   *
+   * The call is made on the merits instead. The people who land here are
+   * holding a superseded ticket or a clipped QR, outside a hall, on venue wifi;
+   * the blank screen is the failure this module was written to prevent, and it
+   * is measured. The cost is abstract by comparison — see below.
    *
    * What the status is *not* carrying: it never distinguished a real ticket
    * from a missing one to anyone who did not already have the token, because
@@ -95,6 +107,12 @@ export default async function TicketStatusPage({
    * indistinguishable from each other, which is the property that matters. And
    * nothing machine-readable reads this surface — it is `noindex`, has no API
    * clients, and admission never touches it (decision 28).
+   *
+   * **What it does cost, so nobody rediscovers it at 8pm on the night:** an
+   * uptime check pointed at a ticket URL will report healthy after that ticket
+   * is deleted, and a surge of dead-token traffic no longer shows up in
+   * anything that counts non-2xx responses. If that signal is ever wanted, the
+   * answer is a counter on this branch, not a status code that blanks the page.
    */
   if (!status) return <TicketNotFound />;
 

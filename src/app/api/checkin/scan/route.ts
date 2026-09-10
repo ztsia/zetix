@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { canAccessShow } from '@/lib/auth/show-access';
+import { recordRejectedSync } from '@/lib/checkin/rejected-sync';
 
 /**
  * `POST /api/checkin/scan` — admissions reaching the server
@@ -86,6 +87,24 @@ export async function POST(request: Request) {
   // 404 rather than 403, for the same reason as the manifest: probing ids must
   // not distinguish "not yours" from "not there" (modules.md §5.2.1).
   if (!(await canAccessShow(user, showId))) {
+    /**
+     * Refused, and the admin is told (spec/admin.md §14.3, module `H`).
+     *
+     * §14.3 requires both halves of this: a revoked assignment's queued scans
+     * are "rejected on sync **and surfaced to the admin rather than silently
+     * dropped**". The people in that batch were physically admitted by an usher
+     * whose phone still believed it was rostered — they are in the hall and, on
+     * the rejection alone, nowhere in the database.
+     *
+     * The response below is unchanged, so the caller still learns nothing. Only
+     * the desk finds out.
+     */
+    await recordRejectedSync({
+      userId: user.id,
+      showId,
+      deviceId: scans[0]?.deviceId ?? null,
+      scannedAts: scans.map((scan) => scan.scannedAt),
+    });
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

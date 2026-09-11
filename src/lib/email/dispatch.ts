@@ -40,6 +40,9 @@ export const MAX_DISPATCH_SECONDS = 60;
 /** Safety factor on {@link MAX_DISPATCH_SECONDS} before a row is called stranded. */
 const RECLAIM_FACTOR = 10;
 
+/** How long a row must sit in `SENDING` before {@link reclaimStranded} takes it back. */
+const RECLAIM_AFTER_SECONDS = MAX_DISPATCH_SECONDS * RECLAIM_FACTOR;
+
 export type DispatchResult = {
   sent: number;
   failed: number;
@@ -228,7 +231,7 @@ async function reclaimStranded(): Promise<number> {
     update email_outbox
        set status = 'QUEUED', updated_at = now()
      where status = 'SENDING'
-       and updated_at < now() - (interval '1 second' * ${MAX_DISPATCH_SECONDS * RECLAIM_FACTOR})
+       and updated_at < now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
     returning id
   `);
   return rows.length;
@@ -239,6 +242,52 @@ async function remainingQueued(): Promise<number> {
     select count(*)::int as n from email_outbox where status = 'QUEUED'
   `);
   return rows[0]?.n ?? 0;
+}
+
+export type OutboxBacklog = {
+  /**
+   * Messages a Resume would send right now: `QUEUED` rows, plus `SENDING` rows
+   * old enough that the next dispatch call reclaims them (§11.2's recovery
+   * path) before it claims anything.
+   */
+  resumable: number;
+  /**
+   * `SENDING` rows too recent to reclaim — either a dispatch is using them, or
+   * one just died and the reclaim window has not elapsed. Resume cannot help
+   * these yet, so the banner must not offer it for them.
+   */
+  inFlight: number;
+};
+
+/**
+ * What the queue banner renders (spec/email.md §11.2.1).
+ *
+ * **The banner's source of truth is `email_outbox`, not client state**, which
+ * is what lets "is there an unfinished blast?" survive a route change, a
+ * reload, a closed tab and a dead laptop.
+ *
+ * `SENDING` is counted as well as `QUEUED` because a dispatch that dies
+ * mid-batch leaves up to `email.max_per_dispatch` rows there, invisible to a
+ * `QUEUED`-only count. Reporting only `QUEUED` would clear the banner while
+ * those messages were still undelivered — the exact silence §11.2.1 exists to
+ * end. The split by reclaim age is what keeps Resume honest: it is offered only
+ * for rows a dispatch could actually pick up.
+ */
+export async function outboxBacklog(): Promise<OutboxBacklog> {
+  const rows = await getDb().execute<{ resumable: number; in_flight: number }>(sql`
+    select
+      count(*) filter (
+        where status = 'QUEUED'
+           or updated_at < now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
+      )::int as resumable,
+      count(*) filter (
+        where status = 'SENDING'
+          and updated_at >= now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
+      )::int as in_flight
+      from email_outbox
+     where status in ('QUEUED', 'SENDING')
+  `);
+  return { resumable: rows[0]?.resumable ?? 0, inFlight: rows[0]?.in_flight ?? 0 };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

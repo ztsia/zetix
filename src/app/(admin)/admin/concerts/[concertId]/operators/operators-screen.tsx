@@ -6,7 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { NativeSelect } from '@/components/ui/native-select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { DataTable, DataTableColumnHeader, type DataTableColumn } from '@/components/data-table';
 import { formatInZone } from '@/lib/export';
@@ -310,16 +316,16 @@ function OperatorsTable({
       emptyDescription={empty.description}
       emptyFilteredDescription="No operator matches this search."
       toolbar={
-        <NativeSelect
-          value={status}
-          onChange={(event) => setStatus(event.target.value as StatusFilter)}
-          aria-label="Filter by status"
-          className="w-auto"
-        >
-          <option value="active">Active ({counts.active})</option>
-          <option value="inactive">Deactivated ({counts.inactive})</option>
-          <option value="all">All ({counts.all})</option>
-        </NativeSelect>
+        <Select value={status} onValueChange={(value) => setStatus(value as StatusFilter)}>
+          <SelectTrigger aria-label="Filter by status" className="w-auto">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="active">Active ({counts.active})</SelectItem>
+            <SelectItem value="inactive">Deactivated ({counts.inactive})</SelectItem>
+            <SelectItem value="all">All ({counts.all})</SelectItem>
+          </SelectContent>
+        </Select>
       }
     />
   );

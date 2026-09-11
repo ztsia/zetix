@@ -26,6 +26,20 @@ const shot = (page: Page, name: string) =>
 /** The banner is an `Item` in the shell, above the content area on every route. */
 const banner = (page: Page) => page.locator('[data-slot="item"]').first();
 
+/** `qa/support/seed-f.mjs`'s values for everything these flows touch. */
+const SEED_SETTINGS: Record<string, number> = {
+  'email.max_per_dispatch': 25,
+  'email.max_per_day': 450,
+  'email.inter_message_delay_ms': 0,
+  'email.max_attempts': 3,
+  'email.merge_attachments_above': 8,
+  'email.max_attachment_mb': 20,
+};
+
+async function restoreSeedSettings() {
+  for (const [key, value] of Object.entries(SEED_SETTINGS)) await setSetting(key, value);
+}
+
 async function setSetting(key: string, value: number) {
   await sql`
     insert into system_settings (key, value) values (${key}, ${JSON.stringify(value)}::text::jsonb)
@@ -57,9 +71,42 @@ async function queueFourParties(page: Page) {
 
 test.beforeAll(async ({ browser }) => {
   admin = await asAdmin(browser);
+
+  /**
+   * `public_ticket` is ticket-bearing (§11.3), so the dispatcher renders a PDF
+   * per seat and refuses a party whose tickets were never issued. The seed does
+   * not issue them, so this file issues its own rather than inheriting them
+   * from whichever spec happened to run first — a suite that only passes in
+   * order is a suite that cannot be used to bisect anything.
+   */
+  const page = await admin.newPage();
+  await page.goto(`/admin/concerts/${IDS.concertId}/tickets?show=${IDS.showId}`);
+  const issue = page.getByRole('button', { name: 'Issue tickets' });
+  if (await issue.isEnabled().catch(() => false)) {
+    await issue.click();
+  }
+  await expect
+    .poll(
+      async () => {
+        const [{ n }] = await sql<{ n: number }[]>`
+          select count(*)::int as n from attendees where qr_token is not null
+        `;
+        return n;
+      },
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThan(0);
+  await page.close();
 });
 
+/**
+ * The settings these flows bend — a cap of zero, one attempt, a 0MB attachment
+ * limit — live in the database the whole suite shares, so leaving them bent
+ * fails whichever spec runs next for a reason that has nothing to do with it.
+ * Put the seed's own values back.
+ */
 test.afterAll(async () => {
+  await restoreSeedSettings();
   await admin.close();
   await sql.end();
 });
@@ -69,9 +116,7 @@ test.describe.configure({ mode: 'serial' });
 test.beforeEach(async () => {
   await resetBlast(sql);
   await resetSink();
-  await setSetting('email.max_per_dispatch', 25);
-  await setSetting('email.max_per_day', 450);
-  await setSetting('email.inter_message_delay_ms', 0);
+  await restoreSeedSettings();
 });
 
 /* ------------------------------------------------------------------- QB-1 */
@@ -284,4 +329,48 @@ test('QB-6 two consoles resuming the same queue send each message once', async (
 
   await first.close();
   await second.close();
+});
+
+/* ------------------------------------------------------------------- QB-7 */
+/**
+ * The end of the retry chain. Once a message exhausts `email.max_attempts` it
+ * is `FAILED`: nothing retries it and Resume cannot reach it. Clearing the
+ * banner at that point would be the silence §11.2.1 exists to end — the last
+ * state of a blast that did not deliver, looking exactly like one that did.
+ */
+test('QB-7 messages that ran out of attempts stay reported, without a Resume', async () => {
+  const page = await admin.newPage();
+  await queueFourParties(page);
+
+  // One attempt, and a limit every party's attachments exceed: the first
+  // failure is also the last. Both are operational values set through the
+  // cascade, so nothing in `src/` is touched to produce the state.
+  await setSetting('email.max_attempts', 1);
+  await setSetting('email.max_attachment_mb', 0);
+
+  await page.getByRole('button', { name: /^Send 4 queued$/ }).click();
+  await page.getByRole('button', { name: 'Send now' }).click();
+
+  await expect(banner(page)).toContainText('Messages that failed for good', { timeout: 60_000 });
+  await expect(banner(page)).toContainText('4 message(s) ran out of attempts');
+  await expect(banner(page).getByRole('button', { name: 'Resume' })).toHaveCount(0);
+  await shot(page, 'QB-7-failed-for-good');
+
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from email_outbox where status = 'FAILED'
+  `;
+  expect(n).toBe(4);
+  expect((await sink()).count, 'nothing was delivered').toBe(0);
+
+  // And it survives a reload: the state is the database's, not the tab's.
+  await page.goto(`/admin/concerts/${IDS.concertId}/overview`);
+  await expect(banner(page)).toContainText('Messages that failed for good');
+
+  // §11.4 point 4: a failed send stamps nothing, so the seats stay pending.
+  const [{ stamped }] = await sql<{ stamped: number }[]>`
+    select count(*)::int as stamped from attendees where ticket_sent_at is not null
+  `;
+  expect(stamped).toBe(0);
+
+  await page.close();
 });

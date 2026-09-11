@@ -24,6 +24,9 @@ import type { MailTransport } from '@/lib/email/transport';
 
 const TEMPLATE = 'public_ticket';
 
+/** An outbox with nothing outstanding — the state in which the banner hides. */
+const EMPTY = { resumable: 0, retrying: 0, inFlight: 0, failed: 0 };
+
 function recorder(): MailTransport {
   return {
     async send(message) {
@@ -79,7 +82,7 @@ beforeEach(async () => {
 
 describe('the backlog the queue banner renders', () => {
   it('shows nothing on a console with an empty outbox', async () => {
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual(EMPTY);
   });
 
   /**
@@ -95,23 +98,34 @@ describe('the backlog the queue banner renders', () => {
     `;
     expect(n, 'queueBlast should leave the batch in DRAFT').toBe(3);
 
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual(EMPTY);
   });
 
   it('counts confirmed, queued messages as resumable', async () => {
     await seedWorld(3);
     await sql`update email_outbox set status = 'QUEUED'`;
 
-    expect(await outboxBacklog()).toEqual({ resumable: 3, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, resumable: 3 });
   });
 
-  it('ignores messages that are already sent or permanently failed', async () => {
+  it('ignores messages that have already been delivered', async () => {
     await seedWorld(3);
     await sql`update email_outbox set status = 'SENT', sent_at = now()`;
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 0 });
 
-    await sql`update email_outbox set status = 'FAILED'`;
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual(EMPTY);
+  });
+
+  /**
+   * A row out of attempts is a ticket nobody received. Nothing retries it and
+   * Resume cannot reach it, so it is reported in its own bucket — clearing the
+   * banner over it would be the silence §11.2.1 exists to end, and counting it
+   * as resumable would offer a button that cannot deliver it.
+   */
+  it('reports a permanently failed message without calling it resumable', async () => {
+    await seedWorld(3);
+    await sql`update email_outbox set status = 'FAILED', attempts = 3`;
+
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, failed: 3 });
   });
 
   /**
@@ -132,7 +146,7 @@ describe('the backlog the queue banner renders', () => {
     `;
     expect(n, 'the trap: nothing is QUEUED, yet nothing has been delivered').toBe(0);
 
-    expect(await outboxBacklog()).toEqual({ resumable: 3, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, resumable: 3 });
   });
 
   /**
@@ -145,7 +159,7 @@ describe('the backlog the queue banner renders', () => {
     await seedWorld(2);
     await sql`update email_outbox set status = 'SENDING', updated_at = now()`;
 
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 2 });
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, inFlight: 2 });
   });
 
   /**
@@ -165,22 +179,46 @@ describe('the backlog the queue banner renders', () => {
     const result = await dispatchBatch({ transport: recorder() });
     expect(result.sent).toBe(before.resumable);
 
-    expect(await outboxBacklog()).toEqual({ resumable: 0, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual(EMPTY);
   });
 
   /**
    * A failed message backs off and returns to `QUEUED` with `scheduled_for` in
    * the future (§11.2). It is still unfinished work and still belongs on the
-   * banner — the admin's only other signal that a retry is pending is the
-   * outbox table they would have to go looking at.
+   * banner — but **not as resumable**: `claimBatch()` skips a row that is not
+   * due, so a Resume offered for it would do nothing however often it is
+   * pressed, which is the daily cap's mistake in another costume.
    */
-  it('keeps a retrying message on the banner while it waits out its backoff', async () => {
+  it('holds a backing-off message apart from the ones Resume could send', async () => {
     await seedWorld(1);
     await sql`
       update email_outbox
          set status = 'QUEUED', attempts = 1, scheduled_for = now() + interval '1 minute'
     `;
 
-    expect(await outboxBacklog()).toEqual({ resumable: 1, inFlight: 0 });
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, retrying: 1 });
+  });
+
+  /**
+   * The teeth on that split: the claim query and the banner have to agree about
+   * what "due" means, or the number goes back to promising what the dispatcher
+   * will not do. A row whose backoff has elapsed is resumable again.
+   */
+  it('agrees with the claim query about which rows are due', async () => {
+    await seedWorld(2);
+    await sql`
+      update email_outbox
+         set status = 'QUEUED', attempts = 1,
+             scheduled_for = case when id = (select min(id) from email_outbox)
+                                  then now() - interval '1 minute'
+                                  else now() + interval '1 minute' end
+    `;
+
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, resumable: 1, retrying: 1 });
+
+    // And a dispatch delivers exactly the one the banner called resumable.
+    const result = await dispatchBatch({ transport: recorder() });
+    expect(result.sent).toBe(1);
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, retrying: 1 });
   });
 });

@@ -61,7 +61,7 @@ type BlastQueueState = BlastQueue & {
   backlog: OutboxBacklog;
   progress: Progress | null;
   outcome: Outcome | null;
-  liveRemaining: number | null;
+  liveBacklog: OutboxBacklog | null;
   dismissed: boolean;
   dismiss: () => void;
 };
@@ -95,11 +95,11 @@ export function BlastQueueProvider({
   const [dismissed, setDismissed] = useState(false);
 
   /**
-   * What the last dispatch call said was left, which is fresher than the server
-   * render that started the page. Cleared whenever a new server render arrives
-   * and we are not mid-run, so the database always gets the last word.
+   * The queue as the last dispatch call left it, which is fresher than the
+   * server render that started the page. Cleared whenever a new server render
+   * arrives and we are not mid-run, so the database always gets the last word.
    */
-  const [liveRemaining, setLiveRemaining] = useState<number | null>(null);
+  const [liveBacklog, setLiveBacklog] = useState<OutboxBacklog | null>(null);
 
   /**
    * A ref, not the `sending` state, because the guard has to hold **within one
@@ -111,7 +111,7 @@ export function BlastQueueProvider({
   backlogRef.current = backlog;
 
   useEffect(() => {
-    if (!running.current) setLiveRemaining(null);
+    if (!running.current) setLiveBacklog(null);
   }, [backlog]);
 
   const start = useCallback(() => {
@@ -154,8 +154,18 @@ export function BlastQueueProvider({
            * progress bar that reads 112 of 96 is worse than none. This one
            * cannot disagree with the database for longer than a batch.
            */
-          setLiveRemaining(remaining);
-          setProgress({ sent, failed, total: sent + failed + remaining });
+          setLiveBacklog(result.backlog ?? null);
+          /**
+           * The denominator is what is still **sendable**, not every `QUEUED`
+           * row. A batch that failed into its retry backoff has done everything
+           * this run can do, and counting those rows as outstanding would leave
+           * the bar stuck at half over a run that had finished.
+           */
+          setProgress({
+            sent,
+            failed,
+            total: sent + failed + (result.backlog?.resumable ?? remaining),
+          });
 
           if (result.dailyCapReached) {
             setOutcome({
@@ -200,7 +210,7 @@ export function BlastQueueProvider({
         backlog,
         progress,
         outcome,
-        liveRemaining,
+        liveBacklog,
         dismissed,
         dismiss: () => setDismissed(true),
       }}
@@ -210,7 +220,7 @@ export function BlastQueueProvider({
   );
 }
 
-type Tone = 'sending' | 'capped' | 'error' | 'stalled' | 'inflight' | 'done';
+type Tone = 'sending' | 'capped' | 'error' | 'stalled' | 'retrying' | 'inflight' | 'failed' | 'done';
 
 type View = {
   tone: Tone;
@@ -237,14 +247,17 @@ export function BlastQueueBanner() {
   const context = useContext(BlastQueueContext);
   if (!context) return null;
 
-  const { backlog, sending, progress, outcome, liveRemaining, dismissed, dismiss, start } = context;
+  const { backlog, sending, progress, outcome, liveBacklog, dismissed, dismiss, start } = context;
 
-  const queued = liveRemaining ?? backlog.resumable;
+  const live = liveBacklog ?? backlog;
+  const queued = live.resumable;
+  const retrying = live.retrying;
+  const permanentlyFailed = live.failed;
   /**
    * While this tab is sending, rows sit in `SENDING` because *we* put them
    * there; reporting them as stranded would be alarming and wrong.
    */
-  const inFlight = sending ? 0 : backlog.inFlight;
+  const inFlight = sending ? 0 : live.inFlight;
 
   const counts = progress
     ? `${progress.sent} sent, ${progress.failed} failed of ${progress.total}`
@@ -303,6 +316,25 @@ export function BlastQueueBanner() {
     }
 
     /**
+     * A failed message goes back to `QUEUED` with `scheduled_for` in the future
+     * (§11.2), and `claimBatch()` will not take it until then. It is still
+     * unfinished work and still belongs on the banner — but offering Resume for
+     * it would be the daily cap's mistake in another costume: a button that
+     * cannot do the thing it names.
+     */
+    if (retrying > 0) {
+      return {
+        tone: 'retrying',
+        label: 'Retrying',
+        title: 'Messages waiting to retry',
+        description: outcome
+          ? `${outcome.message} ${retrying} message(s) will be retried automatically.`
+          : `${retrying} message(s) failed and will be retried automatically.`,
+        canResume: false,
+      };
+    }
+
+    /**
      * Rows stranded in `SENDING` by a dispatch that died mid-batch, but too
      * recent for `reclaimStranded()` to take back yet. Resume cannot reach them
      * and must not pretend otherwise — they return to the queue on their own.
@@ -323,6 +355,24 @@ export function BlastQueueBanner() {
      * second is the one an admin closing the console needs: it says what the
      * run set out to do as well as what it managed.
      */
+    /**
+     * Out of attempts. Nothing will retry these and Resume cannot reach them,
+     * but they are tickets nobody received — clearing the banner over them
+     * would be exactly the silence §11.2.1 exists to end. They go when someone
+     * resends them or marks them delivered by hand (§11.6).
+     */
+    if (permanentlyFailed > 0) {
+      return {
+        tone: 'failed',
+        label: 'Not delivered',
+        title: 'Messages that failed for good',
+        description:
+          `${permanentlyFailed} message(s) ran out of attempts and were never delivered. ` +
+          'Read Last error in the outbox table, then resend them.',
+        canResume: false,
+      };
+    }
+
     if (outcome?.kind === 'done') {
       return {
         tone: 'done',
@@ -340,7 +390,8 @@ export function BlastQueueBanner() {
 
   if (!view || dismissed) return null;
 
-  const destructive = view.tone === 'error' || failed > 0;
+  const destructive =
+    view.tone === 'error' || view.tone === 'retrying' || view.tone === 'failed' || failed > 0;
   const pct =
     progress && progress.total > 0
       ? Math.min(100, ((progress.sent + progress.failed) / progress.total) * 100)

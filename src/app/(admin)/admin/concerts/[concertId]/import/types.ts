@@ -41,6 +41,8 @@ export type PlanResponse = {
     playerId: number | null;
     playerName: string | null;
     blocked: boolean;
+    /** Already in this segment; the commit writes nothing for it (§9.2). */
+    skipped: boolean;
     seats: {
       rowNumber: number;
       fullName: string | null;

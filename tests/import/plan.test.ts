@@ -58,6 +58,7 @@ function context(over: Partial<PlanContext> = {}): PlanContext {
     extrasPool: 100,
     baseAlreadyClaimed: new Map(),
     playersWithExistingRegistration: new Set(),
+    existingParties: new Map(),
     playerMatches: new Map(),
     playerOverrides: new Map(),
     ...over,
@@ -657,5 +658,184 @@ describe('predicting what the engine will do (§9.4, §9.6)', () => {
     );
 
     expect(plan.parties[0].playerName).toBe('Pat Lim');
+  });
+});
+
+/**
+ * §9.2: re-importing a cumulative export.
+ *
+ * Registration runs in rounds and a Google Forms export is cumulative, so the
+ * importer is handed rows it has already committed every round. These pin the
+ * difference between "already there" and "wrong", which is the whole reason the
+ * skip is INFO rather than blocking.
+ */
+describe('re-import dedup (§9.2)', () => {
+  const at = '2026-09-01T10:00:00Z';
+  const key = `alice@example.com|${new Date(at).toISOString()}`;
+
+  const aliceRows = () => [
+    row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra' }),
+    row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Bob Tan', [HEADERS.type]: 'Extra' }),
+  ];
+
+  const publicCtx = (over: Partial<PlanContext> = {}) =>
+    context({ audienceMode: 'PUBLIC', extrasPolicy: 'AUTO_FCFS', baseQuota: null, ...over });
+
+  it('skips a party already imported, and does not block the run', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
+    );
+
+    expect(codes(plan)).toContain('PARTY_ALREADY_IMPORTED');
+    expect(plan.counts.blocking).toBe(0);
+    expect(plan.parties[0].skipped).toBe(true);
+    expect(plan.counts.skippedParties).toBe(1);
+  });
+
+  /**
+   * The seats of a skipped party must leave the counts *and* the prediction.
+   * Leaving them in is the failure that looks like success: a second import of
+   * an unchanged file reporting seats it will not write, against a pool it will
+   * not spend.
+   */
+  it('does not count or predict seats it will not write', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
+    );
+
+    expect(plan.counts.seats).toBe(0);
+    expect(plan.counts.predictedConfirmed).toBe(0);
+  });
+
+  it('imports the new rows of an appended sheet and skips the old ones', () => {
+    const plan = planImport(
+      [
+        ...aliceRows(),
+        row({ [HEADERS.ts]: '2026-09-02T10:00:00Z', [HEADERS.contact]: 'Carol Lim', [HEADERS.email]: 'carol@example.com', [HEADERS.name]: 'Carol Lim', [HEADERS.type]: 'Extra' }),
+      ],
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
+    );
+
+    expect(plan.counts.parties).toBe(2);
+    expect(plan.counts.skippedParties).toBe(1);
+    expect(plan.counts.seats).toBe(1);
+    expect(plan.parties.filter((p) => !p.skipped)[0].contactName).toBe('Carol Lim');
+  });
+
+  /**
+   * A seat appended to a response that is already committed. Still skipped —
+   * after commit the database is the source of truth (§9.1) and the admin may
+   * have edited this party since — but it must say so rather than pass as INFO.
+   */
+  it('warns rather than informs when the party size has changed', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 3, cancelled: false }]]) }),
+    );
+
+    expect(plan.findings.find((f) => f.code === 'PARTY_SIZE_CHANGED')?.level).toBe('WARNING');
+    expect(codes(plan)).not.toContain('PARTY_ALREADY_IMPORTED');
+    expect(plan.parties[0].skipped).toBe(true);
+    expect(plan.counts.blocking).toBe(0);
+  });
+
+  /**
+   * An admin looking at a cancelled party needs to know why the importer will
+   * not bring it back, or the skip reads as the importer losing the row.
+   */
+  it('says so when the party it is skipping was cancelled', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: true }]]) }),
+    );
+
+    const finding = plan.findings.find((f) => f.code === 'PARTY_ALREADY_IMPORTED');
+    expect(finding?.message).toContain('cancelled');
+    expect(plan.parties[0].skipped).toBe(true);
+  });
+
+  it('has no dedup key without a contact email, so it re-imports and says so', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra' })],
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
+    );
+
+    expect(plan.parties[0].dedupKey).toBeNull();
+    expect(plan.parties[0].skipped).toBe(false);
+    expect(codes(plan)).toContain('NO_GROUPING_KEY');
+  });
+
+  /**
+   * The interaction that makes appending to one sheet work at all in a player
+   * segment. A re-imported party trips §7.6 against the registration it *is*,
+   * and blocking there would refuse the newly appended rows with it.
+   */
+  it('does not block on PLAYER_ALREADY_REGISTERED for a party it is skipping', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        existingParties: new Map([[key, { seats: 2, cancelled: false }]]),
+        playerMatches: new Map([['alice@example.com', match(9, 'Alice Tan')]]),
+        playersWithExistingRegistration: new Set([9]),
+      }),
+    );
+
+    expect(codes(plan)).not.toContain('PLAYER_ALREADY_REGISTERED');
+    expect(plan.counts.blocking).toBe(0);
+    expect(plan.parties[0].skipped).toBe(true);
+  });
+
+  /** But a genuinely different submission by that player still blocks (§7.6). */
+  it('still blocks a different party claiming an already-registered player', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-05T10:00:00Z', [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Allocated' })],
+      profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
+      context({
+        existingParties: new Map([[key, { seats: 2, cancelled: false }]]),
+        playerMatches: new Map([['alice@example.com', match(9, 'Alice Tan')]]),
+        playersWithExistingRegistration: new Set([9]),
+      }),
+    );
+
+    expect(codes(plan)).toContain('PLAYER_ALREADY_REGISTERED');
+    expect(plan.counts.blocking).toBe(1);
+  });
+
+  /**
+   * The key is built from the values, not from the grouping key, so a sheet
+   * that gained a mapped group column does not re-import everything it already
+   * committed under the §9.2 default rule.
+   */
+  it('recognises a party that is now grouped by an explicit group column', () => {
+    const plan = planImport(
+      [
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra', Party: 'P1' }),
+        row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Bob Tan', [HEADERS.type]: 'Extra', Party: 'P1' }),
+      ],
+      profile({
+        player_match: null,
+        columns: {
+          requested_at: HEADERS.ts,
+          contact_name: HEADERS.contact,
+          contact_email: HEADERS.email,
+          attendee_name: HEADERS.name,
+          allocation_type: HEADERS.type,
+          group_key: 'Party',
+        },
+      }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
+    );
+
+    expect(plan.parties[0].skipped).toBe(true);
+    expect(codes(plan)).toContain('PARTY_ALREADY_IMPORTED');
   });
 });

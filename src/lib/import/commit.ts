@@ -3,8 +3,8 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { claimSeats, type ClaimOutcome, type Executor } from '@/db/allocation';
-import type { ImportPlan, PlannedParty } from './plan';
-import type { SegmentTarget } from './context';
+import { liveParties, type ImportPlan, type PlannedParty } from './plan';
+import { loadExistingParties, type SegmentTarget } from './context';
 
 /**
  * The commit (spec/import.md §9.1, §9.4).
@@ -74,6 +74,8 @@ async function writeBatch(
       playerId: p.playerId,
       seats: p.seats.length,
       blocked: p.blocked,
+      // Without this the batch record cannot say which parties it wrote (§9.1).
+      skipped: p.skipped,
     })),
   };
 
@@ -111,7 +113,8 @@ export async function recordDryRun(input: {
       status: 'DRY_RUN',
       plan: input.plan,
       created: 0,
-      skipped: input.plan.parties.filter((p) => p.blocked).length,
+      // Every party the run would not write, not only the blocked ones (§9.2).
+      skipped: input.plan.parties.length - liveParties(input.plan.parties).length,
     });
   } catch (error) {
     rethrowDbError(error);
@@ -143,11 +146,32 @@ export async function commitImport(input: {
     );
   }
 
-  const live = plan.parties.filter((p) => !p.blocked);
-  const skipped = plan.parties.length - live.length;
+  // The planner's own filter, not a second spelling of it: a party it counted
+  // and predicted against but the commit wrote anyway (or the reverse) is the
+  // one way the dry run and the commit can disagree (decision 26).
+  const raced = liveParties(plan.parties);
 
   try {
     return await getDb().transaction(async (tx) => {
+      /**
+       * Take the show lock before deciding anything, then re-read what is
+       * already imported through it (§9.2).
+       *
+       * The planner read `existingParties` outside this transaction, so two
+       * commits of the same file started at once would both see nothing and
+       * both write — the duplication this whole change exists to prevent,
+       * re-entered through a door the planner cannot see. This is the same row
+       * `claim_seats()` locks (allocation.md §7.8), so the second commit waits
+       * for the first and then sees its registrations.
+       *
+       * It can only ever *remove* parties from the run, never add one, so the
+       * dry run still cannot under-report what a commit writes (decision 26).
+       */
+      await tx.execute(sql`select id from shows where id = ${target.showId} for update`);
+      const committedSince = await loadExistingParties(target.segmentId, tx);
+
+      const live = raced.filter((p) => p.dedupKey == null || !committedSince.has(p.dedupKey));
+
       let createdAttendees = 0;
       const createdIds: number[] = [];
       const totals = { base: 0, extra: 0, pending: 0, waitlisted: 0 };
@@ -193,7 +217,7 @@ export async function commitImport(input: {
         status: 'COMMITTED',
         plan,
         created: live.length,
-        skipped,
+        skipped: plan.parties.length - live.length,
       });
 
       // Stamped by id, never by a predicate over the segment. An earlier run
@@ -215,7 +239,7 @@ export async function commitImport(input: {
         batchId,
         createdRegistrations: live.length,
         createdAttendees,
-        skippedParties: skipped,
+        skippedParties: plan.parties.length - live.length,
         granted: totals,
       };
     });

@@ -27,6 +27,7 @@ const baseContext: PlanContext = {
   extrasPool: 100,
   baseAlreadyClaimed: new Map(),
   playersWithExistingRegistration: new Set(),
+  existingParties: new Map(),
   playerMatches: new Map(),
   playerOverrides: new Map(),
 };

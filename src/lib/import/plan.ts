@@ -65,7 +65,29 @@ export type PlannedParty = {
   seats: PlannedSeat[];
   /** A blocking finding somewhere in this party. Any one blocks the whole run. */
   blocked: boolean;
+  /**
+   * `contact_email|requested_at`, the pair §9.2 groups on and the only identity
+   * of a party that survives outside the file. Null when there is no contact
+   * email, which is exactly when a party cannot be recognised across imports.
+   */
+  dedupKey: string | null;
+  /**
+   * Already in this segment, so this run writes nothing for it (§9.2). Unlike
+   * `blocked` it does not stop the run — the party's seats already exist.
+   */
+  skipped: boolean;
 };
+
+/**
+ * The parties a run actually writes. Shared so the planner's counts, its
+ * capacity prediction and the commit cannot disagree about which parties are
+ * live — three filters spelled separately is three places for one to drift.
+ */
+export function liveParties<T extends { blocked: boolean; skipped: boolean }>(
+  parties: readonly T[],
+): T[] {
+  return parties.filter((p) => !p.blocked && !p.skipped);
+}
 
 export type PlayerMatch =
   | { playerId: number; fullName: string; confidence: number; needsConfirmation: boolean }
@@ -95,6 +117,16 @@ export type PlanContext = {
   baseAlreadyClaimed: ReadonlyMap<number, number>;
   /** Player ids that already have a registration for this show (§9.4, blocking). */
   playersWithExistingRegistration: ReadonlySet<number>;
+  /**
+   * Parties already imported into this segment, keyed by `dedupKey` and carrying
+   * the seat count they were committed with (§9.2).
+   *
+   * This is what makes re-uploading a cumulative Google Forms export safe: a
+   * round 2 download is round 1 plus the new responses, and without this every
+   * round 1 party would be written a second time — a second email, a second set
+   * of tickets, and seats spent twice out of a pool sized once.
+   */
+  existingParties: ReadonlyMap<string, { seats: number; cancelled: boolean }>;
   /**
    * Raw cell value to match, precomputed by the caller. Kept out of the planner
    * because `NAME_FUZZY` is `pg_trgm` similarity, and reimplementing it in
@@ -130,6 +162,8 @@ export type ImportPlan = {
     predictedPending: number;
     predictedWaitlisted: number;
     ungrouped: number;
+    /** Parties already in the segment, written by neither this run nor counted in it. */
+    skippedParties: number;
     blocking: number;
     warning: number;
     info: number;
@@ -215,6 +249,8 @@ export function planImport(
     playerName: string | null;
     seats: PlannedSeat[];
     blocked: boolean;
+    dedupKey: string | null;
+    skipped: boolean;
   };
 
   const drafts = new Map<string, Draft>();
@@ -358,6 +394,24 @@ export function planImport(
         playerName: null,
         seats: [],
         blocked: false,
+        /**
+         * Built from the values rather than from `key`, because a party grouped
+         * by a mapped `group_key` column still has a contact email and a
+         * timestamp, and those are what the database stored. Keying dedup off
+         * the grouping key instead would make a sheet that gained a group
+         * column re-import everything it had already committed.
+         *
+         * **Lowercased here regardless of `transforms.lowercaseEmails`.** The
+         * database side of this comparison always lowers (`loadExistingParties`),
+         * and this is a `Map` key rather than a SQL comparison, so `citext` does
+         * not save it. A profile with that transform off would otherwise build a
+         * key no lookup could match and turn the dedup silently off — the one
+         * failure mode that looks exactly like working correctly.
+         */
+        dedupKey: contactEmail
+          ? `${contactEmail.toLowerCase()}|${requestedAt.toISOString()}`
+          : null,
+        skipped: false,
       };
       drafts.set(key, draft);
       order.push(key);
@@ -380,6 +434,47 @@ export function planImport(
       promotedFromBase: false,
     });
     if (blockedHere) draft.blocked = true;
+  }
+
+  /**
+   * §9.2: a party already in this segment is skipped rather than written again.
+   *
+   * Before player matching, because a re-imported party trips
+   * PLAYER_ALREADY_REGISTERED against the very registration it *is*, and
+   * blocking on that would refuse the whole run — including the new rows the
+   * admin appended, which is the entire point of re-uploading the sheet.
+   */
+  for (const key of order) {
+    const draft = drafts.get(key)!;
+    if (draft.dedupKey == null) continue;
+    const existing = context.existingParties.get(draft.dedupKey);
+    if (!existing) continue;
+
+    draft.skipped = true;
+    if (existing.seats === draft.seats.length) {
+      add({
+        level: 'INFO',
+        code: 'PARTY_ALREADY_IMPORTED',
+        rowNumber: draft.rowNumbers[0],
+        partyKey: key,
+        message: existing.cancelled
+          ? `${draft.contactName} was imported into this segment already and then cancelled. Skipped - restore the existing registration rather than importing it again (§7.9).`
+          : `${draft.contactName} was imported into this segment already, with the same ${existing.seats} seat${existing.seats === 1 ? '' : 's'}. Skipped.`,
+      });
+    } else {
+      /**
+       * The sheet gained or lost a seat on a response that is already
+       * committed. Still skipped: after commit this database is the source of
+       * truth (§9.1), and the admin may have edited this very party since.
+       */
+      add({
+        level: 'WARNING',
+        code: 'PARTY_SIZE_CHANGED',
+        rowNumber: draft.rowNumbers[0],
+        partyKey: key,
+        message: `${draft.contactName} was imported with ${existing.seats} seat${existing.seats === 1 ? '' : 's'}, but this file gives ${draft.seats.length}. Skipped - change the registration in the admin console (§7.6) rather than importing it twice.`,
+      });
+    }
   }
 
   // Player matching, per party, PLAYER_INVITED only.
@@ -446,7 +541,11 @@ export function planImport(
       // Reads the draft rather than `match`, so an overridden player is checked
       // against §7.6 exactly as a matched one is. Choosing a player by hand must
       // not be a way round the one-registration-per-player rule.
-      if (draft.playerId != null && context.playersWithExistingRegistration.has(draft.playerId)) {
+      if (
+        draft.playerId != null &&
+        !draft.skipped &&
+        context.playersWithExistingRegistration.has(draft.playerId)
+      ) {
         draft.blocked = true;
         add({
           level: 'BLOCKING',
@@ -478,6 +577,8 @@ export function planImport(
       playerName: d.playerName,
       seats: d.seats,
       blocked: d.blocked,
+      dedupKey: d.dedupKey,
+      skipped: d.skipped,
     }));
 
   // §9.5: the engine does not promote surplus base to extra — a BASE seat past
@@ -486,7 +587,9 @@ export function planImport(
   const baseUsed = new Map<number, number>(context.baseAlreadyClaimed);
   let promotedToExtra = 0;
   for (const party of parties) {
-    if (party.blocked || party.playerId == null || context.baseQuota == null) continue;
+    if (party.blocked || party.skipped || party.playerId == null || context.baseQuota == null) {
+      continue;
+    }
     for (const seat of party.seats) {
       if (seat.allocationType !== 'BASE') continue;
       const used = baseUsed.get(party.playerId) ?? 0;
@@ -514,6 +617,7 @@ export function planImport(
   // admin may have granted more deliberately (§9.4).
   if (context.maxTicketsPerResponse != null) {
     for (const party of parties) {
+      if (party.skipped) continue;
       if (party.seats.length > context.maxTicketsPerResponse) {
         add({
           level: 'WARNING',
@@ -526,7 +630,7 @@ export function planImport(
     }
   }
 
-  const live = parties.filter((p) => !p.blocked);
+  const live = liveParties(parties);
   const seats = live.flatMap((p) => p.seats);
   const baseSeats = seats.filter((s) => s.allocationType === 'BASE').length;
   const extraSeats = seats.length - baseSeats;
@@ -577,6 +681,7 @@ export function planImport(
       predictedPending: predicted.pending,
       predictedWaitlisted: predicted.waitlisted,
       ungrouped,
+      skippedParties: parties.filter((p) => p.skipped).length,
       blocking: level('BLOCKING'),
       warning: level('WARNING'),
       info: level('INFO'),

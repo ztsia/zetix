@@ -2,7 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
-import { segmentPool } from '@/db/allocation';
+import { segmentPool, type Executor } from '@/db/allocation';
 import { resolveSetting } from '@/db/settings';
 import type { PlanContext, PlayerMatch, SheetRow } from './plan';
 import type { MappingProfile } from './profile';
@@ -213,6 +213,76 @@ export async function loadPlayersWithRegistration(showId: number): Promise<Set<n
 }
 
 /**
+ * Parties already imported into this segment, keyed exactly as the planner keys
+ * them: `contact_email|requested_at` in ISO (§9.2).
+ *
+ * **`citext` is lowered here rather than relied upon.** `registrations.contact_email`
+ * is `citext`, so the database would happily compare it case-insensitively — but
+ * this value never reaches a SQL comparison. It becomes a JavaScript `Map` key,
+ * and `Map` does not know what `citext` is. The planner lowercases emails
+ * through `transforms.lowercaseEmails`, so a stored "Alice@Example.com" would
+ * build a key no planner lookup could ever find, and that party would import
+ * again on every round.
+ *
+ * **A cancelled registration still counts as imported.** §9.1 re-reads the sheet
+ * only to pick up *new* responses, and a response the admin has since cancelled
+ * is not a new one — re-importing it would overturn that decision silently, and
+ * `restoreRegistration()` (allocation.md §7.9) would then leave one form
+ * response holding two live registrations and two sets of tickets.
+ *
+ * This is deliberately **not** the predicate `loadPlayersWithRegistration` uses
+ * one function above. That one asks whether a player currently holds a live
+ * registration, for the §7.6 one-per-player rule; this one asks whether this
+ * response has ever been imported here. Different questions, different answers
+ * for a cancelled row.
+ *
+ * Soft-deleted registrations are excluded, and that *is* a re-import: a delete
+ * means the row should never have existed (allocation.md §7.6) — a duplicate, a
+ * test party, an entry against the wrong show — so a later export carrying it
+ * is bringing in a response this segment does not have.
+ */
+export async function loadExistingParties(
+  segmentId: number,
+  /**
+   * Defaults to the pool. The commit passes its own transaction so the re-check
+   * it does under the show lock sees a concurrent run's writes; reading off the
+   * pool there would deadlock against the connection it is holding (`max: 1`).
+   */
+  executor: Executor = getDb(),
+): Promise<Map<string, { seats: number; cancelled: boolean }>> {
+  try {
+    const rows = await executor.execute<{
+      contact_email: string;
+      requested_at: string;
+      seats: number;
+      cancelled: boolean;
+    }>(sql`
+      select lower(r.contact_email::text) as contact_email,
+             r.requested_at,
+             count(a.id)::int as seats,
+             bool_and(r.status = 'CANCELLED') as cancelled
+        from registrations r
+        left join attendees a
+          on a.registration_id = r.id
+         and a.deleted_at is null
+       where r.segment_id = ${segmentId}
+         and r.contact_email is not null
+         and r.requested_at is not null
+         and r.deleted_at is null
+       group by r.contact_email, r.requested_at
+    `);
+    return new Map(
+      rows.map((r) => [
+        `${r.contact_email}|${new Date(r.requested_at).toISOString()}`,
+        { seats: Number(r.seats), cancelled: r.cancelled === true },
+      ]),
+    );
+  } catch (error) {
+    rethrowDbError(error);
+  }
+}
+
+/**
  * Resolves an admin's explicit player choices, keyed by the cell value they were
  * made against (§9.3, "confirm or correct it").
  *
@@ -263,15 +333,23 @@ export async function buildPlanContext(
     concertId: target.concertId,
   };
 
-  const [baseQuota, maxTickets, extrasPolicy, pool, baseAlreadyClaimed, existing] =
-    await Promise.all([
-      resolveSetting<number>('allocation.base_quota', ctx),
-      resolveSetting<number>('form.max_tickets_per_response', ctx),
-      resolveSetting<string>('allocation.extras_policy', ctx),
-      segmentPool(target.segmentId),
-      loadBaseAlreadyClaimed(target.segmentId),
-      loadPlayersWithRegistration(target.showId),
-    ]);
+  const [
+    baseQuota,
+    maxTickets,
+    extrasPolicy,
+    pool,
+    baseAlreadyClaimed,
+    existing,
+    existingParties,
+  ] = await Promise.all([
+    resolveSetting<number>('allocation.base_quota', ctx),
+    resolveSetting<number>('form.max_tickets_per_response', ctx),
+    resolveSetting<string>('allocation.extras_policy', ctx),
+    segmentPool(target.segmentId),
+    loadBaseAlreadyClaimed(target.segmentId),
+    loadPlayersWithRegistration(target.showId),
+    loadExistingParties(target.segmentId),
+  ]);
 
   let playerMatches = new Map<string, PlayerMatch>();
   if (target.audienceMode === 'PLAYER_INVITED' && profile.playerMatch) {
@@ -312,6 +390,7 @@ export async function buildPlanContext(
     extrasPool: pool.extras_pool,
     baseAlreadyClaimed,
     playersWithExistingRegistration: existing,
+    existingParties,
     playerMatches,
     playerOverrides:
       target.audienceMode === 'PLAYER_INVITED'

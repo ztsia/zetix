@@ -4,6 +4,7 @@ import { createConcert, createPlayers, createSegment, createShow } from '../help
 import { buildPlanContext, loadSegmentTarget, matchPlayers } from '@/lib/import/context';
 import { commitImport, recordDryRun, registrationStatus } from '@/lib/import/commit';
 import { planImport, type SheetRow } from '@/lib/import/plan';
+import { segmentPool } from '@/db/allocation';
 import { parseMappingProfile } from '@/lib/import/profile';
 
 /**
@@ -437,5 +438,109 @@ describe('matchPlayers', () => {
     expect(m).toBeTruthy();
     expect(m!.needsConfirmation).toBe(true);
     expect(m!.confidence).toBeLessThan(0.99);
+  });
+});
+
+/**
+ * §9.2: appending to one sheet across rounds.
+ *
+ * This is the workflow the dedup exists for — round 2's Google Forms export is
+ * round 1 plus the new responses — and it is only provable here, because the
+ * thing being deduplicated against is what an earlier commit actually wrote.
+ */
+describe('re-importing a cumulative export', () => {
+  const at = '2026-09-01T10:00:00Z';
+
+  const alice = () => [
+    row({ [H.ts]: at, [H.contact]: 'Alice Tan', [H.email]: 'alice@example.com', [H.name]: 'Alice Tan', [H.type]: 'Extra' }),
+    row({ [H.ts]: at, [H.contact]: 'Alice Tan', [H.email]: 'alice@example.com', [H.name]: 'Bob Tan', [H.type]: 'Extra' }),
+  ];
+
+  /** Plans against live database state and commits, as the route does. */
+  async function runImport(segmentId: number, rows: SheetRow[], filename: string) {
+    const target = await loadSegmentTarget(segmentId);
+    const p = profile({ player_match: null });
+    const plan = planImport(rows, p, await buildPlanContext(target, p, rows));
+    const outcome = await commitImport({ target, filename, plan });
+    return { plan, outcome };
+  }
+
+  it('writes only the appended rows on a second import of the same sheet', async () => {
+    const { segmentId } = await publicSegment(100);
+    await runImport(segmentId, alice(), 'round1.csv');
+
+    line = 2;
+    const second = await runImport(
+      segmentId,
+      [
+        ...alice(),
+        row({ [H.ts]: '2026-09-02T10:00:00Z', [H.contact]: 'Carol Lim', [H.email]: 'carol@example.com', [H.name]: 'Carol Lim', [H.type]: 'Extra' }),
+      ],
+      'round2.csv',
+    );
+
+    expect(second.outcome.createdRegistrations).toBe(1);
+    expect(second.outcome.createdAttendees).toBe(1);
+    expect(second.plan.counts.skippedParties).toBe(1);
+
+    const [{ count: regs }] = await sql<{ count: string }[]>`
+      select count(*) from registrations where segment_id = ${segmentId}
+    `;
+    const [{ count: seats }] = await sql<{ count: string }[]>`
+      select count(*) from attendees where segment_id = ${segmentId}
+    `;
+    expect(Number(regs)).toBe(2);
+    expect(Number(seats)).toBe(3);
+  });
+
+  /**
+   * The property that lets an admin re-upload without checking first: the same
+   * file twice is a no-op, not a doubling. It is the import counterpart of the
+   * blast's "pressing Send twice is harmless" (§11.4).
+   */
+  it('is a no-op when the same file is imported twice', async () => {
+    const { segmentId } = await publicSegment(100);
+    await runImport(segmentId, alice(), 'round1.csv');
+
+    line = 2;
+    const second = await runImport(segmentId, alice(), 'again.csv');
+
+    expect(second.outcome.createdRegistrations).toBe(0);
+    expect(second.outcome.createdAttendees).toBe(0);
+
+    const [{ count: regs }] = await sql<{ count: string }[]>`
+      select count(*) from registrations where segment_id = ${segmentId}
+    `;
+    expect(Number(regs)).toBe(1);
+  });
+
+  /**
+   * Seats are the scarce thing. A re-import that spent the pool a second time
+   * would waitlist real round 2 registrants to pay for parties that already
+   * hold their seats.
+   */
+  it('does not spend the pool twice', async () => {
+    const { segmentId } = await publicSegment(100);
+    await runImport(segmentId, alice(), 'round1.csv');
+
+    const poolAfterFirst = await segmentPool(segmentId);
+    line = 2;
+    await runImport(segmentId, alice(), 'again.csv');
+    const poolAfterSecond = await segmentPool(segmentId);
+
+    expect(poolAfterSecond.open_seats).toBe(poolAfterFirst.open_seats);
+  });
+
+  /** A cancelled party is allowed back in if it reappears in a later export. */
+  it('re-imports a party whose registration was cancelled', async () => {
+    const { segmentId } = await publicSegment(100);
+    await runImport(segmentId, alice(), 'round1.csv');
+    await sql`update registrations set status = 'CANCELLED' where segment_id = ${segmentId}`;
+
+    line = 2;
+    const second = await runImport(segmentId, alice(), 'again.csv');
+
+    expect(second.plan.counts.skippedParties).toBe(0);
+    expect(second.outcome.createdRegistrations).toBe(1);
   });
 });

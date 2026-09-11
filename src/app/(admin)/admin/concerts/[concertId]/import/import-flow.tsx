@@ -47,6 +47,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { defaultProfileFor } from '@/lib/import/template';
 import { parseMappingProfile } from '@/lib/import/profile';
+import { liveParties } from '@/lib/import/plan';
 import { DryRunReport } from './dry-run-report';
 import { PrepareStep } from './prepare-step';
 import type { InspectResponse, PlanResponse, RosterPlayer } from './types';
@@ -1046,23 +1047,27 @@ export function ImportFlow({
                   <Button
                     disabled={
                       busy ||
-                      plan.counts.parties === plan.parties.filter((p) => p.blocked).length ||
+                      liveParties(plan.parties).length === 0 ||
                       plan.findings.some(
                         (f) => f.rowNumber === undefined && f.level === 'BLOCKING',
                       )
                     }
                   >
-                    Commit {plan.parties.filter((p) => !p.blocked).length} registrations
+                    Commit {liveParties(plan.parties).length} registrations
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>This cannot be undone</AlertDialogTitle>
                     <AlertDialogDescription>
-                      {plan.parties.filter((p) => !p.blocked).length} registrations and{' '}
+                      {liveParties(plan.parties).length} registrations and{' '}
                       {plan.counts.seats} attendees will be created in{' '}
-                      <strong>{segment?.segmentName}</strong>. There is no rollback and no re-sync:
-                      after this, corrections are made here rather than in the spreadsheet.
+                      <strong>{segment?.segmentName}</strong>.
+                      {plan.counts.skippedParties > 0
+                        ? ` ${plan.counts.skippedParties} ${plan.counts.skippedParties === 1 ? 'party is' : 'parties are'} already imported and will be skipped.`
+                        : ''}{' '}
+                      There is no rollback and no re-sync: after this, corrections are made here
+                      rather than in the spreadsheet.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <div className="space-y-2">

@@ -401,6 +401,18 @@ export function DryRunReport({
             {plan.counts.rows} rows &rarr; {plan.counts.parties}{' '}
             {plan.counts.parties === 1 ? 'registration' : 'registrations'}
           </p>
+          {/*
+            §9.2: stated on its own line rather than folded into the tail below,
+            because re-uploading a cumulative export is the normal round 2
+            workflow and "12 registrations" over a file that writes none of them
+            reads as success. The number that matters is how many are new.
+          */}
+          {plan.counts.skippedParties > 0 ? (
+            <p className="mt-1 text-sm font-medium tabular-nums">
+              {plan.counts.skippedParties} already imported ·{' '}
+              {plan.counts.parties - plan.counts.skippedParties} new
+            </p>
+          ) : null}
           <p className="text-muted-foreground mt-1 text-sm">
             Largest party {plan.largestParty}
             {partySizes.length > 0 ? ` · sizes ${summarise(partySizes)}` : ''}

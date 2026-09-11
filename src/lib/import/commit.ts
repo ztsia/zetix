@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { claimSeats, type ClaimOutcome, type Executor } from '@/db/allocation';
-import type { ImportPlan, PlannedParty } from './plan';
+import { liveParties, type ImportPlan, type PlannedParty } from './plan';
 import type { SegmentTarget } from './context';
 
 /**
@@ -143,7 +143,10 @@ export async function commitImport(input: {
     );
   }
 
-  const live = plan.parties.filter((p) => !p.blocked);
+  // The planner's own filter, not a second spelling of it: a party it counted
+  // and predicted against but the commit wrote anyway (or the reverse) is the
+  // one way the dry run and the commit can disagree (decision 26).
+  const live = liveParties(plan.parties);
   const skipped = plan.parties.length - live.length;
 
   try {

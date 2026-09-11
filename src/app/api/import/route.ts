@@ -217,6 +217,7 @@ export async function POST(request: Request) {
       playerId: p.playerId,
       playerName: p.playerName,
       blocked: p.blocked,
+      skipped: p.skipped,
       seats: p.seats.map((s) => ({
         rowNumber: s.rowNumber,
         fullName: s.fullName,

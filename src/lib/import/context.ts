@@ -213,6 +213,56 @@ export async function loadPlayersWithRegistration(showId: number): Promise<Set<n
 }
 
 /**
+ * Parties already imported into this segment, keyed exactly as the planner keys
+ * them: `contact_email|requested_at` in ISO (§9.2).
+ *
+ * **`citext` is lowered here rather than relied upon.** `registrations.contact_email`
+ * is `citext`, so the database would happily compare it case-insensitively — but
+ * this value never reaches a SQL comparison. It becomes a JavaScript `Map` key,
+ * and `Map` does not know what `citext` is. The planner lowercases emails
+ * through `transforms.lowercaseEmails`, so a stored "Alice@Example.com" would
+ * build a key no planner lookup could ever find, and that party would import
+ * again on every round.
+ *
+ * Cancelled and soft-deleted registrations are excluded on purpose: a party the
+ * admin cancelled should re-import if it comes back in a later export, which is
+ * the same predicate `loadPlayersWithRegistration` uses one function above.
+ */
+export async function loadExistingParties(
+  segmentId: number,
+): Promise<Map<string, { seats: number }>> {
+  try {
+    const rows = await getDb().execute<{
+      contact_email: string;
+      requested_at: string;
+      seats: number;
+    }>(sql`
+      select lower(r.contact_email::text) as contact_email,
+             r.requested_at,
+             count(a.id)::int as seats
+        from registrations r
+        left join attendees a
+          on a.registration_id = r.id
+         and a.deleted_at is null
+       where r.segment_id = ${segmentId}
+         and r.contact_email is not null
+         and r.requested_at is not null
+         and r.deleted_at is null
+         and r.status <> 'CANCELLED'
+       group by r.contact_email, r.requested_at
+    `);
+    return new Map(
+      rows.map((r) => [
+        `${r.contact_email}|${new Date(r.requested_at).toISOString()}`,
+        { seats: Number(r.seats) },
+      ]),
+    );
+  } catch (error) {
+    rethrowDbError(error);
+  }
+}
+
+/**
  * Resolves an admin's explicit player choices, keyed by the cell value they were
  * made against (§9.3, "confirm or correct it").
  *
@@ -263,15 +313,23 @@ export async function buildPlanContext(
     concertId: target.concertId,
   };
 
-  const [baseQuota, maxTickets, extrasPolicy, pool, baseAlreadyClaimed, existing] =
-    await Promise.all([
-      resolveSetting<number>('allocation.base_quota', ctx),
-      resolveSetting<number>('form.max_tickets_per_response', ctx),
-      resolveSetting<string>('allocation.extras_policy', ctx),
-      segmentPool(target.segmentId),
-      loadBaseAlreadyClaimed(target.segmentId),
-      loadPlayersWithRegistration(target.showId),
-    ]);
+  const [
+    baseQuota,
+    maxTickets,
+    extrasPolicy,
+    pool,
+    baseAlreadyClaimed,
+    existing,
+    existingParties,
+  ] = await Promise.all([
+    resolveSetting<number>('allocation.base_quota', ctx),
+    resolveSetting<number>('form.max_tickets_per_response', ctx),
+    resolveSetting<string>('allocation.extras_policy', ctx),
+    segmentPool(target.segmentId),
+    loadBaseAlreadyClaimed(target.segmentId),
+    loadPlayersWithRegistration(target.showId),
+    loadExistingParties(target.segmentId),
+  ]);
 
   let playerMatches = new Map<string, PlayerMatch>();
   if (target.audienceMode === 'PLAYER_INVITED' && profile.playerMatch) {
@@ -312,6 +370,7 @@ export async function buildPlanContext(
     extrasPool: pool.extras_pool,
     baseAlreadyClaimed,
     playersWithExistingRegistration: existing,
+    existingParties,
     playerMatches,
     playerOverrides:
       target.audienceMode === 'PLAYER_INVITED'

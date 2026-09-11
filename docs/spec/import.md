@@ -78,6 +78,38 @@ the first row in file order wins.
 Rows with no `contact_email` cannot be grouped by the rule and each become their own registration; the
 dry run counts them separately so the number is never a surprise.
 
+### The same grouping key is what makes a second import safe
+
+Registration runs in rounds (`../context.md` §3), and a Google Form export is cumulative: the round 2
+download is round 1 plus whatever arrived since. So the importer must assume it will be handed rows it
+has already committed, and the natural admin workflow — append to the one sheet, re-upload it — has to
+be the safe one. Requiring a fresh file of only-new rows each time puts the deduplication in the
+admin's head, where a mistake is a party that gets two emails, four tickets and two seats out of a
+pool that was sized for one.
+
+**A party whose `contact_email` and `requested_at` already match a live registration in this segment is
+skipped, not re-imported, and not blocked.** It is the same pair §9.2 groups on, and both halves are
+already immutable: `requested_at` is the form response timestamp rather than import time (§9.3), so it
+is identical in every export of that response. Re-uploading the whole sheet each round therefore
+commits exactly the rows that are new.
+
+Skipping is `INFO` and never blocking, because an already-imported party is the opposite of the
+silent under-issue §9.4's blocking rule exists to prevent: the seats are there, the registration
+exists, and stopping the run would refuse the new rows alongside it. The dry run states the skip count
+beside the grouping line so a second import of an unchanged file reads as *"12 registrations, 12
+already imported, 0 new"* rather than as success over nothing.
+
+Two limits on this, both stated rather than worked around:
+
+- **A party with no `contact_email` has no dedup key** and is re-imported every time, because §9.2
+  already gives it a row-scoped key that nothing outside the file can match. It is `WARNING` on both
+  runs, and the dry run counts it.
+- **A party whose size has changed since it was imported is still skipped, but as a `WARNING`** naming
+  both sizes. Someone appended a guest to an existing response's row; the seat is not silently added,
+  because after commit this database is the source of truth (§9.1) and the correction path for a real
+  registration is admin CRUD (`allocation.md` §7.6), not a second import writing into a party the
+  admin may have already edited.
+
 ## 9.3 Mapping profile config
 
 ```jsonc
@@ -147,7 +179,9 @@ collects is worse than one that does not offer to collect it.
 | Row has no `contact_email` | Warning — becomes its own registration, counted separately (§9.2) |
 | No contact name | Blocking — it is the identity of the party and the placeholder every unnamed seat tickets under |
 | Timestamp missing or unreadable | Blocking — it is the FCFS ordering key, and import time is not a substitute (§9.3) |
-| Registration already exists for this player + show | Blocking |
+| Party already imported into this segment (same contact email + response timestamp) | Info — skipped, counted separately (§9.2) |
+| An imported party's size has changed since it was imported | Warning — skipped, both sizes named (§9.2) |
+| Registration already exists for this player + show | Blocking — **unless** this party is the one already imported, which skips instead |
 | Player not matched (`PLAYER_INVITED` only) | Blocking |
 | `allocation_type` text matches no configured value | Blocking — the profile is wrong, and guessing spends the wrong seats (§9.5) |
 | Attendee name blank but the seat is real | Info — attendee created with a placeholder name (`v2.md` §8.2.1) |
@@ -155,7 +189,9 @@ collects is worse than one that does not offer to collect it.
 | Import would exceed the segment's or the show's capacity | Blocking — report overflow, admin chooses to cap in row order or raise capacity |
 
 **A blocking finding stops the whole run — it is never committed around.** Not the file, and not the
-one party carrying it. Committing the remainder is the silent under-issue this module exists to avoid:
+one party carrying it. A *skipped* party is the one thing that is not committed around but still lets
+the run proceed, and it is not an exception to this rule: nothing is silently under-issued, because the
+party it skips is already in the database with its seats (§9.2). Committing the remainder is the silent under-issue this module exists to avoid:
 an unmatched player is a party that quietly receives no tickets, there is no rollback to discover it
 with (decision 26), and nothing downstream will ask where they went. The admin resolves it where it
 came from — remove the rows, fix the mapping, create the player — and dry runs again. Warnings and

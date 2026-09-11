@@ -60,8 +60,8 @@ address and confirm all three land in the inbox.
 3. The UI calls `POST /api/outbox/dispatch` repeatedly. Each call claims up to `email.max_per_dispatch`
    `QUEUED` rows (`FOR UPDATE SKIP LOCKED`), sends with `email.inter_message_delay_ms` between
    messages, commits per message, and returns progress. The UI shows a progress bar until the queue
-   drains or the daily cap is hit. `DRAFT` rows are never dispatched — only a human moves a row out of
-   `DRAFT`.
+   drains or the daily cap is hit (§11.2.1). `DRAFT` rows are never dispatched — only a human moves a
+   row out of `DRAFT`.
 4. A daily cron hits the same endpoint as a safety net. Add it to `vercel.json`
    **when the dispatch route ships, not before** — a cron pointing at a route
    that does not exist yet returns 404 daily and trains everyone to ignore the
@@ -70,6 +70,35 @@ address and confirm all three land in the inbox.
 This is the one-click blast model: no persistent process, and it survives function timeouts because
 progress is committed per message. Failures back off, retry to `email.max_attempts`, then surface in
 admin with `last_error`.
+
+### 11.2.1 The dispatch loop belongs to the shell, not to one screen
+
+**The loop that drives step 3 is owned by the admin shell and runs for as long as the console is
+open**, not by the blast screen. A full concert is around 130 messages against
+`email.max_per_dispatch`, which is six or so dispatch calls and roughly five minutes of continuous
+sending — long enough that an admin will navigate away, and a loop living in the blast screen's
+component state stops the moment they do.
+
+Nothing is lost when it stops: rows stay `QUEUED`, the partial unique index and `ticket_sent_at` make
+a resumed run send each message at most once (§11.4). But a blast that halts in the middle and says
+nothing is indistinguishable from one that finished, and the admin's next signal is a registrant
+asking where their ticket is.
+
+So the console carries a **queue banner** above the page content on every admin route:
+
+- **Its source of truth is `email_outbox`, not client state.** The shell reads the count of `QUEUED`
+  rows on render, so the banner survives a page reload, a closed tab and a dead laptop — the question
+  "is there an unfinished blast?" is answered by the database. Live progress during a run comes from
+  what each dispatch call returns, exactly as §11.2 step 3 requires; it is never a client-side
+  estimate.
+- **It offers Resume when rows are queued and nothing is sending**, which is the state a stopped blast
+  leaves behind and the state the daily cron would otherwise be the first to clear.
+- **Dismiss hides the banner. It never stops the blast.** Stopping is a separate, confirmed action
+  (`surfaces.md` §15.1), because a control that silently halts delivery halfway through a send is
+  worse than no control at all.
+
+The daily cron (step 4) stays exactly as it is. It is the safety net for a console nobody has open;
+the banner is for the one somebody does.
 
 ## 11.3 Templates
 

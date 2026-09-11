@@ -221,6 +221,20 @@ nothing about what changed. The count and the write are one transaction, with th
 changed underneath them, which is this section's failure arriving through a race instead of a design
 mistake.
 
+**A template can be deleted, and the same rule decides when.** The delete is soft (`deleted_at`) and is
+refused in exactly two cases, both of which protect a ticket somebody is already holding:
+
+- **Any version tickets are pinned to.** Reissuing re-renders from the pinned row, so deleting it
+  would leave a delivered ticket unable to re-render — the one thing the pinning exists to prevent.
+  The refusal names how many tickets are pinned, because that number is the decision; duplicating the
+  template is the way to start from its design instead.
+- **The default.** It is what `resolveTemplateForShow()` falls back to, so removing it would make the
+  next issue fail with a question about templates rather than about the ticket being issued. Naming a
+  new default first is one click and leaves the concert always able to issue.
+
+Unversioned drafts and abandoned duplicates — the templates the delete exists for — are pinned by
+nothing and are not the default, so they simply go.
+
 A new version keeps its predecessor's `is_default` and records what it was edited from in
 `supersedes_id`. **Duplicating** a template is different in kind: it starts a fresh lineage at
 version 1 with no `supersedes_id`, because it is not an edit of the original and nothing about it

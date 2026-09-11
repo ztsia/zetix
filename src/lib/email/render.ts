@@ -28,7 +28,10 @@ export const TOKENS: { token: string; description: string }[] = [
   { token: 'registration.round_label', description: 'Round the booking came from' },
   { token: 'attendee_count', description: 'How many tickets are attached' },
   { token: 'attendee_names', description: 'The names on those tickets' },
-  { token: 'ticket_links', description: 'One /t/{token} link per ticket' },
+  {
+    token: 'ticket_links',
+    description: 'A bulleted list — one /t/{token} link per ticket, labelled with the guest it belongs to',
+  },
 ];
 
 const TOKEN_NAMES = new Set(TOKENS.map((t) => t.token));
@@ -105,4 +108,140 @@ export function markdownToPlainText(md: string): string {
     .replace(/^\s*[-*]\s+/gm, '- ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * The email skeleton the rendered body is dropped into (§11.3).
+ *
+ * Three things drive the shape, and all three are email-client constraints
+ * rather than taste:
+ *
+ * - **Styles are both inlined *and* declared in `<head>`.** Gmail and Apple
+ *   Mail honour a `<style>` block; Outlook's Word engine largely does not, and
+ *   some clients strip the block entirely. The `<style>` block carries the
+ *   media query (which cannot be inlined); {@link INLINE_STYLES} carries the
+ *   same rules on the elements themselves, so a client that drops the block
+ *   still renders a readable message rather than an unstyled one.
+ * - **Layout is a table, not a flex or grid container.** Outlook supports
+ *   neither, and a ticket email that collapses is a guest who cannot find
+ *   their link.
+ * - **Colours are stated explicitly and the document declares `light`.** A
+ *   client left to guess inverts the card in dark mode and can leave dark text
+ *   on a dark ground.
+ *
+ * Nothing here is configurable and nothing here is a value from
+ * `context.md` — it is typography, not operational data (§2.1).
+ */
+const FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+const INK = '#18181b';
+const MUTED = '#71717a';
+const LINK = '#1d4ed8';
+const RULE = '#e4e4e7';
+const GROUND = '#f4f4f5';
+
+/**
+ * Applied to the tags `marked` actually emits for our templates.
+ *
+ * Keyed by the opening tag exactly as it appears in that output, so the
+ * substitution stays a plain string replace: anything cleverer would be a
+ * second HTML parser living next to the first.
+ */
+const INLINE_STYLES: [string, string][] = [
+  ['<p>', `margin:0 0 16px;font-size:16px;line-height:1.6;color:${INK};`],
+  ['<ul>', `margin:0 0 16px;padding:0 0 0 22px;`],
+  ['<ol>', `margin:0 0 16px;padding:0 0 0 22px;`],
+  ['<li>', `margin:0 0 8px;font-size:16px;line-height:1.6;color:${INK};`],
+  ['<h1>', `margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:600;color:${INK};`],
+  ['<h2>', `margin:24px 0 12px;font-size:20px;line-height:1.3;font-weight:600;color:${INK};`],
+  ['<h3>', `margin:24px 0 8px;font-size:17px;line-height:1.4;font-weight:600;color:${INK};`],
+  ['<blockquote>', `margin:0 0 16px;padding:8px 16px;border-left:3px solid ${RULE};color:${MUTED};`],
+  ['<hr>', `margin:24px 0;border:0;border-top:1px solid ${RULE};`],
+];
+
+/** Adds a `style` attribute to the tags above, leaving everything else alone. */
+function inlineBodyStyles(html: string): string {
+  let out = html;
+  for (const [tag, style] of INLINE_STYLES) {
+    out = out.split(tag).join(`${tag.slice(0, -1)} style="${style}">`);
+  }
+  // `marked` always emits `<a href=` first, so this cannot collide with an
+  // attribute of its own.
+  return out.split('<a href=').join(`<a style="color:${LINK};text-decoration:underline;" href=`);
+}
+
+export type EmailDocumentOptions = {
+  /**
+   * The grey line most clients show after the subject. Left out, they fill it
+   * with the first words of the markup instead.
+   */
+  preheader?: string;
+  /**
+   * The muted line under the card.
+   *
+   * Passed in rather than fixed here because only the caller knows what the
+   * message is: `carriesTickets()` decides whether there is an attachment to
+   * refer to, and a cancellation telling the reader to bring their ticket
+   * would be worse than no footer at all.
+   */
+  footer?: string;
+};
+
+/**
+ * Wraps a rendered body fragment in the full document that goes down the wire.
+ *
+ * Kept separate from {@link markdownToHtml} so the fragment is still available
+ * on its own — the admin preview frames it, and the token tests assert against
+ * it without a skeleton in the way.
+ */
+export function emailDocument(bodyHtml: string, options: EmailDocumentOptions = {}): string {
+  const preheader = options.preheader?.trim();
+  const footer = options.footer?.trim();
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<style>
+  body { margin:0; padding:0; width:100% !important; background:${GROUND}; }
+  a { color:${LINK}; }
+  @media (max-width:620px) {
+    .zetix-card { padding:24px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:${GROUND};font-family:${FONT_STACK};">
+${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${preheader}</div>` : ''}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${GROUND};">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid ${RULE};border-radius:8px;">
+        <tr>
+          <td class="zetix-card" style="padding:32px;font-family:${FONT_STACK};font-size:16px;line-height:1.6;color:${INK};">
+${inlineBodyStyles(bodyHtml)}
+          </td>
+        </tr>
+      </table>
+${
+        footer
+          ? `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+        <tr>
+          <td style="padding:16px 32px 0;font-family:${FONT_STACK};font-size:13px;line-height:1.5;color:${MUTED};">${footer}</td>
+        </tr>
+      </table>`
+          : ''
+      }
+    </td>
+  </tr>
+</table>
+</body>
+</html>`;
+}
+
+/** {@link markdownToHtml} plus the skeleton — what {@link emailDocument} is for. */
+export function markdownToEmailHtml(md: string, options: EmailDocumentOptions = {}): string {
+  return emailDocument(markdownToHtml(md), options);
 }

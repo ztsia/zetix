@@ -10,8 +10,9 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { TOKENS, markdownToPlainText, renderTemplate } from '@/lib/email/render';
+import { TOKENS, markdownToEmailHtml, markdownToPlainText, renderTemplate } from '@/lib/email/render';
 import { editTemplateAction } from '../actions';
 
 export type PreviewRecipient = { label: string; context: Record<string, string> };
@@ -166,11 +167,53 @@ export function TemplateEditor({
                 </Alert>
               ) : null}
 
-              <div className="rounded-md border p-4">
-                <p className="text-muted-foreground text-xs">Subject</p>
-                <p className="font-medium">{renderedSubject.text}</p>
-                <hr className="my-3" />
-                <pre className="text-sm whitespace-pre-wrap">{markdownToPlainText(renderedBody.text)}</pre>
+              <div className="rounded-md border">
+                <div className="p-4">
+                  <p className="text-muted-foreground text-xs">Subject</p>
+                  <p className="font-medium">{renderedSubject.text}</p>
+                </div>
+
+                {/*
+                  Both halves of the message, because they are rendered
+                  differently and only one of them used to be on screen.
+
+                  The plain-text half breaks on every newline; the HTML half
+                  follows Markdown, where a single newline is a *soft* break.
+                  A preview that showed only the text half therefore rendered
+                  `{{ ticket_links }}` as one link per line while recipients
+                  received all of them run together — the exact class of bug
+                  §11.5's preview exists to catch, invisible to the preview
+                  itself.
+                */}
+                <Tabs defaultValue="formatted" className="gap-0 border-t">
+                  <TabsList className="m-4 mb-0">
+                    <TabsTrigger value="formatted">Formatted</TabsTrigger>
+                    <TabsTrigger value="plain">Plain text</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="formatted" className="p-4">
+                    {/*
+                      Framed rather than injected: the message carries its own
+                      document and inline styles, and `srcDoc` in a sandboxed
+                      frame is what keeps those from meeting the admin
+                      stylesheet in either direction. `sandbox=""` withholds
+                      every permission, scripts included.
+                    */}
+                    <iframe
+                      key={renderedBody.text}
+                      title="Formatted preview"
+                      sandbox=""
+                      srcDoc={markdownToEmailHtml(renderedBody.text)}
+                      className="h-[28rem] w-full rounded-md border bg-white"
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="plain" className="p-4">
+                    <pre className="text-sm whitespace-pre-wrap">
+                      {markdownToPlainText(renderedBody.text)}
+                    </pre>
+                  </TabsContent>
+                </Tabs>
               </div>
             </>
           )}

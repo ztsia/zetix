@@ -5,7 +5,7 @@ import { getDb } from '@/db/client';
 import { requireSetting } from '@/db/settings';
 import { buildPartyAttachments, encodedSizeBytes, UnissuedTicketError } from './attachments';
 import { createConfiguredTransport } from './config';
-import { markdownToHtml, markdownToPlainText } from './render';
+import { markdownToEmailHtml, markdownToPlainText } from './render';
 import { carriesTickets } from './templates';
 import type { MailTransport } from './transport';
 
@@ -363,7 +363,17 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
           to: row.toEmail,
           toName: row.toName,
           subject: row.subject,
-          html: markdownToHtml(row.bodyMd),
+          html: markdownToEmailHtml(row.bodyMd, {
+            preheader: markdownToPlainText(row.bodyMd).split('\n')[0],
+            /**
+             * Only a message that actually carries a PDF may tell the reader
+             * to bring one — the same predicate that decides whether the
+             * attachments were built at all, so the two cannot disagree.
+             */
+            footer: carriesTickets(row.templateKey)
+              ? 'Your ticket is the attached PDF. Please bring it printed or on a phone — every guest needs their own.'
+              : undefined,
+          }),
           text: markdownToPlainText(row.bodyMd),
           attachments: party.attachments,
         });

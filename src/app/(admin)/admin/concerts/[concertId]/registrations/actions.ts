@@ -15,8 +15,10 @@ import {
 } from '@/lib/registrations/confirmation';
 import {
   addAttendees,
+  AdmittedAttendeeError,
   cancelRegistration,
   createRegistration,
+  deleteRegistration,
   moveRegistration,
   removeAttendee,
   renameAttendee,
@@ -524,6 +526,50 @@ export async function cancelRegistrationAction(
           : ''),
     );
   } catch (error) {
+    return fail(dbErrorMessage(error));
+  }
+}
+
+/**
+ * Delete a registration outright (§7.6).
+ *
+ * Distinct from {@link cancelRegistrationAction} on purpose: cancelling says a
+ * real booking is not coming and keeps the record, deleting says the row
+ * should never have existed. The audit entry carries the party it removed, so
+ * a soft-deleted registration can still be identified afterwards from the log
+ * alone — nothing in the admin UI lists deleted rows.
+ */
+export async function deleteRegistrationAction(
+  concertId: number,
+  registrationId: number,
+): Promise<FormState> {
+  const admin = await requireAdmin();
+
+  if (!(await registrationInConcert(concertId, registrationId))) {
+    return fail('That registration does not belong to this concert.');
+  }
+
+  try {
+    const result = await deleteRegistration(registrationId);
+    await writeAuditLog({
+      action: 'registration.deleted',
+      entityType: 'registration',
+      entityId: registrationId,
+      after: result,
+      actorId: admin.id,
+    });
+    refresh(concertId);
+
+    return ok(
+      `Registration deleted. ${result.seatsFreed} seat${result.seatsFreed === 1 ? '' : 's'} freed.` +
+        (result.outboxCancelled > 0
+          ? ` ${result.outboxCancelled} queued email${result.outboxCancelled === 1 ? '' : 's'} withdrawn.`
+          : ''),
+    );
+  } catch (error) {
+    // The guard's own sentence names how many are already inside, and the
+    // dialog renders it verbatim as every other guard's message is.
+    if (error instanceof AdmittedAttendeeError) return fail(error.message);
     return fail(dbErrorMessage(error));
   }
 }

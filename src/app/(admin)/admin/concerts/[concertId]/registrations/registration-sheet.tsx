@@ -37,6 +37,7 @@ import type { FormState } from '../../form-state';
 import {
   addAttendeesAction,
   cancelRegistrationAction,
+  deleteRegistrationAction,
   moveRegistrationAction,
   removeAttendeeAction,
   renameAttendeeAction,
@@ -234,6 +235,40 @@ export function RegistrationSheet({
               }
             />
           )}
+
+          {/*
+            Delete sits apart from cancel because they are different facts, and
+            the wording is the only thing stopping an admin reaching for the
+            wrong one: cancelling says a real booking is not coming and keeps
+            the record, deleting says the row should never have existed.
+
+            `DeleteButton` keeps a refusal inside the dialog, which is what
+            this needs — a party that has already been admitted is refused with
+            a sentence naming how many, and closing the dialog would take the
+            explanation with it.
+          */}
+          <DeleteButton
+            trigger={
+              <Button variant="ghost" size="sm" className="text-destructive ml-auto">
+                <Trash2 /> Delete
+              </Button>
+            }
+            title={`Delete ${registration.contactName}'s registration?`}
+            description={
+              <>
+                This removes the booking and all {attendees.length} of its seat
+                {attendees.length === 1 ? '' : 's'} from every screen, frees the seats, and
+                withdraws any email still queued for it. Nothing in the admin console lists
+                deleted registrations afterwards.
+                <br />
+                <br />
+                If this is a real booking that is simply not coming, cancel it instead — a
+                cancellation keeps the record and can be restored.
+              </>
+            }
+            confirmLabel="Delete registration"
+            action={() => deleteRegistrationAction(concertId, registration.id)}
+          />
         </SheetFooter>
       </SheetContent>
     </Sheet>

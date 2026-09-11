@@ -140,6 +140,25 @@ restore; and exceed the show's `capacity` with a typed confirmation recorded in 
 Manual actions still route through `claim_seats()` so counters stay consistent. Only the hall ceiling
 is overridable, and only deliberately.
 
+**Delete and cancel are different facts, and the console offers both.** Cancelling says a real booking
+is not coming: it frees the seats, stays in the record, and can be restored. Deleting says the row
+should never have existed — a duplicate import, a test party, an entry against the wrong show — and it
+leaves every screen. Only the second is reached by "delete".
+
+The delete is **soft** (`deleted_at`, decision 7) and that is load-bearing rather than a retention
+preference: `qr_token` and `ticket_code` are immutable for life (decision 28), and removing the row
+would let Postgres issue the same ticket code again, so a printed ticket already in a pocket could
+come to name a different guest. The seats free themselves — `claim_seats()`, `segment_pool()`,
+`promote_seats()` and `manifest_for_show()` all filter `a.deleted_at is null and r.deleted_at is null`
+already — and any `DRAFT` or `QUEUED` message for the registration is withdrawn in the same
+transaction, exactly as cancelling does.
+
+**A party holding a live check-in is refused**, with a sentence naming how many are already inside.
+`check_ins` is append-only, so deleting the attendee would leave an admission referring to nobody and
+drop a person the ushers actually saw out of the arrivals count. Reverting the check-in first, or
+cancelling instead, are the two ways forward and the refusal says so. Nothing in the admin console
+lists deleted registrations afterwards, so the `audit_log` entry carries what was removed.
+
 ## 7.7 Moving capacity between segments
 
 Segments do not borrow automatically. When the player segment closes with unclaimed seats and public

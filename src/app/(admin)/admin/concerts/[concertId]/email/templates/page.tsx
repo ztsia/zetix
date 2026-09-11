@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { requireAdmin } from '@/lib/auth/guards';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
+import { ticketLinks } from '@/lib/email/queue';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { Button } from '@/components/ui/button';
 import { TemplateEditor, type PreviewRecipient } from './template-editor';
@@ -63,18 +64,20 @@ export default async function TemplatesPage({
     round_label: string | null;
     attendee_count: number;
     attendee_names: string[];
+    qr_tokens: string[];
   }>(sql`
     (select 'Longest name: ' || coalesce(r.contact_name, '(none)') as label,
             c.name as concert_name, s.name as show_name, s.venue_name, s.venue_address,
             seg.name as segment_name, r.contact_name, r.contact_email, r.round_label,
-            counts.attendee_count, counts.attendee_names
+            counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
        join show_segments seg on seg.id = r.segment_id
        join shows s on s.id = r.show_id
        join concerts c on c.id = s.concert_id
        join lateral (
          select count(*)::int as attendee_count,
-                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names
+                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
+                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null
@@ -84,14 +87,15 @@ export default async function TemplatesPage({
     (select 'No player linked: ' || coalesce(r.contact_name, '(none)') as label,
             c.name, s.name, s.venue_name, s.venue_address,
             seg.name, r.contact_name, r.contact_email, r.round_label,
-            counts.attendee_count, counts.attendee_names
+            counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
        join show_segments seg on seg.id = r.segment_id
        join shows s on s.id = r.show_id
        join concerts c on c.id = s.concert_id
        join lateral (
          select count(*)::int as attendee_count,
-                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names
+                coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
+                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null and r.player_id is null
@@ -114,7 +118,10 @@ export default async function TemplatesPage({
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
       attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
-      ticket_links: '(one link per ticket)',
+      // Rendered from the real seats, not a stub: `ref.md` §6 — a template
+      // bug is almost always a data-shape bug, and this token is the one that
+      // changes shape with the size of the party.
+      ticket_links: ticketLinks(row.attendee_names, row.qr_tokens),
     },
   }));
 

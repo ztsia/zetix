@@ -3,9 +3,21 @@
 import { DataTable, type DataTableColumn } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { markdownToEmailHtml, markdownToPlainText } from '@/lib/email/render';
 import { ActionDialog } from '../../../concerts/action-dialog';
 import { editMessageAction } from './actions';
 
@@ -91,7 +103,7 @@ export function OutboxTable({ rows, timezone }: { rows: OutboxRow[]; timezone: s
     {
       id: 'actions',
       header: '',
-      cell: ({ row }) => <EditMessageDialog row={row.original} />,
+      cell: ({ row }) => <MessageDialog row={row.original} timezone={timezone} />,
     },
   ];
 
@@ -117,18 +129,22 @@ export function OutboxTable({ rows, timezone }: { rows: OutboxRow[]; timezone: s
  * for a reason for — and a table of twenty-five rows is not one. Modules `A`
  * and `B` compose it this way too.
  */
-function EditMessageDialog({ row }: { row: OutboxRow }) {
+function MessageDialog({ row, timezone }: { row: OutboxRow; timezone: string }) {
   /**
-   * Only a DRAFT can be edited. Once a batch is QUEUED the dispatcher owns it,
-   * and editing underneath would send something other than what was confirmed
-   * (§11.5). The action re-checks this; the disabled button is the courtesy.
+   * Only a DRAFT can be *edited*. Once a batch is QUEUED the dispatcher owns
+   * it, and editing underneath would send something other than what was
+   * confirmed (§11.5). The action re-checks this; the disabled control is the
+   * courtesy.
+   *
+   * **Everything else is still readable**, which it previously was not: the
+   * button was disabled outright the moment a message left DRAFT, so after a
+   * blast nobody could see what four hundred people had actually received —
+   * even though `body_md` is on the row and is exactly what was sent. "Cannot
+   * be changed" and "cannot be seen" are different things, and the second was
+   * never asked for.
    */
   if (row.status !== 'DRAFT') {
-    return (
-      <Button variant="ghost" size="sm" disabled>
-        Read / edit
-      </Button>
-    );
+    return <SentMessageDialog row={row} timezone={timezone} />;
   }
 
   return (
@@ -154,5 +170,100 @@ function EditMessageDialog({ row }: { row: OutboxRow }) {
         <Textarea id={`body-${row.id}`} name="bodyMd" defaultValue={row.bodyMd} rows={16} required />
       </Field>
     </ActionDialog>
+  );
+}
+
+/**
+ * A message that has left DRAFT, shown exactly as it went out.
+ *
+ * Rendered from the row's own `subject` and `body_md` — the same fields the
+ * dispatcher sent verbatim — rather than from a re-render of the template.
+ * A template edited after a blast would otherwise make this screen describe a
+ * message nobody received, which is the guarantee §11.5 is built on.
+ */
+function SentMessageDialog({ row, timezone }: { row: OutboxRow; timezone: string }) {
+  const sentAt = row.sentAt
+    ? new Intl.DateTimeFormat('en-GB', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: timezone,
+      }).format(new Date(row.sentAt))
+    : null;
+
+  return (
+    <Dialog>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm">
+            View
+          </Button>
+        }
+      />
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Message to {row.toName ?? row.toEmail}</DialogTitle>
+          <DialogDescription>
+            {row.toEmail}
+            {sentAt ? ` · sent ${sentAt}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={TONE[row.status]}>{row.status}</Badge>
+          {row.attempts > 0 ? (
+            <span className="text-muted-foreground text-xs">
+              {row.attempts} attempt{row.attempts === 1 ? '' : 's'}
+            </span>
+          ) : null}
+        </div>
+
+        {/*
+          A failure names its reason and the reason is the actionable part, so
+          it is shown whole here as well as in the table.
+        */}
+        {row.lastError ? (
+          <p className="text-destructive text-xs whitespace-pre-wrap">{row.lastError}</p>
+        ) : null}
+
+        <div className="rounded-md border">
+          <div className="p-4">
+            <p className="text-muted-foreground text-xs">Subject</p>
+            <p className="font-medium">{row.subject}</p>
+          </div>
+
+          <Tabs defaultValue="formatted" className="gap-0 border-t">
+            <TabsList className="m-4 mb-0">
+              <TabsTrigger value="formatted">Formatted</TabsTrigger>
+              <TabsTrigger value="plain">Plain text</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="formatted" className="p-4">
+              {/*
+                Sandboxed and framed: the message is a whole document with its
+                own inline styles, and neither it nor the admin stylesheet
+                should reach the other. `sandbox=""` withholds every
+                permission.
+              */}
+              <iframe
+                title="Message as sent"
+                sandbox=""
+                srcDoc={markdownToEmailHtml(row.bodyMd)}
+                className="h-[26rem] w-full rounded-md border bg-white"
+              />
+            </TabsContent>
+
+            <TabsContent value="plain" className="p-4">
+              <pre className="max-h-[26rem] overflow-auto text-sm whitespace-pre-wrap">
+                {markdownToPlainText(row.bodyMd)}
+              </pre>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Close</Button>} />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

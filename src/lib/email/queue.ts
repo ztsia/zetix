@@ -188,12 +188,40 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
       attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
-      ticket_links: (row.qr_tokens ?? [])
-        .filter(Boolean)
-        .map((token) => `${appUrl()}/t/${token}`)
-        .join('\n'),
+      ticket_links: ticketLinks(row.attendee_names, row.qr_tokens),
     },
   }));
+}
+
+/**
+ * One labelled link per seat, as a Markdown list.
+ *
+ * **A single `\n` is a soft break in Markdown**, so the previous `join('\n')`
+ * collapsed every link onto one line once the body reached
+ * `markdownToHtml()` — a party of four received four URLs run together. List
+ * items survive both halves of the message: `markdownToPlainText()` keeps
+ * `- ` and turns `[View ticket](url)` into `View ticket (url)`.
+ *
+ * **Names and tokens are zipped before either is filtered.** Both arrive as
+ * `array_agg(... order by a.id)` (§11.4's query), so index `i` is the same
+ * seat in both — but filtering the names on their own, as this used to for
+ * `attendee_names`, would shift every later link onto the wrong person's
+ * name. A seat's name is never empty in practice (a blank one is stored as
+ * "Guest of {contact_name}", `registrations/mutations.ts`), so the ordinal
+ * fallback is belt-and-braces rather than the expected path.
+ *
+ * The name sits *outside* the link brackets: it comes from a spreadsheet
+ * import, and a name containing `]` inside a label would otherwise end the
+ * link early. `escapeMergeValues()` runs over this string afterwards and
+ * leaves Markdown punctuation alone, escaping only the HTML five.
+ */
+export function ticketLinks(names: string[] | null, tokens: string[] | null): string {
+  const base = appUrl();
+  return (tokens ?? [])
+    .map((token, i) => ({ token, name: (names ?? [])[i] }))
+    .filter(({ token }) => Boolean(token))
+    .map(({ token, name }, i) => `- ${name?.trim() || `Guest ${i + 1}`} — [View ticket](${base}/t/${token})`)
+    .join('\n');
 }
 
 /**

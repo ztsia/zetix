@@ -324,6 +324,69 @@ export async function setDefaultTemplate(concertId: number, templateId: number):
 }
 
 /**
+ * Delete a ticket template (spec/tickets.md §10.5).
+ *
+ * **Soft, and refused in two cases**, both of which protect a ticket somebody
+ * is already holding:
+ *
+ * - **A version any ticket is pinned to cannot be deleted.** `ticket_template_id`
+ *   and `ticket_template_version` are pinned at issue time precisely so a later
+ *   edit cannot change a ticket already in circulation, and reissuing re-renders
+ *   from that pinned row. Deleting it would leave a delivered ticket unable to
+ *   re-render — the one thing the pinning exists to prevent. The admin is told
+ *   how many, because that number is the decision.
+ * - **The default cannot be deleted.** It is what `resolveTemplateForShow()`
+ *   falls back to, so removing it makes the next issue fail with a question
+ *   about templates rather than about the ticket being issued. Naming a new
+ *   default first is one click and leaves the concert always able to issue.
+ *
+ * Unversioned drafts and abandoned duplicates — the templates this exists for —
+ * are pinned by nothing and are not the default, so they simply go.
+ */
+export async function deleteTemplate(concertId: number, templateId: number): Promise<void> {
+  const db = getDb();
+  await db.transaction(async (tx) => {
+    const rows = await tx.execute<{
+      name: string;
+      version: number;
+      is_default: boolean;
+      issued: number;
+    }>(sql`
+      select t.name, t.version, t.is_default,
+             (select count(*)::int from attendees a
+               where a.ticket_template_id = t.id
+                 and a.ticket_template_version = t.version) as issued
+        from ticket_templates t
+       where t.id = ${templateId}
+         and t.concert_id = ${concertId}
+         and t.deleted_at is null
+    `);
+    const template = rows[0];
+    if (!template) throw new Error('That template no longer exists.');
+
+    if (template.issued > 0) {
+      throw new Error(
+        `${template.issued} ticket${template.issued === 1 ? ' is' : 's are'} pinned to ` +
+          `"${template.name}" v${template.version}, and reissuing one re-renders from it. ` +
+          'Templates already in use cannot be deleted — duplicate it instead if you want ' +
+          'to start from its design.',
+      );
+    }
+
+    if (template.is_default) {
+      throw new Error(
+        `"${template.name}" is the default template, and new tickets are issued from it. ` +
+          'Make another template the default first, then delete this one.',
+      );
+    }
+
+    await tx.execute(sql`
+      update ticket_templates set deleted_at = now() where id = ${templateId}
+    `);
+  });
+}
+
+/**
  * Copy a template into a new lineage, so an admin can experiment without
  * touching the one their tickets resolve through.
  *

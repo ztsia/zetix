@@ -85,7 +85,24 @@ admin with `last_error`.
 | `player_notes_digest` | Admin-triggered, post-show | Player — notes addressed to them |
 
 Markdown + `{{ }}` placeholders stored in the DB, editable with live preview and a documented token
-list. Plain-text alternative auto-generated. Tickets attach as one PDF per attendee, named
+list. Plain-text alternative auto-generated.
+
+**`{{ ticket_links }}` renders as a Markdown list, one item per seat, each labelled with the guest it
+belongs to.** Both halves of the message are rendered from the same Markdown, and they break lines
+differently: a single `\n` ends a line in the plain-text half but is a *soft* break in Markdown, so a
+list joined with one newline arrives as every URL run together on one line in the HTML half. The
+labels come from the same `array_agg(... order by a.id)` as the tokens and are zipped before either is
+filtered — filtering one alone slides every later link onto the wrong person's name, and a ticket
+labelled with someone else's name is worse than an unlabelled one.
+
+**The HTML half is sent inside a document, not as a bare fragment.** Table layout (Outlook supports
+neither flex nor grid), styles both inlined and declared in `<head>` (a client that strips the block
+still renders something readable), explicit colours with `color-scheme: light` (a client left to guess
+inverts the card and can leave dark text on a dark ground), and a preheader. The footer is passed in
+by the caller rather than fixed in the skeleton: only `carriesTickets()` knows whether there is an
+attachment to refer to, and a cancellation telling the reader to bring their ticket would be worse
+than no footer at all. Authoring stays Markdown — the skeleton is typography, and none of it is a
+value from `context.md`. Tickets attach as one PDF per attendee, named
 `{show}-{name}-{ticket_code}.pdf`; past `email.merge_attachments_above`, merge into one PDF to stay
 under `email.max_attachment_mb` (Gmail's hard ceiling is 25MB).
 
@@ -179,6 +196,19 @@ the outbox row as `DRAFT`. The admin then sees the actual messages, not a templa
 
 The dispatcher sends `subject` and `body_md` verbatim. What was reviewed is what goes out; a later
 template edit cannot change a message already reviewed.
+
+**The preview shows both halves of the message.** A preview of only the plain-text rendering is not a
+preview of what is sent, and it hides exactly the class of bug this section exists to catch: text
+breaks on every newline, Markdown does not, so `{{ ticket_links }}` read correctly in a text-only
+preview while recipients received the links run together. The formatted half is framed in a sandboxed
+`srcDoc` so the message's own styles and the admin's cannot reach each other.
+
+**A message that has left `DRAFT` can still be read, only not edited.** Editing is refused once the
+dispatcher owns the batch — that much is §11.5's guarantee — but "cannot be changed" and "cannot be
+seen" are different things, and only the first was ever asked for. After a blast the admin must be
+able to see what four hundred people actually received, rendered from the row's own `subject` and
+`body_md` rather than from a re-render of the template, alongside its status, attempts and last
+error.
 
 ## 11.6 Marking a ticket delivered by hand
 

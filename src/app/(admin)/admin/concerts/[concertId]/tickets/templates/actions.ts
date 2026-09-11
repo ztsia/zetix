@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
 import { layoutSchema } from '@/lib/tickets/layout';
 import {
+  deleteTemplate,
   duplicateTemplate,
   loadTemplate,
   saveTemplate,
@@ -165,6 +166,37 @@ export async function duplicateTemplateAction(
     });
     revalidatePath(`/admin/concerts/${parsed.data.concertId}/tickets/templates`);
     return { ok: true, templateId, message: 'Duplicated.' };
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+/**
+ * Delete a template (spec/tickets.md §10.5).
+ *
+ * Both refusals — a version tickets are pinned to, and the default — come back
+ * as `error` with the sentence naming the numbers, which the dialog renders
+ * verbatim rather than replacing with a generic failure. The count of pinned
+ * tickets *is* the decision the admin has to make.
+ */
+export async function deleteTemplateAction(
+  input: z.infer<typeof templateSchema>,
+): Promise<TemplateActionResult> {
+  await requireAdmin();
+
+  const parsed = templateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Malformed request.' };
+
+  try {
+    await deleteTemplate(parsed.data.concertId, parsed.data.templateId);
+    await writeAuditLog({
+      action: 'ticket_template.deleted',
+      entityType: 'ticket_template',
+      entityId: parsed.data.templateId,
+      before: { concertId: parsed.data.concertId },
+    });
+    revalidatePath(`/admin/concerts/${parsed.data.concertId}/tickets/templates`);
+    return { ok: true, message: 'Template deleted.' };
   } catch (error) {
     return { ok: false, error: message(error) };
   }

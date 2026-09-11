@@ -40,6 +40,9 @@ export const MAX_DISPATCH_SECONDS = 60;
 /** Safety factor on {@link MAX_DISPATCH_SECONDS} before a row is called stranded. */
 const RECLAIM_FACTOR = 10;
 
+/** How long a row must sit in `SENDING` before {@link reclaimStranded} takes it back. */
+const RECLAIM_AFTER_SECONDS = MAX_DISPATCH_SECONDS * RECLAIM_FACTOR;
+
 export type DispatchResult = {
   sent: number;
   failed: number;
@@ -50,6 +53,14 @@ export type DispatchResult = {
   warnings: string[];
   /** Rows recovered from a dispatch that died mid-batch. See {@link reclaimStranded}. */
   reclaimed: number;
+  /**
+   * The queue as it stands once this call is done, for the shell's banner
+   * (§11.2.1). Reported separately from {@link DispatchResult.remaining}, which
+   * drives the loop and counts every `QUEUED` row whether it is due or not:
+   * the loop wants to know whether to call again, the banner wants to know what
+   * it may honestly offer to do.
+   */
+  backlog: OutboxBacklog;
 };
 
 type ClaimedRow = {
@@ -228,7 +239,7 @@ async function reclaimStranded(): Promise<number> {
     update email_outbox
        set status = 'QUEUED', updated_at = now()
      where status = 'SENDING'
-       and updated_at < now() - (interval '1 second' * ${MAX_DISPATCH_SECONDS * RECLAIM_FACTOR})
+       and updated_at < now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
     returning id
   `);
   return rows.length;
@@ -239,6 +250,85 @@ async function remainingQueued(): Promise<number> {
     select count(*)::int as n from email_outbox where status = 'QUEUED'
   `);
   return rows[0]?.n ?? 0;
+}
+
+export type OutboxBacklog = {
+  /**
+   * Messages a Resume would send **right now**: `QUEUED` rows that are due,
+   * plus `SENDING` rows old enough that the next dispatch call reclaims them
+   * (§11.2's recovery path) before it claims anything.
+   *
+   * Due-ness is not a detail. `claimBatch()` skips a row whose `scheduled_for`
+   * is in the future, so counting one here would offer a Resume that cannot
+   * send it — and a control that does nothing reads as a broken one.
+   */
+  resumable: number;
+  /**
+   * Rows waiting out the retry backoff `markFailed()` gave them. Unfinished
+   * work, so the banner keeps reporting them, but the dispatcher will not take
+   * them until they are due and no button can hurry that along.
+   */
+  retrying: number;
+  /**
+   * `SENDING` rows too recent to reclaim — either a dispatch is using them, or
+   * one just died and the reclaim window has not elapsed. Resume cannot help
+   * these yet, so the banner must not offer it for them.
+   */
+  inFlight: number;
+  /**
+   * Rows that exhausted `email.max_attempts`. Nothing retries them and Resume
+   * cannot reach them, but they are tickets nobody received: going silent over
+   * them is the failure §11.2.1 exists to prevent. They clear by an explicit
+   * resend or by §11.6's mark-as-delivered, never on their own.
+   */
+  failed: number;
+};
+
+/**
+ * What the queue banner renders (spec/email.md §11.2.1).
+ *
+ * **The banner's source of truth is `email_outbox`, not client state**, which
+ * is what lets "is there an unfinished blast?" survive a route change, a
+ * reload, a closed tab and a dead laptop.
+ *
+ * `SENDING` is counted as well as `QUEUED` because a dispatch that dies
+ * mid-batch leaves up to `email.max_per_dispatch` rows there, invisible to a
+ * `QUEUED`-only count. Reporting only `QUEUED` would clear the banner while
+ * those messages were still undelivered — the exact silence §11.2.1 exists to
+ * end. The split by reclaim age is what keeps Resume honest: it is offered only
+ * for rows a dispatch could actually pick up.
+ */
+export async function outboxBacklog(): Promise<OutboxBacklog> {
+  const rows = await getDb().execute<{
+    resumable: number;
+    retrying: number;
+    in_flight: number;
+    failed: number;
+  }>(sql`
+    select
+      count(*) filter (
+        where (status = 'QUEUED' and (scheduled_for is null or scheduled_for <= now()))
+           or (status = 'SENDING'
+               and updated_at < now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS}))
+      )::int as resumable,
+      count(*) filter (
+        where status = 'QUEUED' and scheduled_for > now()
+      )::int as retrying,
+      count(*) filter (
+        where status = 'SENDING'
+          and updated_at >= now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
+      )::int as in_flight,
+      count(*) filter (where status = 'FAILED')::int as failed
+      from email_outbox
+     where status in ('QUEUED', 'SENDING', 'FAILED')
+  `);
+  const row = rows[0];
+  return {
+    resumable: row?.resumable ?? 0,
+    retrying: row?.retrying ?? 0,
+    inFlight: row?.in_flight ?? 0,
+    failed: row?.failed ?? 0,
+  };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -282,12 +372,21 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       dailyCapReached: true,
       warnings: [],
       reclaimed,
+      backlog: await outboxBacklog(),
     };
   }
 
   const batch = await claimBatch(Math.min(maxPerDispatch, budget));
   if (batch.length === 0) {
-    return { sent: 0, failed: 0, remaining: 0, dailyCapReached: false, warnings: [], reclaimed };
+    return {
+      sent: 0,
+      failed: 0,
+      remaining: 0,
+      dailyCapReached: false,
+      warnings: [],
+      reclaimed,
+      backlog: await outboxBacklog(),
+    };
   }
 
   /**
@@ -410,5 +509,6 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     dailyCapReached: false,
     warnings,
     reclaimed,
+    backlog: await outboxBacklog(),
   };
 }

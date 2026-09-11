@@ -4,7 +4,6 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
 import {
   AlertDialog,
@@ -17,6 +16,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { useBlastQueue } from '../../../blast-queue';
 import { confirmBatchAction, discardDraftsAction, prepareBlastAction } from './actions';
 
 /**
@@ -27,6 +27,12 @@ import { confirmBatchAction, discardDraftsAction, prepareBlastAction } from './a
  * sends nothing; confirming moves them to `QUEUED` and still sends nothing;
  * only Send dispatches. "Nothing leaves the system that a person has not looked
  * at" (§11.5) is a sequence, not a checkbox.
+ *
+ * **Send starts the shell's dispatch loop; it does not own one** (§11.2.1). A
+ * loop in this component's state dies when the admin navigates away, and a
+ * blast takes about five minutes. Progress and the result are reported by the
+ * shell's queue banner, which is why there is no progress bar here: two bars
+ * disagreeing about the same send is worse than one in the place that survives.
  */
 export function BlastControls({
   segmentId,
@@ -44,14 +50,24 @@ export function BlastControls({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{ error: string | null; message?: string | null } | null>(null);
+  const blastQueue = useBlastQueue();
 
   /**
-   * Progress is driven by what the server reports, not by a client-side guess:
-   * each call answers with how many rows are still queued, so a batch that
-   * fails halfway shows as stopped rather than as complete (§11.2).
+   * The Send dialog is controlled so pressing **Send now** closes it.
+   *
+   * `AlertDialogAction` is a plain `Button` — unlike `AlertDialogCancel` it is
+   * not a `Close`, so it runs its handler and leaves the modal standing. That
+   * matters more here than anywhere else in the console: this dialog is how a
+   * blast starts, the modal makes the whole shell inert while it is open, and
+   * the entire point of §11.2.1 is that the admin can then go somewhere else.
+   * A send that traps them on this screen has a banner reporting a freedom they
+   * do not have.
+   *
+   * Fixed here rather than in `components/ui/alert-dialog.tsx` because that is
+   * a shared surface with 25 other call sites and the same latent bug
+   * (modules.md §4). This branch unblocks its own flow and reports the rest.
    */
-  const [sending, setSending] = useState(false);
-  const [progress, setProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
 
   const run = (action: () => Promise<{ error: string | null; message?: string | null }>) =>
     startTransition(async () => {
@@ -59,58 +75,7 @@ export function BlastControls({
       router.refresh();
     });
 
-  /**
-   * The UI calls the dispatcher repeatedly until the queue drains (§11.2).
-   * Each call is one function invocation inside `maxDuration`, so a long blast
-   * is many short requests rather than one that times out.
-   */
-  async function send() {
-    setSending(true);
-    setFeedback(null);
-    let sent = 0;
-    let failed = 0;
-    const total = queued;
-
-    try {
-      for (;;) {
-        const response = await fetch('/api/outbox/dispatch', { method: 'POST' });
-        const result = await response.json();
-
-        if (!response.ok) {
-          setFeedback({ error: result.error ?? 'Dispatch failed.' });
-          break;
-        }
-
-        sent += result.sent ?? 0;
-        failed += result.failed ?? 0;
-        setProgress({ sent, failed, total });
-
-        if (result.dailyCapReached) {
-          setFeedback({
-            error: null,
-            message: `Daily send limit reached. ${result.remaining} message(s) will go out tomorrow.`,
-          });
-          break;
-        }
-        // A batch that sent and failed nothing has nothing left it can do; stopping
-        // here is what prevents an endless loop against a permanently stuck row.
-        if (result.remaining === 0 || (result.sent === 0 && result.failed === 0)) {
-          setFeedback({
-            error: null,
-            message: `${sent} sent${failed > 0 ? `, ${failed} failed — see Last error in the table` : ''}.`,
-          });
-          break;
-        }
-      }
-    } catch (error) {
-      setFeedback({ error: error instanceof Error ? error.message : 'Dispatch failed.' });
-    } finally {
-      setSending(false);
-      router.refresh();
-    }
-  }
-
-  const busy = pending || sending;
+  const busy = pending || blastQueue.sending;
 
   return (
     <div className="space-y-4">
@@ -131,11 +96,11 @@ export function BlastControls({
           Confirm {drafts} draft{drafts === 1 ? '' : 's'}
         </Button>
 
-        <AlertDialog>
+        <AlertDialog open={sendOpen} onOpenChange={setSendOpen}>
           <AlertDialogTrigger
             render={
               <Button variant="default" disabled={busy || queued === 0}>
-                {sending ? <Spinner /> : null}
+                {blastQueue.sending ? <Spinner /> : null}
                 Send {queued} queued
               </Button>
             }
@@ -150,7 +115,14 @@ export function BlastControls({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={send}>Send now</AlertDialogAction>
+              <AlertDialogAction
+                onClick={() => {
+                  setSendOpen(false);
+                  blastQueue.start();
+                }}
+              >
+                Send now
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -184,15 +156,6 @@ export function BlastControls({
           </AlertDialog>
         ) : null}
       </div>
-
-      {sending || progress ? (
-        <div className="space-y-1">
-          <Progress value={progress && progress.total > 0 ? ((progress.sent + progress.failed) / progress.total) * 100 : 0} />
-          <p className="text-muted-foreground text-sm">
-            {progress ? `${progress.sent} sent, ${progress.failed} failed of ${progress.total}` : 'Starting…'}
-          </p>
-        </div>
-      ) : null}
 
       {feedback?.error ? (
         <Alert variant="destructive">

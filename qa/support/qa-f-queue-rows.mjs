@@ -1,0 +1,13 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ baseURL: 'http://localhost:3100' });
+const p = await ctx.newPage();
+await p.goto('/login');
+await p.getByLabel('Admin code').fill('qa-admin-code');
+await Promise.all([p.waitForURL(u => !u.pathname.startsWith('/login')), p.getByRole('button', { name: 'Sign in' }).click()]);
+await p.goto('/admin/concerts/1/email?segment=1&template=public_ticket');
+await p.getByRole('button', { name: /^Prepare 4 messages$/ }).click();
+await p.getByRole('button', { name: /^Confirm 4 drafts$/ }).click();
+await p.getByRole('button', { name: /^Send 4 queued$/ }).waitFor();
+console.log('queued 4');
+await browser.close();

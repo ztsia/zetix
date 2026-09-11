@@ -1,0 +1,13 @@
+import { chromium } from '@playwright/test';
+const BASE = 'http://localhost:3100';
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ baseURL: BASE });
+const p = await ctx.newPage();
+await p.goto('/login');
+await p.getByLabel('Admin code').fill('qa-admin-code');
+await Promise.all([p.waitForURL(u => !u.pathname.startsWith('/login')), p.getByRole('button', { name: 'Sign in' }).click()]);
+await p.goto('/admin/concerts/1/tickets?show=1');
+await p.getByRole('button', { name: 'Issue tickets' }).click();
+await p.waitForTimeout(6000);
+console.log(await p.locator('body').innerText().then(t => t.slice(0, 400)));
+await browser.close();

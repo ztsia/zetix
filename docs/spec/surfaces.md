@@ -25,6 +25,12 @@ system and almost nothing else. Build them as separate route groups with separat
 Standard shadcn app shell: sidebar navigation, breadcrumb header, content area. Concert is selected
 once and held in context, so every inner page is scoped to it.
 
+The shell also owns one piece of cross-page state: the **queue banner** for an in-flight or stalled
+email blast, above the content area on every admin route (`email.md` §11.2.1). It is in the shell
+rather than on the blast screen because the dispatch loop it drives has to outlive the screen that
+started it. Its Dismiss hides the banner and never stops the send; a Stop, if offered, is a separate
+`AlertDialog`-confirmed action.
+
 Screens are listed in `admin.md` §14.1. The dominant pattern is **table + filters + row actions + a detail sheet**,
 so build one good `DataTable` (TanStack Table + shadcn) with server-side pagination, column visibility,
 and CSV export, then reuse it for registrations, attendees, players, notes, outbox and scan log. That

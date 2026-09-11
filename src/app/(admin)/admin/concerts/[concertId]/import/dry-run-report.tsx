@@ -77,8 +77,20 @@ export function toReportRows(plan: PlanResponse): ReportRow[] {
         attendee: seat.fullName ?? `Guest of ${party.contactName}`,
         allocationType: seat.allocationType,
         promoted: seat.promotedFromBase,
-        level: finding?.level ?? (party.blocked ? 'BLOCKING' : 'OK'),
-        message: finding?.message ?? (party.blocked ? 'Skipped: this party is blocked.' : ''),
+        /**
+         * The party-level fallbacks matter as much as the finding itself: a
+         * finding is attached to the party's *first* row, so without these the
+         * other rows of a blocked or skipped party read as OK — the table
+         * saying a row will import when the run will not write it.
+         */
+        level: finding?.level ?? (party.blocked ? 'BLOCKING' : party.skipped ? 'INFO' : 'OK'),
+        message:
+          finding?.message ??
+          (party.blocked
+            ? 'Skipped: this party is blocked.'
+            : party.skipped
+              ? 'Skipped: this party is already imported.'
+              : ''),
       });
     }
   }
@@ -350,6 +362,12 @@ export function DryRunReport({
 
   const fileLevel = plan.findings.filter((f) => f.rowNumber === undefined);
   const partySizes = plan.parties.filter((p) => !p.blocked).map((p) => p.seats.length);
+
+  const rowsAtLevel = {
+    BLOCKING: all.filter((r) => r.level === 'BLOCKING').length,
+    WARNING: all.filter((r) => r.level === 'WARNING').length,
+    INFO: all.filter((r) => r.level === 'INFO').length,
+  };
   const seatsConsumed = plan.extrasPolicy === 'REVIEW' ? plan.counts.baseSeats : plan.counts.seats;
 
   return (
@@ -401,6 +419,24 @@ export function DryRunReport({
             {plan.counts.rows} rows &rarr; {plan.counts.parties}{' '}
             {plan.counts.parties === 1 ? 'registration' : 'registrations'}
           </p>
+          {/*
+            §9.2: stated on its own line rather than folded into the tail below,
+            because re-uploading a cumulative export is the normal round 2
+            workflow and "12 registrations" over a file that writes none of them
+            reads as success. The number that matters is how many are new.
+          */}
+          {plan.counts.skippedParties > 0 ? (
+            <p className="mt-1 text-sm font-medium tabular-nums">
+              {plan.counts.skippedParties} already imported ·{' '}
+              {plan.counts.parties - plan.counts.skippedParties} new
+            </p>
+          ) : null}
+          {plan.counts.skippedParties === plan.counts.parties && plan.counts.parties > 0 ? (
+            <p className="text-muted-foreground mt-1 text-sm">
+              Nothing new to import — this file has already been loaded into this segment. Nothing
+              further to do.
+            </p>
+          ) : null}
           <p className="text-muted-foreground mt-1 text-sm">
             Largest party {plan.largestParty}
             {partySizes.length > 0 ? ` · sizes ${summarise(partySizes)}` : ''}
@@ -479,10 +515,17 @@ export function DryRunReport({
             variant="outline"
             size="sm"
           >
+            {/*
+              Counted off the rows this filter actually shows, not off
+              `plan.counts`, which counts *findings*. One party-level finding
+              covers every row of its party, so the two disagree exactly when a
+              party is skipped or blocked — the chip promising two rows and the
+              table then showing three.
+            */}
             <ToggleGroupItem value="ALL">All {all.length}</ToggleGroupItem>
-            <ToggleGroupItem value="BLOCKING">Blocking {plan.counts.blocking}</ToggleGroupItem>
-            <ToggleGroupItem value="WARNING">Warning {plan.counts.warning}</ToggleGroupItem>
-            <ToggleGroupItem value="INFO">Info {plan.counts.info}</ToggleGroupItem>
+            <ToggleGroupItem value="BLOCKING">Blocking {rowsAtLevel.BLOCKING}</ToggleGroupItem>
+            <ToggleGroupItem value="WARNING">Warning {rowsAtLevel.WARNING}</ToggleGroupItem>
+            <ToggleGroupItem value="INFO">Info {rowsAtLevel.INFO}</ToggleGroupItem>
           </ToggleGroup>
         }
         export={{

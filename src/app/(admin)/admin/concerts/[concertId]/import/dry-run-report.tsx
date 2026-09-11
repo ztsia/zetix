@@ -362,6 +362,12 @@ export function DryRunReport({
 
   const fileLevel = plan.findings.filter((f) => f.rowNumber === undefined);
   const partySizes = plan.parties.filter((p) => !p.blocked).map((p) => p.seats.length);
+
+  const rowsAtLevel = {
+    BLOCKING: all.filter((r) => r.level === 'BLOCKING').length,
+    WARNING: all.filter((r) => r.level === 'WARNING').length,
+    INFO: all.filter((r) => r.level === 'INFO').length,
+  };
   const seatsConsumed = plan.extrasPolicy === 'REVIEW' ? plan.counts.baseSeats : plan.counts.seats;
 
   return (
@@ -509,10 +515,17 @@ export function DryRunReport({
             variant="outline"
             size="sm"
           >
+            {/*
+              Counted off the rows this filter actually shows, not off
+              `plan.counts`, which counts *findings*. One party-level finding
+              covers every row of its party, so the two disagree exactly when a
+              party is skipped or blocked — the chip promising two rows and the
+              table then showing three.
+            */}
             <ToggleGroupItem value="ALL">All {all.length}</ToggleGroupItem>
-            <ToggleGroupItem value="BLOCKING">Blocking {plan.counts.blocking}</ToggleGroupItem>
-            <ToggleGroupItem value="WARNING">Warning {plan.counts.warning}</ToggleGroupItem>
-            <ToggleGroupItem value="INFO">Info {plan.counts.info}</ToggleGroupItem>
+            <ToggleGroupItem value="BLOCKING">Blocking {rowsAtLevel.BLOCKING}</ToggleGroupItem>
+            <ToggleGroupItem value="WARNING">Warning {rowsAtLevel.WARNING}</ToggleGroupItem>
+            <ToggleGroupItem value="INFO">Info {rowsAtLevel.INFO}</ToggleGroupItem>
           </ToggleGroup>
         }
         export={{

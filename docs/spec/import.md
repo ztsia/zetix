@@ -87,8 +87,10 @@ be the safe one. Requiring a fresh file of only-new rows each time puts the dedu
 admin's head, where a mistake is a party that gets two emails, four tickets and two seats out of a
 pool that was sized for one.
 
-**A party whose `contact_email` and `requested_at` already match a live registration in this segment is
-skipped, not re-imported, and not blocked.** It is the same pair §9.2 groups on, and both halves are
+**A party whose `contact_email` and `requested_at` already match a registration in this segment is
+skipped, not re-imported, and not blocked.** "Already imported" means the registration is still on
+record, cancelled or not — see the two rules below for why a cancellation counts and a deletion does
+not. It is the same pair §9.2 groups on, and both halves are
 already immutable: `requested_at` is the form response timestamp rather than import time (§9.3), so it
 is identical in every export of that response. Re-uploading the whole sheet each round therefore
 commits exactly the rows that are new.
@@ -99,8 +101,18 @@ exists, and stopping the run would refuse the new rows alongside it. The dry run
 beside the grouping line so a second import of an unchanged file reads as *"12 registrations, 12
 already imported, 0 new"* rather than as success over nothing.
 
-Two limits on this, both stated rather than worked around:
+Four rules follow from that, all stated rather than worked around:
 
+- **A cancelled registration still counts as imported.** A cancellation is an admin decision about a
+  response that is already here, and §9.1 re-reads the sheet only for *new* responses — so
+  re-importing would overturn that decision silently. It would also be unsafe rather than merely
+  wrong: a cancellation "stays in the record, and can be restored" (`allocation.md` §7.9), so the
+  restore would leave one form response holding two live registrations and two sets of tickets. The
+  dry run says so in as many words, because an admin looking at a cancelled party needs to know why
+  the importer is refusing to bring it back.
+- **A deleted registration does not.** A delete means the row should never have existed
+  (`allocation.md` §7.6) — a duplicate, a test party, an entry against the wrong show — so an export
+  still carrying that response is bringing in something this segment genuinely does not have.
 - **A party with no `contact_email` has no dedup key** and is re-imported every time, because §9.2
   already gives it a row-scoped key that nothing outside the file can match. It is `WARNING` on both
   runs, and the dry run counts it.

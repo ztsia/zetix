@@ -329,16 +329,28 @@ test('FLOW-11 re-import after a cancellation', async ({ page }) => {
     (await skipLine.count()) ? await skipLine.innerText() : '(no skip line rendered)',
   );
   await page.screenshot({ path: `${SHOTS}/FLOW-11-step-2-cancelled-reimport.png`, fullPage: true });
-  await commit(page, PUBLIC);
-  await expect(page.getByText(/Imported/)).toBeVisible({ timeout: 20000 });
-  await page.screenshot({ path: `${SHOTS}/FLOW-11-step-3-after-commit.png`, fullPage: true });
+
+  /**
+   * A cancellation is an admin decision about a response that is already
+   * imported, and §9.1 re-reads the sheet only for *new* responses — so the
+   * party stays skipped and there is nothing to commit.
+   *
+   * This assertion was inverted when it was written: it demanded that one form
+   * response end up holding two live registrations, which is the duplication
+   * §9.2 exists to prevent. Because a cancellation "stays in the record and can
+   * be restored" (allocation.md §7.9), restoring it would then have handed that
+   * party two sets of tickets.
+   */
+  await expect(page.getByRole('button', { name: /Commit 0 registrations/ })).toBeDisabled();
+  await page.screenshot({ path: `${SHOTS}/FLOW-11-step-3-nothing-to-commit.png`, fullPage: true });
 
   const live = await sql<{ id: string; status: string }[]>`
     select id, status from registrations
      where contact_email = 'alice@example.com' and deleted_at is null order by id`;
   // eslint-disable-next-line no-console
   console.log('FLOW-11 registrations for one form response:', JSON.stringify(live));
-  expect(live.length).toBe(2);
+  expect(live.length).toBe(1);
+  expect(live[0].status).toBe('CANCELLED');
 });
 
 test('FLOW-9 the same rows into a second segment', async ({ page }) => {

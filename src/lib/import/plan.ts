@@ -126,7 +126,7 @@ export type PlanContext = {
    * round 1 party would be written a second time — a second email, a second set
    * of tickets, and seats spent twice out of a pool sized once.
    */
-  existingParties: ReadonlyMap<string, { seats: number }>;
+  existingParties: ReadonlyMap<string, { seats: number; cancelled: boolean }>;
   /**
    * Raw cell value to match, precomputed by the caller. Kept out of the planner
    * because `NAME_FUZZY` is `pg_trgm` similarity, and reimplementing it in
@@ -457,7 +457,9 @@ export function planImport(
         code: 'PARTY_ALREADY_IMPORTED',
         rowNumber: draft.rowNumbers[0],
         partyKey: key,
-        message: `${draft.contactName} was imported into this segment already, with the same ${existing.seats} seat${existing.seats === 1 ? '' : 's'}. Skipped.`,
+        message: existing.cancelled
+          ? `${draft.contactName} was imported into this segment already and then cancelled. Skipped - restore the existing registration rather than importing it again (§7.9).`
+          : `${draft.contactName} was imported into this segment already, with the same ${existing.seats} seat${existing.seats === 1 ? '' : 's'}. Skipped.`,
       });
     } else {
       /**

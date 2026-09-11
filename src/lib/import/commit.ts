@@ -74,6 +74,8 @@ async function writeBatch(
       playerId: p.playerId,
       seats: p.seats.length,
       blocked: p.blocked,
+      // Without this the batch record cannot say which parties it wrote (§9.1).
+      skipped: p.skipped,
     })),
   };
 

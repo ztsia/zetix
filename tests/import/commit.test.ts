@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
 import { createConcert, createPlayers, createSegment, createShow } from '../helpers/fixtures';
 import { buildPlanContext, loadSegmentTarget, matchPlayers } from '@/lib/import/context';
@@ -654,10 +654,46 @@ describe('re-importing a cumulative export', () => {
       planImport(rowsB, p, await buildPlanContext(target, p, rowsB)),
     ];
 
-    await Promise.allSettled([
-      commitImport({ target, filename: 'a.csv', plan: planA }),
-      commitImport({ target, filename: 'b.csv', plan: planB }),
-    ]);
+    /**
+     * **Two module registries, so two `postgres.js` pools.**
+     *
+     * Calling `commitImport` twice off the shared import would queue both on the
+     * one `max: 1` connection, and they would run one after the other however
+     * the code was written — a test that passes with the show lock deleted,
+     * which is no test at all. Separate registries give each commit its own
+     * connection and make the contention real.
+     */
+    vi.resetModules();
+    const modA = await import('@/lib/import/commit');
+    const clientA = await import('@/db/client');
+    vi.resetModules();
+    const modB = await import('@/lib/import/commit');
+    const clientB = await import('@/db/client');
+    expect(clientA.getSql()).not.toBe(clientB.getSql());
+
+    try {
+      const results = await Promise.allSettled([
+        modA.commitImport({ target, filename: 'a.csv', plan: planA }),
+        modB.commitImport({ target, filename: 'b.csv', plan: planB }),
+      ]);
+
+      /**
+       * Neither may fail. This is the assertion the show lock is holding up:
+       * without it the two transactions take their row locks in whatever order
+       * `claim_seats()` reaches them and Postgres kills one as a deadlock. With
+       * it, the second waits and then sees the first's registrations.
+       */
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(rejected.map((r) => String((r as PromiseRejectedResult).reason))).toEqual([]);
+
+      const created = results
+        .map((r) => (r.status === 'fulfilled' ? r.value.createdRegistrations : -1))
+        .sort();
+      expect(created).toEqual([0, 1]);
+    } finally {
+      await clientA.getSql().end();
+      await clientB.getSql().end();
+    }
 
     const [{ count: regs }] = await sql<{ count: string }[]>`
       select count(*) from registrations where segment_id = ${segmentId}

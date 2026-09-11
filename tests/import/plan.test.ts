@@ -685,7 +685,7 @@ describe('re-import dedup (§9.2)', () => {
     const plan = planImport(
       aliceRows(),
       profile({ player_match: null }),
-      publicCtx({ existingParties: new Map([[key, { seats: 2 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
     );
 
     expect(codes(plan)).toContain('PARTY_ALREADY_IMPORTED');
@@ -704,7 +704,7 @@ describe('re-import dedup (§9.2)', () => {
     const plan = planImport(
       aliceRows(),
       profile({ player_match: null }),
-      publicCtx({ existingParties: new Map([[key, { seats: 2 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
     );
 
     expect(plan.counts.seats).toBe(0);
@@ -718,7 +718,7 @@ describe('re-import dedup (§9.2)', () => {
         row({ [HEADERS.ts]: '2026-09-02T10:00:00Z', [HEADERS.contact]: 'Carol Lim', [HEADERS.email]: 'carol@example.com', [HEADERS.name]: 'Carol Lim', [HEADERS.type]: 'Extra' }),
       ],
       profile({ player_match: null }),
-      publicCtx({ existingParties: new Map([[key, { seats: 2 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
     );
 
     expect(plan.counts.parties).toBe(2);
@@ -736,7 +736,7 @@ describe('re-import dedup (§9.2)', () => {
     const plan = planImport(
       aliceRows(),
       profile({ player_match: null }),
-      publicCtx({ existingParties: new Map([[key, { seats: 3 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 3, cancelled: false }]]) }),
     );
 
     expect(plan.findings.find((f) => f.code === 'PARTY_SIZE_CHANGED')?.level).toBe('WARNING');
@@ -745,11 +745,27 @@ describe('re-import dedup (§9.2)', () => {
     expect(plan.counts.blocking).toBe(0);
   });
 
+  /**
+   * An admin looking at a cancelled party needs to know why the importer will
+   * not bring it back, or the skip reads as the importer losing the row.
+   */
+  it('says so when the party it is skipping was cancelled', () => {
+    const plan = planImport(
+      aliceRows(),
+      profile({ player_match: null }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: true }]]) }),
+    );
+
+    const finding = plan.findings.find((f) => f.code === 'PARTY_ALREADY_IMPORTED');
+    expect(finding?.message).toContain('cancelled');
+    expect(plan.parties[0].skipped).toBe(true);
+  });
+
   it('has no dedup key without a contact email, so it re-imports and says so', () => {
     const plan = planImport(
       [row({ [HEADERS.ts]: at, [HEADERS.contact]: 'Alice Tan', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Extra' })],
       profile({ player_match: null }),
-      publicCtx({ existingParties: new Map([[key, { seats: 2 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
     );
 
     expect(plan.parties[0].dedupKey).toBeNull();
@@ -767,7 +783,7 @@ describe('re-import dedup (§9.2)', () => {
       aliceRows(),
       profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
       context({
-        existingParties: new Map([[key, { seats: 2 }]]),
+        existingParties: new Map([[key, { seats: 2, cancelled: false }]]),
         playerMatches: new Map([['alice@example.com', match(9, 'Alice Tan')]]),
         playersWithExistingRegistration: new Set([9]),
       }),
@@ -784,7 +800,7 @@ describe('re-import dedup (§9.2)', () => {
       [row({ [HEADERS.ts]: '2026-09-05T10:00:00Z', [HEADERS.contact]: 'Alice Tan', [HEADERS.email]: 'alice@example.com', [HEADERS.name]: 'Alice Tan', [HEADERS.type]: 'Allocated' })],
       profile({ player_match: { column: HEADERS.email, strategy: 'EMAIL' } }),
       context({
-        existingParties: new Map([[key, { seats: 2 }]]),
+        existingParties: new Map([[key, { seats: 2, cancelled: false }]]),
         playerMatches: new Map([['alice@example.com', match(9, 'Alice Tan')]]),
         playersWithExistingRegistration: new Set([9]),
       }),
@@ -816,7 +832,7 @@ describe('re-import dedup (§9.2)', () => {
           group_key: 'Party',
         },
       }),
-      publicCtx({ existingParties: new Map([[key, { seats: 2 }]]) }),
+      publicCtx({ existingParties: new Map([[key, { seats: 2, cancelled: false }]]) }),
     );
 
     expect(plan.parties[0].skipped).toBe(true);

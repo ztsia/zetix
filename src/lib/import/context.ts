@@ -249,16 +249,18 @@ export async function loadExistingParties(
    * pool there would deadlock against the connection it is holding (`max: 1`).
    */
   executor: Executor = getDb(),
-): Promise<Map<string, { seats: number }>> {
+): Promise<Map<string, { seats: number; cancelled: boolean }>> {
   try {
     const rows = await executor.execute<{
       contact_email: string;
       requested_at: string;
       seats: number;
+      cancelled: boolean;
     }>(sql`
       select lower(r.contact_email::text) as contact_email,
              r.requested_at,
-             count(a.id)::int as seats
+             count(a.id)::int as seats,
+             bool_and(r.status = 'CANCELLED') as cancelled
         from registrations r
         left join attendees a
           on a.registration_id = r.id
@@ -272,7 +274,7 @@ export async function loadExistingParties(
     return new Map(
       rows.map((r) => [
         `${r.contact_email}|${new Date(r.requested_at).toISOString()}`,
-        { seats: Number(r.seats) },
+        { seats: Number(r.seats), cancelled: r.cancelled === true },
       ]),
     );
   } catch (error) {

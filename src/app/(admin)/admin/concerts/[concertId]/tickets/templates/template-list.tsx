@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, Pencil, Star } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Pencil, Star, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,8 @@ import {
 } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { TemplateSummary } from '@/lib/tickets/templates';
-import { duplicateTemplateAction, setDefaultTemplateAction } from './actions';
+import { DeleteButton } from '../../shows/delete-button';
+import { deleteTemplateAction, duplicateTemplateAction, setDefaultTemplateAction } from './actions';
 
 /**
  * The template list (spec/tickets.md §10.3).
@@ -156,6 +157,35 @@ export function TemplateList({
                       <Star />
                       Make default
                     </Button>
+                    {/*
+                      `DeleteButton` keeps a refusal inside the dialog, which is
+                      what this needs: "5 tickets are pinned to this version" is
+                      not a failure to report and dismiss, it is the decision
+                      the admin came here to make. Its `FormState` carries the
+                      sentence verbatim, so the adapter below only reshapes the
+                      result — it never rewrites the message.
+                    */}
+                    <DeleteButton
+                      trigger={
+                        <Button variant="outline" size="sm" className="text-destructive">
+                          <Trash2 />
+                          Delete
+                        </Button>
+                      }
+                      title={`Delete ${template.name} v${template.version}?`}
+                      description="The design is removed from this list. Tickets already issued are pinned to the version they were rendered with and are unaffected — a template any ticket is pinned to cannot be deleted at all."
+                      confirmLabel="Delete template"
+                      action={async () => {
+                        const outcome = await deleteTemplateAction({
+                          concertId,
+                          templateId: template.id,
+                        });
+                        return {
+                          error: outcome.ok ? null : String(outcome.error),
+                          message: outcome.ok ? String(outcome.message ?? '') : null,
+                        };
+                      }}
+                    />
                   </ButtonGroup>
                 </TableCell>
               </TableRow>

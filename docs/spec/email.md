@@ -86,13 +86,33 @@ asking where their ticket is.
 
 So the console carries a **queue banner** above the page content on every admin route:
 
-- **Its source of truth is `email_outbox`, not client state.** The shell reads the count of `QUEUED`
-  rows on render, so the banner survives a page reload, a closed tab and a dead laptop — the question
+- **Its source of truth is `email_outbox`, not client state.** The shell reads the outstanding rows on
+  render, so the banner survives a page reload, a closed tab and a dead laptop — the question
   "is there an unfinished blast?" is answered by the database. Live progress during a run comes from
   what each dispatch call returns, exactly as §11.2 step 3 requires; it is never a client-side
   estimate.
 - **It offers Resume when rows are queued and nothing is sending**, which is the state a stopped blast
   leaves behind and the state the daily cron would otherwise be the first to clear.
+- **Resume is offered only for rows the dispatcher would actually claim**, which is narrower than
+  "queued" and the distinction is the whole of this bullet. A row that failed with attempts left goes
+  back to `QUEUED` with `scheduled_for` in the future, and the claim query skips it until it is due;
+  a row stranded in `SENDING` is claimable only once the reclaim window has passed. Counting either as
+  resumable offers a button that cannot do the thing it names, which is the reason the daily cap was
+  given a state of its own rather than a Resume. So the banner reports the outbox in the states an
+  admin can act on differently:
+
+  | State | Banner says | Resume |
+  |---|---|---|
+  | `QUEUED` and due, or `SENDING` past the reclaim window | an unfinished blast | **yes** |
+  | `QUEUED`, waiting out its retry backoff | it will retry on its own | no |
+  | `SENDING` inside the reclaim window | it is in flight | no |
+  | `FAILED` — out of `email.max_attempts` | it was never delivered, resend it | no |
+  | `DRAFT` | nothing — a batch nobody confirmed is not a blast | no |
+
+  **A `FAILED` row still appears.** Nothing retries it and Resume cannot reach it, but it is a ticket
+  nobody received, and going quiet about it is the silence this section exists to end — the most
+  complete form of it. It clears by an explicit resend or by §11.6's mark-as-delivered, never on its
+  own.
 - **Dismiss hides the banner. It never stops the blast.** Stopping is a separate, confirmed action
   (`surfaces.md` §15.1), because a control that silently halts delivery halfway through a send is
   worse than no control at all.

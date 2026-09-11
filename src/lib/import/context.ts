@@ -2,7 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
-import { segmentPool } from '@/db/allocation';
+import { segmentPool, type Executor } from '@/db/allocation';
 import { resolveSetting } from '@/db/settings';
 import type { PlanContext, PlayerMatch, SheetRow } from './plan';
 import type { MappingProfile } from './profile';
@@ -224,15 +224,34 @@ export async function loadPlayersWithRegistration(showId: number): Promise<Set<n
  * build a key no planner lookup could ever find, and that party would import
  * again on every round.
  *
- * Cancelled and soft-deleted registrations are excluded on purpose: a party the
- * admin cancelled should re-import if it comes back in a later export, which is
- * the same predicate `loadPlayersWithRegistration` uses one function above.
+ * **A cancelled registration still counts as imported.** §9.1 re-reads the sheet
+ * only to pick up *new* responses, and a response the admin has since cancelled
+ * is not a new one — re-importing it would overturn that decision silently, and
+ * `restoreRegistration()` (allocation.md §7.9) would then leave one form
+ * response holding two live registrations and two sets of tickets.
+ *
+ * This is deliberately **not** the predicate `loadPlayersWithRegistration` uses
+ * one function above. That one asks whether a player currently holds a live
+ * registration, for the §7.6 one-per-player rule; this one asks whether this
+ * response has ever been imported here. Different questions, different answers
+ * for a cancelled row.
+ *
+ * Soft-deleted registrations are excluded, and that *is* a re-import: a delete
+ * means the row should never have existed (allocation.md §7.6) — a duplicate, a
+ * test party, an entry against the wrong show — so a later export carrying it
+ * is bringing in a response this segment does not have.
  */
 export async function loadExistingParties(
   segmentId: number,
+  /**
+   * Defaults to the pool. The commit passes its own transaction so the re-check
+   * it does under the show lock sees a concurrent run's writes; reading off the
+   * pool there would deadlock against the connection it is holding (`max: 1`).
+   */
+  executor: Executor = getDb(),
 ): Promise<Map<string, { seats: number }>> {
   try {
-    const rows = await getDb().execute<{
+    const rows = await executor.execute<{
       contact_email: string;
       requested_at: string;
       seats: number;
@@ -248,7 +267,6 @@ export async function loadExistingParties(
          and r.contact_email is not null
          and r.requested_at is not null
          and r.deleted_at is null
-         and r.status <> 'CANCELLED'
        group by r.contact_email, r.requested_at
     `);
     return new Map(

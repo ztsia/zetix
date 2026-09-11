@@ -77,8 +77,20 @@ export function toReportRows(plan: PlanResponse): ReportRow[] {
         attendee: seat.fullName ?? `Guest of ${party.contactName}`,
         allocationType: seat.allocationType,
         promoted: seat.promotedFromBase,
-        level: finding?.level ?? (party.blocked ? 'BLOCKING' : 'OK'),
-        message: finding?.message ?? (party.blocked ? 'Skipped: this party is blocked.' : ''),
+        /**
+         * The party-level fallbacks matter as much as the finding itself: a
+         * finding is attached to the party's *first* row, so without these the
+         * other rows of a blocked or skipped party read as OK — the table
+         * saying a row will import when the run will not write it.
+         */
+        level: finding?.level ?? (party.blocked ? 'BLOCKING' : party.skipped ? 'INFO' : 'OK'),
+        message:
+          finding?.message ??
+          (party.blocked
+            ? 'Skipped: this party is blocked.'
+            : party.skipped
+              ? 'Skipped: this party is already imported.'
+              : ''),
       });
     }
   }
@@ -411,6 +423,12 @@ export function DryRunReport({
             <p className="mt-1 text-sm font-medium tabular-nums">
               {plan.counts.skippedParties} already imported ·{' '}
               {plan.counts.parties - plan.counts.skippedParties} new
+            </p>
+          ) : null}
+          {plan.counts.skippedParties === plan.counts.parties && plan.counts.parties > 0 ? (
+            <p className="text-muted-foreground mt-1 text-sm">
+              Nothing new to import — this file has already been loaded into this segment. Nothing
+              further to do.
             </p>
           ) : null}
           <p className="text-muted-foreground mt-1 text-sm">

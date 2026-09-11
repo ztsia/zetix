@@ -531,8 +531,14 @@ describe('re-importing a cumulative export', () => {
     expect(poolAfterSecond.open_seats).toBe(poolAfterFirst.open_seats);
   });
 
-  /** A cancelled party is allowed back in if it reappears in a later export. */
-  it('re-imports a party whose registration was cancelled', async () => {
+  /**
+   * A cancelled party stays imported. §9.1 re-reads the sheet only for *new*
+   * responses, and a cancellation is an admin decision about an existing one —
+   * re-importing would overturn it silently, and because a cancellation "stays
+   * in the record and can be restored" (§7.9) the restore would then leave one
+   * form response holding two live registrations and two sets of tickets.
+   */
+  it('does not re-import a party whose registration was cancelled', async () => {
     const { segmentId } = await publicSegment(100);
     await runImport(segmentId, alice(), 'round1.csv');
     await sql`update registrations set status = 'CANCELLED' where segment_id = ${segmentId}`;
@@ -540,7 +546,126 @@ describe('re-importing a cumulative export', () => {
     line = 2;
     const second = await runImport(segmentId, alice(), 'again.csv');
 
+    expect(second.plan.counts.skippedParties).toBe(1);
+    expect(second.outcome.createdRegistrations).toBe(0);
+
+    const [{ count: regs }] = await sql<{ count: string }[]>`
+      select count(*) from registrations where segment_id = ${segmentId}
+    `;
+    expect(Number(regs)).toBe(1);
+  });
+
+  /**
+   * A delete is the other direction: the row should never have existed (§7.6) —
+   * a duplicate, a test party, the wrong show — so an export still carrying that
+   * response is bringing in something this segment genuinely does not have.
+   */
+  it('re-imports a party whose registration was deleted', async () => {
+    const { segmentId } = await publicSegment(100);
+    await runImport(segmentId, alice(), 'round1.csv');
+    await sql`update registrations set deleted_at = now() where segment_id = ${segmentId}`;
+
+    line = 2;
+    const second = await runImport(segmentId, alice(), 'again.csv');
+
     expect(second.plan.counts.skippedParties).toBe(0);
     expect(second.outcome.createdRegistrations).toBe(1);
+  });
+
+  /**
+   * The dedup is scoped to the target segment, never the whole show. This show
+   * is hybrid — one hall, a public block and a player-invited one, loaded by
+   * running the import twice (§9.1) — so the same person appearing in both
+   * files is two registrations, not a duplicate.
+   */
+  it('does not skip a party imported into the other segment of a hybrid show', async () => {
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 200);
+    const pub = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 100, extrasPolicy: 'AUTO_FCFS' });
+    const players = await createSegment(showId, { audienceMode: 'PLAYER_INVITED', capacity: 100, extrasPolicy: 'AUTO_FCFS' });
+
+    await runImport(pub, alice(), 'public.csv');
+    line = 2;
+    const second = await runImport(players, alice(), 'players.csv');
+
+    expect(second.plan.counts.skippedParties).toBe(0);
+    expect(second.outcome.createdRegistrations).toBe(1);
+  });
+
+  /**
+   * The §9.3 transform is not allowed to switch the dedup off. The database side
+   * always lowers, so a profile with `lowercase_emails` off would otherwise build
+   * a key nothing could match — and the failure looks exactly like success.
+   */
+  it('recognises a party when the profile does not lowercase emails', async () => {
+    const { segmentId } = await publicSegment(100);
+    const target = await loadSegmentTarget(segmentId);
+
+    /** Stores the address exactly as the sheet spells it — mixed case and all. */
+    const asIs = parseMappingProfile({
+      columns: { requested_at: H.ts, contact_name: H.contact, contact_email: H.email, attendee_name: H.name, allocation_type: H.type },
+      allocation_type_values: { BASE: ['Allocated'], EXTRA: ['Extra'] },
+      default_allocation_type: 'EXTRA',
+      player_match: null,
+      transforms: { trim_whitespace: true, lowercase_emails: false, titlecase_names: false },
+    });
+    const mixed = () => [
+      row({ [H.ts]: at, [H.contact]: 'Alice Tan', [H.email]: 'Alice@Example.com', [H.name]: 'Alice Tan', [H.type]: 'Extra' }),
+      row({ [H.ts]: at, [H.contact]: 'Alice Tan', [H.email]: 'Alice@Example.com', [H.name]: 'Bob Tan', [H.type]: 'Extra' }),
+    ];
+
+    const first = mixed();
+    await commitImport({
+      target,
+      filename: 'round1.csv',
+      plan: planImport(first, asIs, await buildPlanContext(target, asIs, first)),
+    });
+
+    // Both halves of the comparison are exercised: the row on disk carries
+    // upper case, and so does the sheet. Drop the lower() on either side and
+    // this party imports a second time.
+    const [stored] = await sql<{ contact_email: string }[]>`
+      select contact_email::text from registrations where segment_id = ${segmentId}
+    `;
+    expect(stored.contact_email).toBe('Alice@Example.com');
+
+    line = 2;
+    const second = mixed();
+    const plan = planImport(second, asIs, await buildPlanContext(target, asIs, second));
+
+    expect(plan.counts.skippedParties).toBe(1);
+  });
+
+  /**
+   * Two commits of the same file started at once. The planner read its
+   * `existingParties` outside the transaction, so without a re-check under the
+   * show lock both would see nothing and both would write.
+   */
+  it('writes once when the same file is committed twice concurrently', async () => {
+    const { segmentId } = await publicSegment(100);
+    const target = await loadSegmentTarget(segmentId);
+    const p = profile({ player_match: null });
+
+    const rowsA = alice();
+    line = 2;
+    const rowsB = alice();
+    const [planA, planB] = [
+      planImport(rowsA, p, await buildPlanContext(target, p, rowsA)),
+      planImport(rowsB, p, await buildPlanContext(target, p, rowsB)),
+    ];
+
+    await Promise.allSettled([
+      commitImport({ target, filename: 'a.csv', plan: planA }),
+      commitImport({ target, filename: 'b.csv', plan: planB }),
+    ]);
+
+    const [{ count: regs }] = await sql<{ count: string }[]>`
+      select count(*) from registrations where segment_id = ${segmentId}
+    `;
+    const [{ count: seats }] = await sql<{ count: string }[]>`
+      select count(*) from attendees where segment_id = ${segmentId}
+    `;
+    expect(Number(regs)).toBe(1);
+    expect(Number(seats)).toBe(2);
   });
 });

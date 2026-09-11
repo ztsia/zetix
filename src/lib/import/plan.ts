@@ -400,8 +400,17 @@ export function planImport(
          * timestamp, and those are what the database stored. Keying dedup off
          * the grouping key instead would make a sheet that gained a group
          * column re-import everything it had already committed.
+         *
+         * **Lowercased here regardless of `transforms.lowercaseEmails`.** The
+         * database side of this comparison always lowers (`loadExistingParties`),
+         * and this is a `Map` key rather than a SQL comparison, so `citext` does
+         * not save it. A profile with that transform off would otherwise build a
+         * key no lookup could match and turn the dedup silently off — the one
+         * failure mode that looks exactly like working correctly.
          */
-        dedupKey: contactEmail ? `${contactEmail}|${requestedAt.toISOString()}` : null,
+        dedupKey: contactEmail
+          ? `${contactEmail.toLowerCase()}|${requestedAt.toISOString()}`
+          : null,
         skipped: false,
       };
       drafts.set(key, draft);

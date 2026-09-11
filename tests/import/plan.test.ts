@@ -739,7 +739,7 @@ describe('re-import dedup (§9.2)', () => {
       publicCtx({ existingParties: new Map([[key, { seats: 3 }]]) }),
     );
 
-    expect(codes(plan)).toContain('PARTY_SIZE_CHANGED');
+    expect(plan.findings.find((f) => f.code === 'PARTY_SIZE_CHANGED')?.level).toBe('WARNING');
     expect(codes(plan)).not.toContain('PARTY_ALREADY_IMPORTED');
     expect(plan.parties[0].skipped).toBe(true);
     expect(plan.counts.blocking).toBe(0);

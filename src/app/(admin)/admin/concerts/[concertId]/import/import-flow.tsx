@@ -1048,9 +1048,10 @@ export function ImportFlow({
                     disabled={
                       busy ||
                       liveParties(plan.parties).length === 0 ||
-                      plan.findings.some(
-                        (f) => f.rowNumber === undefined && f.level === 'BLOCKING',
-                      )
+                      // Any blocking finding, not only a file-level one (§9.6).
+                      // The server refuses the same commit independently; this
+                      // is the half that stops the admin reaching for it.
+                      plan.counts.blocking > 0
                     }
                   >
                     Commit {liveParties(plan.parties).length} registrations

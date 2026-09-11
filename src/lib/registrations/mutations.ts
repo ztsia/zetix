@@ -614,6 +614,122 @@ export async function cancelRegistration(registrationId: number): Promise<Cancel
   }
 }
 
+export type DeleteResult = {
+  /** Seats returned to the segment by the delete. */
+  seatsFreed: number;
+  /** Rows soft-deleted, so the confirmation can name the party. */
+  attendeesDeleted: number;
+  /** Draft or queued messages withdrawn, so nothing is sent to a deleted party. */
+  outboxCancelled: number;
+};
+
+/**
+ * Thrown when a party has already been admitted, so a delete would rewrite
+ * attendance rather than correct a mistake.
+ */
+export class AdmittedAttendeeError extends Error {
+  constructor(readonly admitted: number) {
+    super(
+      `${admitted} of this party's guests ${admitted === 1 ? 'has' : 'have'} already been ` +
+        'admitted. Revert the check-in on the check-in screen first, then delete — ' +
+        'or cancel the registration instead, which keeps the record.',
+    );
+    this.name = 'AdmittedAttendeeError';
+  }
+}
+
+/**
+ * Delete a registration and its seats (§7.6's manual CRUD).
+ *
+ * **This is not "cancel".** The two are different facts and the system needs
+ * both: a cancellation says a real booking is not coming — it frees seats,
+ * stays in the record, and can be restored. A delete says the row should never
+ * have existed: a duplicate import, a test party, an entry against the wrong
+ * show. Only the second should vanish from the screens, and only the second is
+ * reached by this.
+ *
+ * **The delete is soft** (decision 7): `deleted_at` is stamped and nothing is
+ * removed. That is not merely a retention preference here — `qr_token` is
+ * immutable for life (decision 28) and a hard delete would let Postgres hand
+ * the same `ticket_code` out again, so a printed ticket in someone's pocket
+ * could come to name a different guest.
+ *
+ * **The seats free themselves.** `claim_seats()`, `segment_pool()`,
+ * `promote_seats()` and `manifest_for_show()` all filter
+ * `a.deleted_at is null and r.deleted_at is null` already (`0001`, `0003`,
+ * `0005`), so a deleted party stops occupying the segment and stops appearing
+ * at the door without any of them being told. The count below is therefore
+ * reported, not enacted.
+ *
+ * **Queued mail is withdrawn in the same transaction**, exactly as
+ * {@link cancelRegistration} does. A draft left behind would be sent by the
+ * next dispatcher run to a registrant whose booking the admin has just
+ * deleted, carrying tickets for seats that no longer exist.
+ *
+ * @throws AdmittedAttendeeError when a seat holds a live check-in.
+ */
+export async function deleteRegistration(registrationId: number): Promise<DeleteResult> {
+  try {
+    return await getDb().transaction(async (tx) => {
+      const rows = await tx.execute<{ freed: number; admitted: number }>(sql`
+        select (select count(*)::int from attendees a
+                 where a.registration_id = r.id
+                   and a.status = 'CONFIRMED'
+                   and a.deleted_at is null) as freed,
+               (select count(*)::int from check_ins ci
+                  join attendees a on a.id = ci.attendee_id
+                 where a.registration_id = r.id
+                   and a.deleted_at is null
+                   and ci.reverted_at is null) as admitted
+          from registrations r
+         where r.id = ${registrationId}
+           and r.deleted_at is null
+      `);
+      if (rows.length === 0) {
+        return { seatsFreed: 0, attendeesDeleted: 0, outboxCancelled: 0 };
+      }
+
+      /**
+       * A guest who is physically inside the hall is not a row that should
+       * never have existed. Refusing here rather than cascading keeps the
+       * append-only check-in log honest (decision 7): deleting the attendee
+       * would leave an admission referring to nobody, and the arrivals count
+       * would silently drop a person the ushers actually saw.
+       */
+      if (rows[0].admitted > 0) throw new AdmittedAttendeeError(rows[0].admitted);
+
+      const deleted = await tx.execute<{ id: string }>(sql`
+        update attendees
+           set deleted_at = now()
+         where registration_id = ${registrationId}
+           and deleted_at is null
+        returning id
+      `);
+
+      await tx.execute(sql`
+        update registrations set deleted_at = now() where id = ${registrationId}
+      `);
+
+      const withdrawn = await tx.execute<{ id: string }>(sql`
+        update email_outbox
+           set status = 'CANCELLED'
+         where registration_id = ${registrationId}
+           and status in ('DRAFT', 'QUEUED')
+        returning id
+      `);
+
+      return {
+        seatsFreed: rows[0].freed,
+        attendeesDeleted: deleted.length,
+        outboxCancelled: withdrawn.length,
+      };
+    });
+  } catch (error) {
+    if (error instanceof AdmittedAttendeeError) throw error;
+    rethrowDbError(error);
+  }
+}
+
 export type RestoreResult = {
   confirmed: number;
   pending: number;

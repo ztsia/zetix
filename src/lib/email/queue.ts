@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { escapeMergeValues, renderTemplate, type MergeContext } from './render';
+import { carriesTickets } from './templates';
 
 /**
  * Queueing a blast, and the three mechanisms that make pressing Send twice
@@ -31,6 +32,16 @@ export type BlastSplit = {
   pendingAttendees: number;
   /** How many *messages* a blast would queue — the number that matters. */
   pendingRegistrations: number;
+  /**
+   * Seats held back because their party has a ticket still to be issued, and
+   * the messages they account for.
+   *
+   * On screen next to `pendingAttendees`, because the difference between the
+   * two is the whole reason a blast can queue fewer messages than the admin
+   * expected. A silent gap there is how someone concludes the blast is broken.
+   */
+  unissuedAttendees: number;
+  unissuedRegistrations: number;
   failedRetryable: number;
 };
 
@@ -54,6 +65,50 @@ const HAS_UNDELIVERED_SEAT = sql`
   )
 `;
 
+/**
+ * A party holding at least one seat whose ticket has not been issued.
+ *
+ * **Such a registration is not queued at all**, rather than queued and failed
+ * at dispatch. `buildPartyAttachments()` renders *every* confirmed seat in the
+ * party and throws `UnissuedTicketError` if any one of them has no pinned
+ * template, so a half-issued party could never have been sent — it could only
+ * fail later, after its message had been drafted, reviewed and confirmed.
+ *
+ * Both halves are checked because both are needed to render: `qr_token` is
+ * minted first and `ticket_template_id` is pinned second (`tickets/issue.ts`),
+ * and `loadTicket()` returns null without the pin.
+ *
+ * This also closes the way a stale link reached a real inbox. `body_md` is
+ * rendered at queue time and sent verbatim (decision 23), so a draft prepared
+ * before the issue step froze a `ticket_links` value for tickets that did not
+ * exist yet; issuing afterwards did not go back and update it.
+ */
+const HAS_UNISSUED_SEAT = sql`
+  exists (
+    select 1 from attendees a
+     where a.registration_id = r.id
+       and a.status = 'CONFIRMED'
+       and a.deleted_at is null
+       and (a.qr_token is null or a.ticket_template_id is null)
+  )
+`;
+
+/**
+ * **Only a message that would carry a PDF waits for one.**
+ *
+ * `TICKET_BEARING` is three of the eight templates; a reminder, a decline or a
+ * cancellation has nothing to attach, and holding those back until tickets are
+ * issued would block exactly the messages an admin sends *because* someone has
+ * no ticket. The same predicate decides whether attachments are built at all
+ * (`dispatch.ts`), so the two cannot disagree.
+ */
+const excludeUnissued = (templateKey: string) =>
+  carriesTickets(templateKey) ? sql`and not ${HAS_UNISSUED_SEAT}` : sql``;
+
+/** The counterpart: nothing is held back when nothing would be attached. */
+const onlyUnissued = (templateKey: string) =>
+  carriesTickets(templateKey) ? sql`and ${HAS_UNISSUED_SEAT}` : sql`and false`;
+
 const IS_LIVE_REGISTRATION = sql`
   r.status = 'CONFIRMED' and r.deleted_at is null
 `;
@@ -72,6 +127,8 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
       already_sent: number;
       pending_attendees: number;
       pending_registrations: number;
+      unissued_attendees: number;
+      unissued_registrations: number;
       failed_retryable: number;
     }>(sql`
       select
@@ -91,11 +148,25 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
           where a.segment_id = ${target.segmentId}
             and a.status = 'CONFIRMED' and a.deleted_at is null
             and a.ticket_sent_at is null
-            and ${IS_LIVE_REGISTRATION}) as pending_attendees,
+            and ${IS_LIVE_REGISTRATION}
+            ${excludeUnissued(target.templateKey)}) as pending_attendees,
         (select count(*)::int from registrations r
           where r.segment_id = ${target.segmentId}
             and ${IS_LIVE_REGISTRATION}
-            and ${HAS_UNDELIVERED_SEAT}) as pending_registrations,
+            and ${HAS_UNDELIVERED_SEAT}
+            ${excludeUnissued(target.templateKey)}) as pending_registrations,
+        (select count(*)::int from attendees a
+           join registrations r on r.id = a.registration_id
+          where a.segment_id = ${target.segmentId}
+            and a.status = 'CONFIRMED' and a.deleted_at is null
+            and a.ticket_sent_at is null
+            and ${IS_LIVE_REGISTRATION}
+            ${onlyUnissued(target.templateKey)}) as unissued_attendees,
+        (select count(*)::int from registrations r
+          where r.segment_id = ${target.segmentId}
+            and ${IS_LIVE_REGISTRATION}
+            and ${HAS_UNDELIVERED_SEAT}
+            ${onlyUnissued(target.templateKey)}) as unissued_registrations,
         (select count(*)::int from email_outbox o
            join registrations r on r.id = o.registration_id
           where r.segment_id = ${target.segmentId}
@@ -109,6 +180,8 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
       alreadySent: row?.already_sent ?? 0,
       pendingAttendees: row?.pending_attendees ?? 0,
       pendingRegistrations: row?.pending_registrations ?? 0,
+      unissuedAttendees: row?.unissued_attendees ?? 0,
+      unissuedRegistrations: row?.unissued_registrations ?? 0,
       failedRetryable: row?.failed_retryable ?? 0,
     };
   } catch (error) {
@@ -185,6 +258,7 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
      where r.segment_id = ${target.segmentId}
        and ${IS_LIVE_REGISTRATION}
        and ${HAS_UNDELIVERED_SEAT}
+       ${excludeUnissued(target.templateKey)}
      order by r.requested_at, r.id
   `);
 
@@ -358,6 +432,7 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
         join registrations r on r.id = v.registration_id
        where ${IS_LIVE_REGISTRATION}
          and ${HAS_UNDELIVERED_SEAT}
+         ${excludeUnissued(target.templateKey)}
       on conflict do nothing
       returning id
     `);

@@ -26,16 +26,24 @@ import { queueBlast } from '@/lib/email/queue';
  * The fix is in the query — untokened seats never enter the array — and this
  * test is deliberately at the database level, because a unit test of
  * `ticketLinks()` cannot see the driver behaviour that caused it.
+ *
+ * **The template here carries no tickets, and that is the point.** §11.4 now
+ * refuses to queue a ticket-bearing message for a party with a seat still to
+ * issue, so `public_ticket` can no longer reach this code path at all. A
+ * reminder can: it attaches nothing, is therefore never held back, and may
+ * still print `{{ ticket_links }}` for whatever the party does hold. That is
+ * the one route left by which a null token could reach a reader, so it is the
+ * one this guards.
  */
 
-const TEMPLATE = 'public_ticket';
+const TEMPLATE = 'reminder';
 const TOKEN = 'Ada00000000000000000a1'; // the minted shape: [0-9A-Za-z]{22}
 
 async function seedTemplate() {
   await sql`
     insert into email_templates (key, name, subject, body_md)
     values (
-      ${TEMPLATE}, 'Public ticket',
+      ${TEMPLATE}, 'Reminder',
       'Your tickets for {{ concert.name }}',
       ${'Guests: {{ attendee_names }}\n\n{{ ticket_links }}'}
     )

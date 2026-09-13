@@ -5,6 +5,7 @@ import {
   createRegistration,
   createSegment,
   createShow,
+  issueTickets,
   seedAttendees,
 } from '../helpers/fixtures';
 import { blastSplit, queueBlast } from '@/lib/email/queue';
@@ -59,6 +60,9 @@ async function seedSegment(parties: number) {
     });
     registrationIds.push(registrationId);
   }
+  // A ticket-bearing blast refuses a party with a seat still to issue (§11.4),
+  // so an unissued fixture would queue nothing and prove nothing here.
+  await issueTickets(concertId, showId);
   return { concertId, showId, segmentId, registrationIds };
 }
 
@@ -152,7 +156,7 @@ describe('who a blast selects', () => {
    * DRAFT/QUEUED/SENDING — which is exactly why the index is partial.
    */
   it('re-queues a party that gained a seat after its first message went out', async () => {
-    const { showId, segmentId, registrationIds } = await seedSegment(1);
+    const { concertId, showId, segmentId, registrationIds } = await seedSegment(1);
     await queueBlast({ segmentId, templateKey: TEMPLATE });
     await sql`update email_outbox set status = 'SENT', sent_at = now()`;
     await sql`update attendees set ticket_sent_at = now(), ticket_sent_source = 'EMAIL'`;
@@ -164,6 +168,13 @@ describe('who a blast selects', () => {
       count: 1,
       allocationType: 'EXTRA',
     });
+
+    // ...but not until the new seat has a ticket of its own. The message would
+    // carry every ticket the party holds, and one PDF short is the failure
+    // §11.4 item 4 exists to stop.
+    expect((await queueBlast({ segmentId, templateKey: TEMPLATE })).queued).toBe(0);
+
+    await issueTickets(concertId, showId);
 
     expect((await queueBlast({ segmentId, templateKey: TEMPLATE })).queued).toBe(1);
     expect(await countRows(segmentId)).toBe(2);

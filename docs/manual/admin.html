@@ -1,0 +1,1922 @@
+<title>Concert Admin Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Karla:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* ---------------------------------------------------------------
+     Concert Admin Handbook
+     Palette follows the console's own tokens: a neutral, paper-warm
+     ground, one ink-violet accent, and the three door-signal colours
+     taken verbatim from src/app/globals.css so a colour means the
+     same thing here as it does on an usher's phone.
+     --------------------------------------------------------------- */
+
+  :root {
+    color-scheme: light;
+
+    --ground:      #FAF9F7;
+    --surface:     #FFFFFF;
+    --surface-2:   #F3F1EC;
+    --ink:         #1B1A18;
+    --ink-2:       #57554F;
+    --ink-3:       #86837B;
+    --rule:        #E4E1DA;
+    --rule-strong: #CBC7BD;
+    --accent:      #2E2A66;
+    --accent-ink:  #FFFFFF;
+    --accent-soft: #ECEAF7;
+    --accent-line: #C8C3E6;
+
+    /* Meaning colours. Separate from the accent, on purpose. */
+    --ok:        oklch(0.48 0.13 148);
+    --ok-soft:   oklch(0.95 0.04 148);
+    --warn:      oklch(0.52 0.11 72);
+    --warn-soft: oklch(0.96 0.05 82);
+    --bad:       oklch(0.50 0.19 27);
+    --bad-soft:  oklch(0.96 0.03 27);
+
+    /* The door signals, exactly as the scanner paints them. */
+    --door-green: oklch(0.65 0.19 145);
+    --door-amber: oklch(0.78 0.16 80);
+    --door-red:   oklch(0.58 0.24 27);
+    --door-green-ink: #0C1A10;
+    --door-amber-ink: #1E1704;
+    --door-red-ink:   #FFFFFF;
+
+    --shadow: 0 1px 2px rgb(27 26 24 / 0.05), 0 8px 24px -16px rgb(27 26 24 / 0.25);
+
+    --serif: 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+    --sans:  'Karla', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --mono:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+
+      --ground:      #131311;
+      --surface:     #1C1B18;
+      --surface-2:   #24231F;
+      --ink:         #F2F0EA;
+      --ink-2:       #B5B1A7;
+      --ink-3:       #8A877E;
+      --rule:        #32302B;
+      --rule-strong: #4A473F;
+      --accent:      #ABA4F0;
+      --accent-ink:  #17153A;
+      --accent-soft: #25234A;
+      --accent-line: #403D74;
+
+      --ok:        oklch(0.78 0.15 150);
+      --ok-soft:   oklch(0.30 0.06 150);
+      --warn:      oklch(0.82 0.13 82);
+      --warn-soft: oklch(0.31 0.06 75);
+      --bad:       oklch(0.72 0.17 25);
+      --bad-soft:  oklch(0.29 0.07 25);
+
+      --door-green-ink: #08150B;
+      --door-amber-ink: #1E1704;
+      --door-red-ink:   #FFFFFF;
+
+      --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 28px -18px rgb(0 0 0 / 0.8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --ground:      #131311;
+    --surface:     #1C1B18;
+    --surface-2:   #24231F;
+    --ink:         #F2F0EA;
+    --ink-2:       #B5B1A7;
+    --ink-3:       #8A877E;
+    --rule:        #32302B;
+    --rule-strong: #4A473F;
+    --accent:      #ABA4F0;
+    --accent-ink:  #17153A;
+    --accent-soft: #25234A;
+    --accent-line: #403D74;
+
+    --ok:        oklch(0.78 0.15 150);
+    --ok-soft:   oklch(0.30 0.06 150);
+    --warn:      oklch(0.82 0.13 82);
+    --warn-soft: oklch(0.31 0.06 75);
+    --bad:       oklch(0.72 0.17 25);
+    --bad-soft:  oklch(0.29 0.07 25);
+
+    --door-green-ink: #08150B;
+    --door-amber-ink: #1E1704;
+    --door-red-ink:   #FFFFFF;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 28px -18px rgb(0 0 0 / 0.8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible,
+  button:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  /* ---------- shell ---------- */
+
+  .page {
+    max-width: 1180px;
+    margin-inline: auto;
+    padding-inline: 20px;
+    padding-block: 0 96px;
+  }
+
+  .masthead {
+    padding-block: 56px 32px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .masthead h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(2.4rem, 6vw, 3.9rem);
+    line-height: 1.04;
+    letter-spacing: -0.018em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: clamp(1.05rem, 2.3vw, 1.3rem);
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  .masthead-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 40px;
+    padding-top: 40px;
+  }
+
+  @media (min-width: 940px) {
+    .layout {
+      grid-template-columns: 224px minmax(0, 1fr);
+      gap: 56px;
+    }
+  }
+
+  /* ---------- contents rail ---------- */
+
+  .rail { min-width: 0; }
+
+  @media (min-width: 940px) {
+    .rail {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      max-height: calc(100vh - 48px);
+      overflow-y: auto;
+    }
+  }
+
+  .rail-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+  }
+
+  .rail ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .rail a {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 8px;
+    margin-inline: -8px;
+    border-radius: 5px;
+    text-decoration: none;
+    color: var(--ink-2);
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .rail a:hover { background: var(--surface-2); color: var(--ink); }
+
+  .rail .n {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    min-width: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rail-break {
+    margin: 16px 0 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .rail-mobile > summary {
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    list-style: none;
+  }
+  .rail-mobile > summary::-webkit-details-marker { display: none; }
+  .rail-mobile > summary::after { content: ' ▾'; color: var(--ink-3); }
+  .rail-mobile[open] > summary::after { content: ' ▴'; }
+  .rail-mobile > div { padding: 16px 6px 4px; }
+
+  @media (min-width: 940px) {
+    .rail-mobile > summary { display: none; }
+    .rail-mobile > div { padding: 0; }
+  }
+
+  /* ---------- body ---------- */
+
+  main { min-width: 0; }
+
+  .section {
+    padding-block: 8px 44px;
+    scroll-margin-top: 20px;
+  }
+
+  .section + .section { border-top: 1px solid var(--rule); padding-top: 40px; }
+
+  .section-head {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+
+  .phase-mark {
+    flex: none;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    margin-top: 4px;
+  }
+
+  .phase-mark.ref {
+    background: transparent;
+    color: var(--ink-3);
+    border: 1px dashed var(--rule-strong);
+    font-size: 15px;
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(1.6rem, 3.6vw, 2.15rem);
+    line-height: 1.15;
+    letter-spacing: -0.014em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .section-sub {
+    font-size: 14px;
+    color: var(--ink-3);
+    margin: 2px 0 0;
+    font-family: var(--mono);
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 1.0rem;
+    letter-spacing: 0.005em;
+    margin: 30px 0 0;
+    color: var(--ink);
+  }
+
+  h4 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin: 20px 0 0;
+    color: var(--ink-2);
+  }
+
+  p, ul, ol, dl { max-width: 68ch; }
+
+  p { margin: 12px 0 0; color: var(--ink-2); }
+  p strong, li strong, dd strong { color: var(--ink); font-weight: 600; }
+
+  .lead { color: var(--ink); font-size: 1.06rem; }
+
+  ul, ol { margin: 12px 0 0; padding-left: 1.25em; color: var(--ink-2); }
+  li { margin-top: 7px; }
+  li::marker { color: var(--ink-3); }
+
+  code, kbd, .path {
+    font-family: var(--mono);
+    font-size: 0.87em;
+  }
+
+  code, .path {
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  kbd {
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 2px 7px;
+    color: var(--ink);
+    font-size: 0.82em;
+    white-space: nowrap;
+  }
+
+  /* ---------- steps ---------- */
+
+  .steps {
+    counter-reset: step;
+    list-style: none;
+    padding: 0;
+    margin: 16px 0 0;
+    max-width: 68ch;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .steps > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 38px;
+    margin: 0;
+  }
+
+  .steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 1px;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .steps > li > strong { display: block; color: var(--ink); font-weight: 600; }
+  .steps > li > span { display: block; color: var(--ink-2); font-size: 0.95rem; }
+
+  /* ---------- notes ---------- */
+
+  .note {
+    max-width: 68ch;
+    margin-top: 20px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .note > .note-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 8px; }
+
+  .note.warn   { background: var(--warn-soft); border-color: transparent; }
+  .note.warn   > .note-label { color: var(--warn); }
+  .note.danger { background: var(--bad-soft); border-color: transparent; }
+  .note.danger > .note-label { color: var(--bad); }
+  .note.good   { background: var(--ok-soft); border-color: transparent; }
+  .note.good   > .note-label { color: var(--ok); }
+  .note.key    { background: var(--accent-soft); border-color: transparent; }
+  .note.key    > .note-label { color: var(--accent); }
+
+  /* ---------- tables ---------- */
+
+  .table-wrap {
+    margin-top: 18px;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 460px;
+    font-size: 0.92rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    color: var(--ink-2);
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 400;
+    background: var(--surface-2);
+  }
+
+  tbody tr:last-child th,
+  tbody tr:last-child td { border-bottom: 0; }
+
+  tbody th { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* ---------- cascade diagram ---------- */
+
+  .cascade {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    max-width: 68ch;
+  }
+
+  .cascade-step {
+    flex: 1 1 132px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .cascade-step:last-child {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+  }
+
+  .cascade-step b {
+    font-size: 0.92rem;
+    color: var(--ink);
+  }
+
+  .cascade-step span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    line-height: 1.45;
+  }
+
+  .cascade-note {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    margin-top: 10px;
+    letter-spacing: 0.02em;
+  }
+
+  /* ---------- door chips ---------- */
+
+  .doors {
+    margin-top: 18px;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 1fr;
+    max-width: 68ch;
+  }
+
+  @media (min-width: 620px) {
+    .doors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .door {
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .door b { font-size: 0.98rem; font-weight: 700; }
+  .door span { font-size: 0.84rem; opacity: 0.82; line-height: 1.45; }
+
+  /* Bold inside a coloured chip takes the chip's ink, not the page's. */
+  .door strong, .door b { color: inherit; }
+
+  .door.green { background: var(--door-green); color: var(--door-green-ink); }
+  .door.amber { background: var(--door-amber); color: var(--door-amber-ink); }
+  .door.red   { background: var(--door-red);   color: var(--door-red-ink); }
+
+  /* ---------- glossary ---------- */
+
+  dl.glossary {
+    margin: 18px 0 0;
+    display: grid;
+    gap: 0;
+    max-width: 68ch;
+  }
+
+  dl.glossary > div {
+    padding: 14px 0;
+    border-top: 1px solid var(--rule);
+    display: grid;
+    gap: 4px;
+  }
+
+  dl.glossary > div:last-child { border-bottom: 1px solid var(--rule); }
+
+  dl.glossary dt {
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 0.95rem;
+  }
+
+  dl.glossary dd { margin: 0; color: var(--ink-2); font-size: 0.95rem; }
+
+  @media (min-width: 720px) {
+    dl.glossary > div {
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 20px;
+      align-items: baseline;
+    }
+  }
+
+  /* ---------- checklist ---------- */
+
+  .checklist {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0 0;
+    max-width: 68ch;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .checklist li {
+    margin: 0;
+    padding: 11px 16px 11px 42px;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+
+  .checklist li:last-child { border-bottom: 0; }
+
+  .checklist li::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: 15px;
+    width: 13px;
+    height: 13px;
+    border: 1.5px solid var(--rule-strong);
+    border-radius: 3px;
+  }
+
+  /* ---------- footer ---------- */
+
+  .colophon {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    line-height: 1.7;
+    max-width: 68ch;
+  }
+
+  .colophon a { color: var(--ink-2); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Orchestra concert ticketing · Admin console</p>
+    <h1>Concert Admin Handbook</h1>
+    <p class="standfirst">
+      Everything a committee member needs to set up a concert, get the audience
+      in, put a ticket in everybody's inbox, and run the door — written for
+      people who do not build software.
+    </p>
+    <div class="masthead-meta">
+      <span>Console → <span class="path">/admin</span></span>
+      <span>Sign in → <span class="path">/login</span></span>
+      <span>Read in order the first time</span>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <nav class="rail" aria-label="Contents">
+      <details class="rail-mobile" open>
+        <summary>Contents</summary>
+        <div>
+          <p class="rail-title">Before you begin</p>
+          <ol>
+            <li><a href="#how-it-works"><span class="n">·</span><span>How the system thinks</span></a></li>
+          </ol>
+
+          <p class="rail-break">Setting up a concert</p>
+          <ol>
+            <li><a href="#signin"><span class="n">1</span><span>Sign in</span></a></li>
+            <li><a href="#concert"><span class="n">2</span><span>Create the concert</span></a></li>
+            <li><a href="#shows"><span class="n">3</span><span>Add shows</span></a></li>
+            <li><a href="#segments"><span class="n">4</span><span>Add segments</span></a></li>
+            <li><a href="#players"><span class="n">5</span><span>Add players</span></a></li>
+          </ol>
+
+          <p class="rail-break">Filling the hall</p>
+          <ol>
+            <li><a href="#import"><span class="n">6</span><span>Import the sheet</span></a></li>
+            <li><a href="#registrations"><span class="n">7</span><span>Fix things by hand</span></a></li>
+            <li><a href="#extras"><span class="n">8</span><span>Grant extra seats</span></a></li>
+          </ol>
+
+          <p class="rail-break">Getting tickets out</p>
+          <ol>
+            <li><a href="#ticket-design"><span class="n">9</span><span>Design the ticket</span></a></li>
+            <li><a href="#issue"><span class="n">10</span><span>Issue the tickets</span></a></li>
+            <li><a href="#email"><span class="n">11</span><span>Send the blast</span></a></li>
+          </ol>
+
+          <p class="rail-break">Concert night</p>
+          <ol>
+            <li><a href="#operators"><span class="n">12</span><span>Set up the ushers</span></a></li>
+            <li><a href="#checkin"><span class="n">13</span><span>Watch the door</span></a></li>
+          </ol>
+
+          <p class="rail-break">Reference</p>
+          <ol>
+            <li><a href="#settings"><span class="n">·</span><span>Settings screen</span></a></li>
+            <li><a href="#trouble"><span class="n">·</span><span>When something looks wrong</span></a></li>
+            <li><a href="#glossary"><span class="n">·</span><span>Words this system uses</span></a></li>
+            <li><a href="#notyet"><span class="n">·</span><span>Not built yet</span></a></li>
+          </ol>
+        </div>
+      </details>
+    </nav>
+
+    <main>
+
+      <!-- ============================================ -->
+      <section class="section" id="how-it-works">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">§</div>
+          <div>
+            <h2>How the system thinks</h2>
+            <p class="section-sub">Four ideas. The rest is screens.</p>
+          </div>
+        </div>
+
+        <p class="lead">
+          Admission is free, seating is unreserved, and no money moves anywhere in
+          this system. What it actually does is decide who gets a seat, put a
+          QR-coded ticket in their inbox, and let an usher scan it at the door.
+        </p>
+
+        <h3>1. A show is the room. A segment is a block of seats inside it.</h3>
+        <p>
+          A <strong>show</strong> is one evening in one hall with one door. Inside
+          it, a <strong>segment</strong> is a named block of that hall's seats with
+          its own rules. One show can hold two segments at once — a
+          <em>player-invited</em> block and a <em>public</em> block, sharing the
+          same evening.
+        </p>
+        <p>
+          This matters because <strong>every seat calculation happens per segment,
+          never per show.</strong> Capacity, quotas, deadlines and policies live on
+          the segment. The show owns only the hall and the total number of bodies
+          that fit in it.
+        </p>
+
+        <h3>2. There are two kinds of audience</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Audience</th><th scope="col">Who they are</th><th scope="col">How seats work</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Player&nbsp;invited</th>
+                <td>Guests of a performing musician. Every registration is tied to a player.</td>
+                <td>Each active player is promised a <strong>base quota</strong> of seats. Anything beyond that is an <strong>extra</strong>, taken from a shared pool.</td>
+              </tr>
+              <tr>
+                <th scope="row">Public</th>
+                <td>Anyone. No player involved.</td>
+                <td>No base quota exists. Every seat comes from the pool, first come first served.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>3. A registration is a party, not a person</h3>
+        <p>
+          One registration = one contact email + N seats. A family of four is
+          <em>one</em> registration with <em>four</em> attendees. They get
+          <strong>one email carrying four PDFs</strong> — one ticket per person,
+          each with its own QR code.
+        </p>
+        <p>
+          A seat with no name on it is not an error. It tickets as a placeholder,
+          and you can fill the name in later.
+        </p>
+
+        <h3>4. Nothing is preset. You enter everything.</h3>
+        <p>
+          There is no capacity, no quota and no deadline hiding in the software.
+          Until you type them in, the system <strong>refuses to allocate seats</strong>
+          rather than guess a number. If a screen tells you it can't work out the
+          pool, the fix is almost always a blank field on a segment.
+        </p>
+
+        <div class="note key">
+          <span class="note-label">Where a value comes from</span>
+          <p>
+            Any setting can be filled in at four levels. The system looks for a
+            value starting at the most specific and stops at the first one it
+            finds.
+          </p>
+          <div class="cascade">
+            <div class="cascade-step"><b>System</b><span>Settings screen. The fallback for everything.</span></div>
+            <div class="cascade-step"><b>Concert</b><span>Applies to all its shows.</span></div>
+            <div class="cascade-step"><b>Show</b><span>Applies to its segments.</span></div>
+            <div class="cascade-step"><b>Segment</b><span>Wins. This is the value used.</span></div>
+          </div>
+          <p class="cascade-note">Leave a field blank to inherit from the level above. Forms tell you what you'd inherit.</p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="signin">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">1</div>
+          <div>
+            <h2>Sign in</h2>
+            <p class="section-sub">/login</p>
+          </div>
+        </div>
+
+        <p>
+          There is <strong>one admin account, shared by the whole committee</strong>.
+          The sign-in form asks for a code and nothing else — no email, no
+          username.
+        </p>
+
+        <ol class="steps">
+          <li><strong>Go to <span class="path">/login</span></strong><span>You land on "Admin sign-in".</span></li>
+          <li><strong>Type the committee code</strong><span>Whoever set the system up has it. Paste rather than retype — it is deliberately long.</span></li>
+          <li><strong>You arrive at the concert list</strong><span><span class="path">/admin/concerts</span>. Everything starts here.</span></li>
+        </ol>
+
+        <div class="note warn">
+          <span class="note-label">Treat the code like a key to a filing cabinet</span>
+          <p>
+            That one code is the only thing standing between the outside world and
+            every attendee's name, email and phone number. Do not put it in a group
+            chat that outlives the committee. Have it changed after each concert and
+            whenever someone leaves.
+          </p>
+          <p>
+            Too many wrong attempts from one place locks that place out for a while.
+            That is deliberate. Wait it out rather than hunting for a workaround.
+          </p>
+        </div>
+
+        <div class="note">
+          <span class="note-label">If you are an usher, not an admin</span>
+          <p>
+            Ushers do not sign in here. They use <span class="path">/scan/login</span>
+            with a display name and their own access code — see the Door Scanner
+            Handbook.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="concert">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">2</div>
+          <div>
+            <h2>Create the concert</h2>
+            <p class="section-sub">/admin/concerts → New concert</p>
+          </div>
+        </div>
+
+        <p>
+          A <strong>concert</strong> is the umbrella. It holds the shows, the
+          players, the ticket designs and the email templates. You will usually
+          make one per programme, not one per night.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Field</th><th scope="col">What to put</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Name</th><td>What the committee calls it. Shows up on every screen.</td></tr>
+              <tr><th scope="row">Slug</th><td>The short version that appears in links. Leave blank and it is made from the name.</td></tr>
+              <tr><th scope="row">Timezone</th><td><strong>Required, and worth getting right.</strong> Every time you type anywhere is read as the clock at the venue and displayed that way to everyone, whatever zone they are sitting in.</td></tr>
+              <tr><th scope="row">Season</th><td>Optional. For your own filing.</td></tr>
+              <tr><th scope="row">Starts / Ends on</th><td>Optional. The span of the run.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note danger">
+          <span class="note-label">Set the timezone before anything else</span>
+          <p>
+            Until the concert has a timezone, the show and deadline forms will not
+            let you enter a time at all — the fields are greyed out. This is on
+            purpose: a time with no zone is a wrong door time on four hundred
+            printed tickets.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="shows">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">3</div>
+          <div>
+            <h2>Add shows</h2>
+            <p class="section-sub">Shows → New show</p>
+          </div>
+        </div>
+
+        <p>
+          One show per performance. Two nights of the same programme are two shows.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Field</th><th scope="col">What to put</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Name</th><td>Short and recognisable — a date usually works. This is what an usher sees at the top of their phone all night, so make it impossible to confuse with the other show.</td></tr>
+              <tr><th scope="row">Starts</th><td>Curtain up.</td></tr>
+              <tr><th scope="row">Doors open</th><td>When the audience may come in. <strong>This prints on the ticket.</strong></td></tr>
+              <tr><th scope="row">Venue / Address</th><td>Both print on the ticket.</td></tr>
+              <tr><th scope="row">Capacity</th><td>How many bodies fit in the room. Not how many you intend to admit — the actual ceiling.</td></tr>
+              <tr><th scope="row">Status</th><td><em>Draft</em> while you build it, <em>Open</em> when it is live, <em>Closed</em> when registration ends, <em>Completed</em> afterwards.</td></tr>
+              <tr><th scope="row">Portal unlock</th><td>Leave on <em>Inherit</em>. It belongs to a feature that is not built yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <span class="note-label">There is no "held seats" field, and that is deliberate</span>
+          <p>
+            Seats you want to keep back — press, latecomers, the conductor's family
+            — are simply seats you give to no segment. If the hall is 400 and your
+            segments add up to 380, you are holding 20. That is the only way to
+            withhold seats, and it means the held count is always visible rather
+            than buried in a field nobody reads.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="segments">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">4</div>
+          <div>
+            <h2>Add segments</h2>
+            <p class="section-sub">Shows → a show → Add segment · The most important screen in the system</p>
+          </div>
+        </div>
+
+        <p class="lead">
+          This is where allocation is actually configured. Get this right and the
+          rest mostly runs itself.
+        </p>
+
+        <p>
+          A show can hold <strong>at most one segment of each audience</strong>: one
+          public, one player-invited, or both. Add the ones you need.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Field</th><th scope="col">What to put</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Name</th><td>"Public", "Player invited", or whatever your committee says.</td></tr>
+              <tr><th scope="row">Audience</th><td><strong>Cannot be changed later.</strong> Every seat in the segment was allocated under these rules, so switching it would reinterpret all of them. Pick carefully.</td></tr>
+              <tr><th scope="row">Capacity</th><td>This block's slice of the hall. All segments together must fit inside the show's capacity.</td></tr>
+              <tr><th scope="row">Base quota per player</th><td><em>Player-invited only.</em> Seats each active player is promised. See the warning below.</td></tr>
+              <tr><th scope="row">Base claim deadline</th><td><em>Player-invited only.</em> After this moment, seats players never claimed are released into the extras pool.</td></tr>
+              <tr><th scope="row">Extras policy</th><td><em>Review</em> — requests wait, you grant them in a batch. <em>Auto</em> — granted immediately while the pool has room. Review is the normal choice for players; Auto for public.</td></tr>
+              <tr><th scope="row">Partial grants</th><td>If a party of 4 asks and only 2 seats remain: <em>Allowed</em> gives them 2 and waitlists 2; <em>Not allowed</em> skips them whole and moves to the next party.</td></tr>
+              <tr><th scope="row">Max tickets per response</th><td>The biggest party one registration may ask for.</td></tr>
+              <tr><th scope="row">Display order</th><td>Cosmetic. Controls which segment is listed first.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>How the extras pool is worked out</h3>
+        <p>
+          You never calculate this yourself, but knowing the shape stops the
+          numbers on screen from being a surprise.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Moment</th><th scope="col">What the pool is</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Before the deadline</th>
+                <td>Empty seats, <strong>minus</strong> everything players are still entitled to but haven't claimed. Extras can never eat a seat a player is still owed.</td>
+              </tr>
+              <tr>
+                <th scope="row">After the deadline</th>
+                <td>Simply every empty seat. Unclaimed base seats have been released, so the pool jumps.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          If base quota × number of players exactly equals the segment capacity, the
+          pool reads <strong>zero</strong> until the deadline passes. That is correct,
+          not a fault: extras are precisely the seats players did not take.
+        </p>
+
+        <div class="note danger">
+          <span class="note-label">The promise the system will not let you break</span>
+          <p>
+            Every active player gets the base seats they were told they have. So the
+            system <strong>blocks any save</strong> where
+            <em>base quota × active players</em> would exceed the segment's capacity.
+          </p>
+          <p>
+            It blocks this on all three routes into the problem: lowering a segment's
+            capacity, raising the base quota, and adding or reactivating a player. The
+            error names the real numbers and your three ways out — lower the quota,
+            raise the capacity, or deactivate some players.
+          </p>
+        </div>
+
+        <h3>Moving seats between segments later</h3>
+        <p>
+          Segments never borrow from each other automatically, because the number of
+          people arriving at the door is the one figure front-of-house has to be able
+          to trust. When the player block closes with seats to spare and the public
+          block has a queue, you move them by hand: edit both capacities.
+        </p>
+        <p>
+          The system refuses to drop a segment below the number of people already
+          confirmed in it, and checks the total still fits the hall.
+        </p>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="players">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">5</div>
+          <div>
+            <h2>Add players</h2>
+            <p class="section-sub">Players · Skip this if your concert is public only</p>
+          </div>
+        </div>
+
+        <p>
+          Players are the performing musicians whose guests fill a player-invited
+          segment. Add them before you import registrations, so the import can match
+          names to real people.
+        </p>
+
+        <h3>One at a time</h3>
+        <p>
+          <strong>New player</strong> asks for full name, email, instrument, section
+          and status (active or inactive).
+        </p>
+
+        <h3>All at once</h3>
+        <ol class="steps">
+          <li><strong>Press Import players</strong><span>Upload a CSV or spreadsheet of the roster.</span></li>
+          <li><strong>Match your columns</strong><span>Tell it which of your columns is the name, which is the email, and so on.</span></li>
+          <li><strong>Confirm</strong><span>The roster loads.</span></li>
+        </ol>
+
+        <div class="note warn">
+          <span class="note-label">Active vs inactive is a seat count, not a label</span>
+          <p>
+            Only <strong>active</strong> players are promised base seats. Marking
+            someone active is therefore the same act as promising them their quota —
+            and if that would push the segment past capacity, the system refuses the
+            save and tells you by how much.
+          </p>
+          <p>
+            A player who has withdrawn should be set inactive, which releases their
+            entitlement back into the pool.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="import">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">6</div>
+          <div>
+            <h2>Import the sheet</h2>
+            <p class="section-sub">Import · Six steps, and you can back out of any of them</p>
+          </div>
+        </div>
+
+        <p class="lead">
+          Registration is collected on Google Forms. This screen turns that export
+          into real registrations. <strong>One run loads one segment</strong> — a
+          show with both a public and a player-invited audience is loaded by running
+          this twice, once per file.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Step</th><th scope="col">What happens</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">1 · Prepare your sheet</th><td>Advice on shaping the file before you upload. Read it the first time; it answers the questions that cost the most time later.</td></tr>
+              <tr><th scope="row">2 · Choose file and segment</th><td>Pick the spreadsheet, and the segment these people belong to.</td></tr>
+              <tr><th scope="row">3 · Sheet and header row</th><td>Which tab, and which row holds the column titles.</td></tr>
+              <tr><th scope="row">4 · Map columns</th><td>Point each of your columns at what it means. Save the mapping as a <strong>profile</strong> and round two is a pick from a list rather than this step done again.</td></tr>
+              <tr><th scope="row">5 · Dry run</th><td><strong>Changes nothing.</strong> It tells you what <em>would</em> happen, row by row.</td></tr>
+              <tr><th scope="row">6 · Commit</th><td>Writes the registrations for real.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>How to shape the spreadsheet</h3>
+        <p>
+          <strong>One row per seat, not one row per party.</strong> A family of four
+          is four rows. Every row of that family repeats the same
+          <strong>Contact Email</strong> and the same <strong>Timestamp</strong> —
+          that pair is how the system recognises them as one party.
+        </p>
+        <ul>
+          <li>If your form asked <em>"how many tickets?"</em> rather than for names, repeat the row that many times and leave the attendee name blank. Names can be filled in later.</li>
+          <li>If somebody has no email address, use a <strong>Group</strong> column and put the same value on every row of that party.</li>
+          <li>The timestamp should be the <em>form response</em> time, not the day you did the import. It is what decides the queue order, and first come first served means the clock decides.</li>
+        </ul>
+
+        <h3>Reading the dry run</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Finding</th><th scope="col">Means</th><th scope="col">Do</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Info</th><td>Something worth knowing. Most often: this party was already imported on a previous run and will be skipped.</td><td>Nothing. Carry on.</td></tr>
+              <tr><th scope="row">Warning</th><td>It will import, but check it. A party whose size changed since last time is skipped rather than half-applied.</td><td>Look, decide, then continue or fix the sheet.</td></tr>
+              <tr><th scope="row">Blocking</th><td>Something is genuinely wrong. <strong>Commit stays disabled</strong> while any blocking finding stands.</td><td>Fix the sheet or the mapping and run again.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note good">
+          <span class="note-label">Re-uploading round two is safe</span>
+          <p>
+            A Google Forms export is cumulative — your round-two download contains
+            round one all over again. The import recognises parties it has already
+            written and skips them, importing only the new responses. You do not need
+            to trim the file.
+          </p>
+          <p>
+            The one gap: a party with <strong>no email address at all</strong> cannot
+            be recognised across runs and will import again. Those are counted
+            separately and flagged, so you can see them rather than discover them.
+            Requiring an email on the form removes the problem entirely.
+          </p>
+        </div>
+
+        <div class="note">
+          <span class="note-label">Deleted vs cancelled, on re-import</span>
+          <p>
+            A registration you <em>cancelled</em> still counts as imported, and will
+            not come back. A registration you <em>deleted</em> will re-import — because
+            deleting says the row should never have existed, so a sheet still carrying
+            it is bringing in something genuinely missing.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="registrations">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">7</div>
+          <div>
+            <h2>Fix things by hand</h2>
+            <p class="section-sub">Registrations · Real events do not follow the rules</p>
+          </div>
+        </div>
+
+        <p>
+          Every automatic rule here has a manual escape hatch. You can add someone
+          after the form closed, correct a name, move a party to a different show, or
+          seat somebody the rules would refuse. Overrides are recorded, never
+          silently blocked.
+        </p>
+
+        <h3>The table</h3>
+        <p>
+          Search by name or email; filter by segment and by status. Columns cover
+          contact, player, segment, round, seats, status, when they registered, and
+          ticket state. Click a row to open the full detail panel.
+        </p>
+        <p>
+          <strong>Export</strong> gives you CSV or Excel of exactly what you are
+          looking at — filters applied, not the whole table.
+        </p>
+
+        <h3>Adding a registration by hand</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Field</th><th scope="col">Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Segment</th><td>Which block their seats come out of.</td></tr>
+              <tr><th scope="row">Contact name / email / phone</th><td>The email is where the whole party's tickets go.</td></tr>
+              <tr><th scope="row">Player</th><td>Player-invited segments only — whose guest this is.</td></tr>
+              <tr><th scope="row">Round</th><td>Free text, e.g. "Round 1". Lets you group and report by round later.</td></tr>
+              <tr><th scope="row">Requested at</th><td>Their place in the queue. For a late walk-up, now is right.</td></tr>
+              <tr><th scope="row">Seats</th><td>How many people in the party.</td></tr>
+              <tr><th scope="row">Seat type</th><td>Base (out of a player's quota), Extra (out of the pool), or a held/complimentary seat.</td></tr>
+              <tr><th scope="row">Guest names</th><td>One name per line. Names match to seats in order. A missing name is fine — that seat tickets as a placeholder.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note warn">
+          <span class="note-label">Seating someone when the room is full</span>
+          <p>
+            Leave the override box blank and a party that does not fit simply waits.
+            To seat them anyway you must <strong>type <code>OVER CAPACITY</code></strong>
+            into the confirmation field. It is typed rather than ticked because it is a
+            decision, not a setting — and what you typed goes into the audit log.
+          </p>
+        </div>
+
+        <h3>Cancel and delete are different things</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col"></th><th scope="col">Cancel</th><th scope="col">Delete</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Says</th><td>A real booking is not coming.</td><td>This row should never have existed — a duplicate, a test, the wrong show.</td></tr>
+              <tr><th scope="row">Seats</th><td>Freed immediately.</td><td>Freed immediately.</td></tr>
+              <tr><th scope="row">Record</th><td>Stays, and can be restored.</td><td>Leaves every screen.</td></tr>
+              <tr><th scope="row">At the door</th><td>Their code scans <strong>amber/red with "refer to desk"</strong>, so the usher knows the person was real.</td><td>Their code is simply unknown.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          Either way, any unsent email for that registration is withdrawn at the same
+          moment. A party that already has someone <strong>checked in at the door</strong>
+          cannot be deleted — the refusal says how many are already inside, and offers
+          you reverting the check-in or cancelling instead.
+        </p>
+
+        <div class="note">
+          <span class="note-label">What happens to a cancelled seat</span>
+          <p>
+            <strong>Before</strong> the base claim deadline, a cancelled base seat goes
+            back to that player — their allocation is still theirs.
+            <strong>After</strong> the deadline, it goes into the extras pool for the
+            next person in the queue. Nobody gets a private second chance once
+            everyone else's window has shut.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="extras">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">8</div>
+          <div>
+            <h2>Grant extra seats</h2>
+            <p class="section-sub">Extras review · One segment at a time</p>
+          </div>
+        </div>
+
+        <p>
+          Where the extras policy is <em>Review</em>, requests pile up as
+          <strong>pending</strong> and take no seats until you say so. This screen is
+          where you say so, usually once the base claim deadline has passed and you
+          know how big the pool really is.
+        </p>
+
+        <ol class="steps">
+          <li><strong>Pick the segment</strong><span>The header shows the live pool: how many seats are available, how many requests there are and for how many seats in total.</span></li>
+          <li><strong>Read the preselection</strong><span>The screen has already ticked the rows that fit, walking strictly in time order until the next request would overflow the pool. Strict order, never best fit — first come first served means the clock decides, not the packing.</span></li>
+          <li><strong>Adjust freely</strong><span>Tick and untick rows, and edit how many seats each one gets. The header recalculates as you go.</span></li>
+          <li><strong>Commit</strong><span>Ticked rows become confirmed. Everything else becomes waitlist. The emails are <em>queued, not sent</em> — you still control when they go.</span></li>
+        </ol>
+
+        <div class="note key">
+          <span class="note-label">The pool is a recommendation. You are the decision.</span>
+          <p>
+            You may tick past the pool. The row is flagged, the header shows the
+            overage, and going past the segment's or the hall's capacity asks you to
+            type a confirmation, which is recorded.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="ticket-design">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">9</div>
+          <div>
+            <h2>Design the ticket</h2>
+            <p class="section-sub">Tickets → Templates</p>
+          </div>
+        </div>
+
+        <p>
+          A template is a page layout: your artwork underneath, and text and QR
+          elements placed on top of it. You drag things where you want them.
+        </p>
+
+        <ol class="steps">
+          <li><strong>Upload a background</strong><span>An image or a PDF. Without one, the ticket prints as type on a blank page — which works, it just looks plain.</span></li>
+          <li><strong>Place the elements</strong><span>Guest name, show, date, doors, venue, ticket code, QR. Select one and the Element panel on the right sets its font, size, position and alignment.</span></li>
+          <li><strong>Preview against real data</strong><span>The "Preview against" picker offers real attendees, including <em>the longest name in the show</em>. That is the one that overflows. Check it now rather than after four hundred PDFs.</span></li>
+          <li><strong>Preview PDF</strong><span>Renders the real thing. Look at it at actual size.</span></li>
+          <li><strong>Save</strong><span>Done.</span></li>
+        </ol>
+
+        <div class="note danger">
+          <span class="note-label">Editing a template never changes a ticket someone already holds</span>
+          <p>
+            Each ticket remembers the <em>version</em> of the template it was made
+            from. Saving an edit creates a new version — the editor tells you so:
+            <em>"142 issued — saving makes v3"</em> — and everybody's existing PDF stays
+            exactly as they received it.
+          </p>
+          <p>
+            That is the safe behaviour, and it means a design fix after the blast does
+            not reach the people who already have tickets. To push a change out to
+            them you must deliberately reissue (next section).
+          </p>
+        </div>
+
+        <div class="note warn">
+          <span class="note-label">Before the first real blast, print one and scan it</span>
+          <p>
+            Render a real ticket, print it on paper, and scan it with an actual usher's
+            phone — off the paper and off a screen, in low light, with the phone in
+            flight mode. Everything after the QR is unrecoverable once tickets are in
+            people's inboxes. This is a gate, not a checklist item.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="issue">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">10</div>
+          <div>
+            <h2>Issue the tickets</h2>
+            <p class="section-sub">Tickets</p>
+          </div>
+        </div>
+
+        <p>
+          The table lists every attendee with their ticket code, which template
+          version they are on, and whether their ticket has been sent. Filter by
+          show, search by name or code, preview or download any single ticket.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Button</th><th scope="col">Does</th><th scope="col">Emails anyone?</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Issue tickets</th>
+                <td>Gives a ticket to everyone who does not have one yet.</td>
+                <td><strong>No.</strong> Safe to press whenever.</td>
+              </tr>
+              <tr>
+                <th scope="row">Reissue with current template</th>
+                <td>Re-renders tickets against the newest template version.</td>
+                <td><strong>Yes.</strong> Everything it touches goes back in the queue to be emailed again. It asks first.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>The "needs reissuing" banner</h3>
+        <p>
+          If something that prints on a ticket changes after that ticket was sent —
+          a corrected spelling, a moved door time — a red banner counts how many
+          tickets are now out of date, and offers two honest ways out:
+        </p>
+        <ul>
+          <li><strong>Reissue and resend</strong> — right when the change matters, like a wrong door time.</li>
+          <li><strong>Dismiss as cosmetic</strong> — right when it does not. Nothing is re-rendered, nobody is emailed, and the tickets people hold stay exactly as sent.</li>
+        </ul>
+
+        <div class="note">
+          <span class="note-label">A ticket code belongs to a person for life</span>
+          <p>
+            Reissuing re-renders the PDF. It never changes the QR code or the ticket
+            code — so a printed ticket from three weeks ago still scans, and a code
+            can never come to name a different guest.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="email">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">11</div>
+          <div>
+            <h2>Send the blast</h2>
+            <p class="section-sub">Email · Nothing leaves this system that a person has not read</p>
+          </div>
+        </div>
+
+        <p class="lead">
+          Messages are addressed <strong>per party, never per seat</strong>. One
+          family gets one email carrying all four of their PDFs.
+        </p>
+
+        <h3>Write the template first</h3>
+        <p>
+          <strong>Edit templates</strong> opens the writing screen: a subject, a body
+          in plain Markdown, and a list of the placeholders you can drop in
+          (<code>{{ ticket_links }}</code> and friends). The preview shows
+          <strong>both halves</strong> of the message — the formatted version and the
+          plain-text version — rendered against a <em>real</em> recipient, not a
+          dummy. Check both. Most template bugs are data-shape bugs and only show up
+          against real names.
+        </p>
+
+        <h3>Read the numbers before you press anything</h3>
+        <p>
+          Pick a segment and a template, and the screen shows the split:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Figure</th><th scope="col">Means</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Confirmed attendees</th><td>Everyone with a seat in this segment.</td></tr>
+              <tr><th scope="row">Already sent</th><td>Excluded. They have their ticket.</td></tr>
+              <tr><th scope="row">Pending</th><td><strong>This blast.</strong> The number it will act on.</td></tr>
+              <tr><th scope="row">Failed, retryable</th><td>Tried and did not get through. Still being retried.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Underneath, the count of actual <em>messages</em> — one per party — which is
+          smaller than the seat count.
+        </p>
+
+        <h3>Three buttons, in order</h3>
+        <ol class="steps">
+          <li><strong>Prepare N messages</strong><span>Writes every message out in full, with each person's real details filled in. They sit as <em>drafts</em>. Nothing has been sent.</span></li>
+          <li><strong>Confirm N drafts</strong><span>You have read them. They move to <em>queued</em>. Still nothing sent — but the dispatcher can now touch them.</span></li>
+          <li><strong>Send N queued</strong><span>Real email to real people. It asks once, and cannot be undone.</span></li>
+        </ol>
+        <p>
+          The Messages list below shows every message exactly as it will go out. You
+          can edit one recipient's message on its own — for the person who needs a
+          note about wheelchair access — and it survives a later template re-render.
+          Editing the template re-renders every draft in the batch, which is the
+          normal way to fix wording once and see all eighty update.
+        </p>
+
+        <div class="note good">
+          <span class="note-label">Pressing Send twice is harmless</span>
+          <p>
+            The system knows who already has their ticket and will not send it again.
+            If you are not sure your first click registered, click again. This is
+            designed for exactly that moment.
+          </p>
+        </div>
+
+        <h3>The queue banner</h3>
+        <p>
+          A blast of a few hundred messages takes several minutes and runs while the
+          console is open. A banner at the top of every admin page tells you what the
+          queue is doing, survives a reload or a closed laptop, and offers
+          <strong>Resume</strong> when there is genuinely something to resume.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Banner says</th><th scope="col">Meaning</th><th scope="col">You</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">An unfinished blast</th><td>Sending stopped partway.</td><td>Press <strong>Resume</strong>.</td></tr>
+              <tr><th scope="row">It will retry on its own</th><td>A message failed and is waiting out its backoff.</td><td>Nothing.</td></tr>
+              <tr><th scope="row">It is in flight</th><td>Sending right now.</td><td>Nothing.</td></tr>
+              <tr><th scope="row">Never delivered — resend it</th><td>Out of retries. Nothing will pick this up.</td><td>Resend it, or mark it delivered by hand.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Dismiss hides the banner. It never stops the blast.</strong>
+        </p>
+
+        <h3>Resend, and mark as delivered</h3>
+        <ul>
+          <li><strong>Resend ticket</strong> — for the person who deleted their email. Select them, resend. Never used on a whole segment without a typed confirmation.</li>
+          <li><strong>Mark as delivered</strong> — for when you handed someone a printout at a rehearsal or forwarded the PDF from your own mailbox. It sends nothing, asks for a short reason, and stops that person reappearing in the pending count of every future blast.</li>
+        </ul>
+
+        <div class="note warn">
+          <span class="note-label">Do a full-volume test before the real thing</span>
+          <p>
+            Generate and send a complete show's worth of tickets to real inboxes —
+            a Gmail address, an Outlook address, and one university or corporate one —
+            and confirm all three land in the inbox rather than spam. Deliverability
+            problems show up as silence, not as errors.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="operators">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">12</div>
+          <div>
+            <h2>Set up the ushers</h2>
+            <p class="section-sub">Operators · Do this days before, not at the door</p>
+          </div>
+        </div>
+
+        <p>
+          Each usher gets their own account. They sign in at
+          <span class="path">/scan</span> with a display name and an access code, and
+          can reach <strong>only the shows you assign them</strong>.
+        </p>
+
+        <ol class="steps">
+          <li><strong>Add operator</strong><span>Type the display name exactly as the usher will type it at sign-in — the name they will remember. Two ushers with similar names need something to tell them apart: a surname or an initial.</span></li>
+          <li><strong>Copy the access code</strong><span>It is shown <strong>once</strong>, on screen, and never again. Send it to that usher now. If you lose it, generate a new one — that is the only way back.</span></li>
+          <li><strong>Assign their shows</strong><span>A grid of tick boxes. Tick the ones they are working.</span></li>
+          <li><strong>Have them sign in early</strong><span>The session stays on their phone, so they sign in during setup rather than with a queue in front of them.</span></li>
+        </ol>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Action</th><th scope="col">Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Regenerate code</th><td>Issues a new code, shown once. The old one stops working.</td></tr>
+              <tr><th scope="row">Deactivate</th><td>Signs them out on their next request and blocks them from scanning. Reversible — reactivating is one click.</td></tr>
+              <tr><th scope="row">Remove an assignment</th><td>Takes effect immediately on the server, <strong>including for a phone that is currently offline</strong>: its queued scans are rejected when it reconnects, and flagged to you rather than silently dropped.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <span class="note-label">There is no delete, on purpose</span>
+          <p>
+            Every scan an usher recorded points back at their account. Removing the
+            account would anonymise all of it. Handing the phone back is a
+            <em>deactivation</em>. The list hides deactivated accounts by default and
+            the filter carries the count of each group, so you can see they exist
+            without wading through them.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="checkin">
+        <div class="section-head">
+          <div class="phase-mark" aria-hidden="true">13</div>
+          <div>
+            <h2>Watch the door</h2>
+            <p class="section-sub">Check-in · Live, on the night</p>
+          </div>
+        </div>
+
+        <p>
+          Leave this open on a laptop at the desk. It refreshes itself every few
+          seconds; the toggle in the corner pauses that while you read something.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Figure</th><th scope="col">Means</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Confirmed</th><td>Seats expected tonight.</td></tr>
+              <tr><th scope="row">Checked in</th><td>People actually through the door. Each guest counts once however many times their ticket was scanned.</td></tr>
+              <tr><th scope="row">Remaining</th><td>Still to arrive.</td></tr>
+              <tr><th scope="row">Admitted anyway</th><td>Cancelled or waitlisted people an usher let in. The one number worth a second look rather than burying in the log.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          Below: an arrivals graph over time, a count per usher, and a searchable log
+          of every scan — who, when, which usher, whether it was a camera scan, a
+          manual admission or a late offline sync, and any note the usher left.
+        </p>
+
+        <h3>Reverting a scan</h3>
+        <p>
+          Scanned the wrong person, or admitted someone by mistake? <strong>Revert</strong>
+          on that row. It never deletes anything — the scan stays in the log marked
+          reverted, and the counts stop including it.
+        </p>
+
+        <h3>What the ushers see</h3>
+        <p>
+          These are the five results their phone can give, in the colours it gives
+          them. <strong>Amber and red are never hard blocks</strong> — the usher can
+          always <em>Admit anyway</em>, which is recorded with a reason. Turning away
+          a real guest at a free concert is worse than a duplicate row in a log.
+        </p>
+        <div class="doors">
+          <div class="door green"><b>Admitted</b><span>Valid ticket, first scan. The name, their seat type, and which player invited them.</span></div>
+          <div class="door amber"><b>Already checked in</b><span>This QR was scanned before. Shows when, and by which usher.</span></div>
+          <div class="door red"><b>Wrong show</b><span>A real ticket, for a different night. Names the show it is actually for.</span></div>
+          <div class="door red"><b>Cancelled</b><span>The booking was cancelled. Says "refer to desk" — never "not found", because the person was real.</span></div>
+          <div class="door red"><b>Invalid ticket</b><span>Nothing on that phone matches this code.</span></div>
+        </div>
+
+        <div class="note key">
+          <span class="note-label">Parties arrive together</span>
+          <p>
+            A family of four holds four PDFs in one email, and in practice the person
+            at the front shows one while the other three walk in behind them. When a
+            scan belongs to a party, the usher's phone offers
+            <strong>"Admit remaining 3"</strong> — one tap, three admissions recorded.
+            Ask your ushers to use it: without it your arrivals count is wrong for the
+            rest of the night, and that is the number you use to decide when to stop
+            holding seats.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="settings">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">§</div>
+          <div>
+            <h2>The Settings screen</h2>
+            <p class="section-sub">/admin/settings · You will rarely need it</p>
+          </div>
+        </div>
+
+        <p>
+          This is the <em>bottom</em> of the cascade — the fallback used when no
+          concert, show or segment has said otherwise. Most of what lives here is
+          already set correctly, and most of what you want to change belongs on a
+          segment instead.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Group</th><th scope="col">Holds</th><th scope="col">Touch it?</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Allocation</th><td>Capacity, base quota, deadline, extras policy, party cap.</td><td>Only to set a house default. Prefer the segment form.</td></tr>
+              <tr><th scope="row">Email</th><td>How many messages per batch and per day, delays, retry count, attachment limits.</td><td>Sized against the mail provider's limits. Leave alone.</td></tr>
+              <tr><th scope="row">Door and import</th><td>How long an offline roster stays usable, scan debounce, name-matching sensitivity.</td><td>Leave alone.</td></tr>
+              <tr><th scope="row">Sign-in and platform</th><td>Lockout thresholds, the daily database ping.</td><td>Leave alone. Turning the ping off eventually pauses the database.</td></tr>
+              <tr><th scope="row">Portal and notes</th><td>Mostly for features not built yet.</td><td>Leave alone.</td></tr>
+              <tr><th scope="row">Concert and portal defaults</th><td>Timezone, default ticket template.</td><td>Set these on the concert or the tickets screen instead.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <span class="note-label">Why some rows are empty</span>
+          <p>
+            Operational values — capacities, quotas, deadlines, party caps — ship with
+            <strong>no value at any level</strong>. A blank row is a real state, not a
+            missing one. Anything with neither a value here nor one on its segment will
+            refuse to allocate rather than guess.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="trouble">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">§</div>
+          <div>
+            <h2>When something looks wrong</h2>
+            <p class="section-sub">In rough order of how often it happens</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">What you see</th><th scope="col">Why</th><th scope="col">Fix</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">A screen refuses to show seat figures</th>
+                <td>Something in the cascade has no value — usually the segment's capacity or the base quota.</td>
+                <td>Open the segment and fill the blank field. The form tells you what is unset.</td>
+              </tr>
+              <tr>
+                <th scope="row">Time fields are greyed out</th>
+                <td>The concert has no timezone.</td>
+                <td>Set it on the concert, then come back.</td>
+              </tr>
+              <tr>
+                <th scope="row">"82 active players × 2 base = 164 seats, but the segment holds 100"</th>
+                <td>You are about to promise more seats than exist.</td>
+                <td>Lower the quota, raise the segment capacity, or deactivate players. The message does the arithmetic for you.</td>
+              </tr>
+              <tr>
+                <th scope="row">Extras pool reads zero before the deadline</th>
+                <td>Correct. Players are collectively entitled to everything.</td>
+                <td>Nothing. It grows the moment the deadline passes.</td>
+              </tr>
+              <tr>
+                <th scope="row">Import won't let you commit</th>
+                <td>A blocking finding is outstanding.</td>
+                <td>Read the dry-run report, fix the sheet or the mapping, run it again.</td>
+              </tr>
+              <tr>
+                <th scope="row">Import says it skipped most of the file</th>
+                <td>You re-uploaded a cumulative export. Those parties are already in.</td>
+                <td>Nothing. Only the new responses were needed.</td>
+              </tr>
+              <tr>
+                <th scope="row">You can't change a segment's audience</th>
+                <td>It is fixed once the segment exists.</td>
+                <td>If it is genuinely wrong and no seats are allocated, delete the segment and make a new one.</td>
+              </tr>
+              <tr>
+                <th scope="row">The blast sent nothing</th>
+                <td>Drafts were never confirmed, or everyone already has their ticket.</td>
+                <td>Check the split: if "Pending" is zero, there is nothing to send.</td>
+              </tr>
+              <tr>
+                <th scope="row">Someone says their ticket never arrived</th>
+                <td>Bounce, spam folder, or a typo in the address.</td>
+                <td>Fix the address if wrong, then <strong>Resend ticket</strong> for that person. If you reached them another way, <strong>Mark as delivered</strong>.</td>
+              </tr>
+              <tr>
+                <th scope="row">You can't delete a registration</th>
+                <td>Somebody in that party is already checked in at the door.</td>
+                <td>Revert the check-in first, or cancel instead of deleting.</td>
+              </tr>
+              <tr>
+                <th scope="row">An usher can't see their show</th>
+                <td>No assignment, or the account was deactivated.</td>
+                <td>Operators screen: tick the show, or reactivate them.</td>
+              </tr>
+              <tr>
+                <th scope="row">A confirmation box stays open after you press its button</th>
+                <td>A known bug in the console.</td>
+                <td>The action <em>did</em> run. Close the box and refresh the page.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="glossary">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">§</div>
+          <div>
+            <h2>Words this system uses</h2>
+            <p class="section-sub">And what they mean here, specifically</p>
+          </div>
+        </div>
+
+        <dl class="glossary">
+          <div><dt>Concert</dt><dd>The umbrella. Holds shows, players, ticket designs and email templates.</dd></div>
+          <div><dt>Show</dt><dd>One performance, in one hall, with one door and one total capacity.</dd></div>
+          <div><dt>Segment</dt><dd>A block of a show's seats with its own audience and rules. Where all allocation happens.</dd></div>
+          <div><dt>Audience mode</dt><dd>Player-invited or public. Belongs to the segment, never the show, and cannot be changed once set.</dd></div>
+          <div><dt>Registration</dt><dd>One party: a contact email and N seats. Not one person.</dd></div>
+          <div><dt>Attendee</dt><dd>One seat, with one name, one QR code and one PDF.</dd></div>
+          <div><dt>Base seat</dt><dd>A seat out of a player's promised quota. Granted immediately while seats remain, and never refused before the deadline.</dd></div>
+          <div><dt>Extra seat</dt><dd>A seat beyond a player's quota, or any public seat. Comes from the shared pool.</dd></div>
+          <div><dt>Base claim deadline</dt><dd>The moment unclaimed base seats are released into the extras pool.</dd></div>
+          <div><dt>Extras pool</dt><dd>How many extra seats are genuinely available right now.</dd></div>
+          <div><dt>Held seats</dt><dd>Seats in the hall that belong to no segment. Never allocated to anyone.</dd></div>
+          <div><dt>Round</dt><dd>A label you give a wave of registration, so you can group and report by it later.</dd></div>
+          <div><dt>Ticket code</dt><dd>The short human-readable code printed on the ticket. Belongs to that person for life.</dd></div>
+          <div><dt>QR token</dt><dd>What the QR square actually contains. Never changes, even when a ticket is reissued.</dd></div>
+          <div><dt>Outbox</dt><dd>The list of messages waiting to go out. Draft → Queued → Sent.</dd></div>
+          <div><dt>Blast</dt><dd>Sending a batch of ticket emails. Safe to repeat.</dd></div>
+          <div><dt>Operator</dt><dd>An usher's account. Scoped to the shows you assign.</dd></div>
+          <div><dt>Manifest</dt><dd>The roster an usher's phone downloads so it can keep scanning with no signal.</dd></div>
+          <div><dt>Audit log</dt><dd>The record of every override and capacity change. It records what and when.</dd></div>
+        </dl>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="notyet">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">§</div>
+          <div>
+            <h2>Not built yet</h2>
+            <p class="section-sub">Screens you will find empty</p>
+          </div>
+        </div>
+
+        <p>
+          Four items in the sidebar are placeholders. They are in the navigation so
+          the shape of the system is visible, and they say which part of the build
+          owns them.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Screen</th><th scope="col">Will be</th><th scope="col">For now</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Forms</th><td>Registration forms built and hosted here.</td><td>Use Google Forms and the Import screen.</td></tr>
+              <tr><th scope="row">Portal</th><td>Booklet, practical info, unlocked on admission.</td><td>Ticket holders get the read-only ticket page at <span class="path">/t/…</span>.</td></tr>
+              <tr><th scope="row">Notes</th><td>The post-concert notes wall, grouped per player.</td><td>Nothing.</td></tr>
+              <tr><th scope="row">Exports</th><td>A single export screen.</td><td>The <strong>Export</strong> button on any table already gives you CSV or Excel of what you are looking at.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>The ticket page people can already reach</h3>
+        <p>
+          Every ticket carries a link to a read-only page showing the holder's name,
+          show, date, doors, venue and QR code. Ticket holders scan their own QR out
+          of curiosity, so it exists deliberately — a dead link there is a phone call
+          on concert night.
+        </p>
+      </section>
+
+      <!-- ============================================ -->
+      <section class="section" id="runsheet">
+        <div class="section-head">
+          <div class="phase-mark ref" aria-hidden="true">✓</div>
+          <div>
+            <h2>Run sheet</h2>
+            <p class="section-sub">The whole thing on one page</p>
+          </div>
+        </div>
+
+        <h4>Weeks before</h4>
+        <ul class="checklist">
+          <li>Concert created, timezone set</li>
+          <li>Shows created with capacity, doors and venue</li>
+          <li>Segments created with capacity, quota, deadline and policy</li>
+          <li>Player roster loaded, everyone's active status correct</li>
+          <li>Ticket template designed and previewed against the longest name</li>
+          <li>A ticket printed on paper and scanned on a real usher's phone, offline</li>
+          <li>Email templates written, previewed against a real recipient in both formats</li>
+        </ul>
+
+        <h4>As registrations come in</h4>
+        <ul class="checklist">
+          <li>Sheet imported — dry run read, then committed</li>
+          <li>Manual corrections and late additions made</li>
+          <li>Base claim deadline passed, extras pool checked</li>
+          <li>Extras reviewed and committed</li>
+        </ul>
+
+        <h4>Before the blast</h4>
+        <ul class="checklist">
+          <li>Tickets issued for everyone confirmed</li>
+          <li>Full-volume test send landed in Gmail, Outlook and a corporate inbox</li>
+          <li>The split read: confirmed, already sent, pending, failed</li>
+          <li>Prepare → read the drafts → Confirm → Send</li>
+          <li>Queue banner watched until it clears; any failures resent</li>
+        </ul>
+
+        <h4>Before the doors</h4>
+        <ul class="checklist">
+          <li>An operator account per usher, shows assigned</li>
+          <li>Every usher signed in on their own phone and tested it</li>
+          <li>Every usher opened the show once while on wifi, so the roster downloaded</li>
+          <li>Check-in dashboard open on the desk laptop</li>
+        </ul>
+      </section>
+
+      <p class="colophon">
+        Concert Admin Handbook · companion to the Door Scanner Handbook for ushers.<br>
+        Covers V1 of the ticketing system. Contains no capacities, quotas or dates —
+        those belong in the console, not in a document.<br>
+        Report anything this handbook gets wrong; a manual that disagrees with the
+        screen is worse than no manual.
+      </p>
+
+    </main>
+  </div>
+</div>

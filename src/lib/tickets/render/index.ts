@@ -4,6 +4,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, degrees, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import { interpolate, resolveBinding, type TicketData } from '../bindings';
 import { loadFace, resolveFace, type FaceKey } from '../fonts';
+import { embeddedTypesetter, needsOutline, outlineTypesetter } from './outline';
 import { type Layout, type RectElement, type TextElement } from '../layout';
 import { drawQr } from './qr';
 import {
@@ -255,7 +256,25 @@ async function drawText(
 
   if (!value.trim()) return false;
 
-  const font = await embedFace(resolveFace(element.font_family, element.font_weight));
+  const key = resolveFace(element.font_family, element.font_weight);
+
+  /**
+   * **A character the embedded face has no glyph for is drawn, not embedded.**
+   *
+   * Inter and JetBrains Mono carry no CJK, and a reader that cannot find a
+   * glyph draws `|x|` rather than failing — so a Chinese name printed as a row
+   * of boxes and every test still passed. `render/outline.ts` explains why the
+   * fallback draws outlines instead of embedding a second font; what matters
+   * here is that the whole element switches, not individual characters. One
+   * face per element keeps every metric self-consistent, so shrink-to-fit still
+   * agrees with what is drawn, and the fallback carries Latin too — so
+   * "陈 Tan" sets in one face rather than two that disagree about their
+   * baselines.
+   */
+  const type = needsOutline(key, value)
+    ? outlineTypesetter(element.font_weight)
+    : embeddedTypesetter(await embedFace(key));
+
   const fit = fitText({
     text: value,
     maxWidth: element.w,
@@ -263,7 +282,7 @@ async function drawText(
     fontSize: element.font_size,
     maxLines: element.max_lines,
     overflow: element.overflow,
-    measure: (text, size) => font.widthOfTextAtSize(text, size),
+    measure: (text, size) => type.widthOf(text, size),
   });
 
   const lineHeight = fit.fontSize * DEFAULT_LINE_HEIGHT;
@@ -283,8 +302,8 @@ async function drawText(
    * `y = lineTop + size` does, and it shows up as text that looks correct in
    * isolation and misaligned against a rule or a rectangle beside it.
    */
-  const ascent = font.heightAtSize(fit.fontSize, { descender: false });
-  const glyphHeight = font.heightAtSize(fit.fontSize);
+  const ascent = type.ascentAt(fit.fontSize);
+  const glyphHeight = type.heightAt(fit.fontSize);
   const baselineInLine = (lineHeight - glyphHeight) / 2 + ascent;
 
   // The box's bottom edge in page space. Text measures up from here rather than
@@ -296,13 +315,12 @@ async function drawText(
   fit.lines.forEach((line, index) => {
     const lineTopFromBoxTop = blockTop + index * lineHeight;
     const baselineFromBoxTop = lineTopFromBoxTop + baselineInLine;
-    page.drawText(line, {
-      x: element.x + alignOffset(font.widthOfTextAtSize(line, fit.fontSize), element.w, element.align),
+    type.draw(page, line, {
+      x: element.x + alignOffset(type.widthOf(line, fit.fontSize), element.w, element.align),
       y: boxBottom + element.h - baselineFromBoxTop,
       size: fit.fontSize,
-      font,
       color: hexToRgb(element.color),
-      rotate: degrees(element.rotation),
+      rotation: element.rotation,
     });
   });
 

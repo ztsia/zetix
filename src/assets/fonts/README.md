@@ -15,9 +15,23 @@ tickets go out.
 | `Inter-Regular.ttf` | Inter | 400 | body text on the seeded templates |
 | `Inter-SemiBold.ttf` | Inter | 600 | attendee name — `spec/tickets.md` §10.2's example uses `font_weight: 600` |
 | `JetBrainsMono-Regular.ttf` | JetBrains Mono | 400 | `ticket_code` — a monospace face so `8`/`B` and `5`/`S` stay distinguishable when read aloud at the door |
+| `NotoSansSC-Regular.ttf` | Noto Sans SC | 400 | **Never embedded.** The fallback for characters the three faces above have no glyph for — chiefly CJK. Used as a source of outlines, drawn as paths (`render/outline.ts`) |
 
-Both families are under the **SIL Open Font License 1.1**, which permits redistribution inside a
+All four families are under the **SIL Open Font License 1.1**, which permits redistribution inside a
 repository.
+
+## The fallback face is 10MB, and that is the point
+
+`NotoSansSC-Regular.ttf` is an order of magnitude larger than the others because it carries around
+30,000 glyphs. It is vendored whole and **never embedded in a PDF**: `subset: false` is not
+negotiable in this renderer (`render/index.ts`), so embedding it would put 10MB into every ticket
+with a Chinese name — a party of four would stop fitting in an email. Instead the renderer takes the
+outline of each character it needs and draws it as a path, so a three-character name costs about
+4KB and the font stays in the function bundle.
+
+A subsetted copy was considered and rejected: 2MB for the 6,763 GB2312 characters, still per ticket,
+and a coverage cliff exactly where rare characters live, which is personal names. Keeping the whole
+font on disk means **no name can fail to print**.
 
 ## Provenance
 
@@ -27,9 +41,12 @@ Fetched 7 Sep 2026 from the Google Fonts CSS API, which serves TTF to a desktop 
 https://fonts.googleapis.com/css2?family=Inter:wght@400
 https://fonts.googleapis.com/css2?family=Inter:wght@600
 https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400
+https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400
 ```
 
-then the `fonts.gstatic.com` URL out of each response. Inter is `v20`, JetBrains Mono is `v24`.
+then the `fonts.gstatic.com` URL out of each response. Inter is `v20`, JetBrains Mono is `v24`. Noto Sans SC (`v40`) was fetched the same way on 14 Sep
+2026; it covers Simplified and Traditional forms, which was checked against a list of surnames
+rather than assumed (`tests/tickets/cjk.test.ts`).
 
 **If you re-fetch, check the three faces are still distinct.** Google sometimes serves one variable
 font for several weights, and two identical faces is a failure that looks like success — the ticket

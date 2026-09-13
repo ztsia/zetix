@@ -129,7 +129,12 @@ export default async function FormsPage({
 
                 <ItemActions>
                   {form.status === 'OPEN' && (
-                    <Button variant="ghost" size="sm" render={<a href={`/f/${form.slug}`} target="_blank" rel="noreferrer" />}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      nativeButton={false}
+                      render={<a href={`/f/${form.slug}`} target="_blank" rel="noreferrer" />}
+                    >
                       <ExternalLink />
                       Open
                     </Button>
@@ -137,6 +142,7 @@ export default async function FormsPage({
                   <Button
                     variant="outline"
                     size="sm"
+                    nativeButton={false}
                     render={<Link href={`/admin/concerts/${concertId}/forms/${form.id}`} />}
                   >
                     Edit

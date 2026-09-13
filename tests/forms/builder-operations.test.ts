@@ -335,3 +335,70 @@ describe('field types and their options', () => {
     stillValid(schema, 'three questions with the same label');
   });
 });
+
+describe('a draft question’s key follows its label', () => {
+  /** A form's keys are what answers are stored under, so this is only safe before any exist. */
+  function draftWithQuestion(): { schema: FormSchema; index: number } {
+    let schema = addCustomBlock(blankFormSchema('FEEDBACK'), 'Questions');
+    const index = schema.blocks.length - 1;
+    schema = addField(schema, index);
+    return { schema, index };
+  }
+
+  it('re-derives the key while the form is a draft', () => {
+    const { schema, index } = draftWithQuestion();
+    expect(blockFields(schema.blocks[index])[0].key).toBe('new_question');
+
+    const renamed = updateField(schema, index, 0, { label: 'Coming by car' }, true);
+    expect(blockFields(renamed.blocks[index])[0].key).toBe('coming_by_car');
+    stillValid(renamed, 'after a rename in draft');
+  });
+
+  it('freezes the key once the form can take answers', () => {
+    const { schema, index } = draftWithQuestion();
+    // The default, and what an open or closed form passes: answers already
+    // given are filed under the old key and must stay findable.
+    const renamed = updateField(schema, index, 0, { label: 'Coming by car' });
+    expect(blockFields(renamed.blocks[index])[0].key).toBe('new_question');
+    expect(blockFields(renamed.blocks[index])[0].label).toBe('Coming by car');
+  });
+
+  it('never re-derives a system field’s key', () => {
+    const schema = blankFormSchema('PUBLIC');
+    const registrant = blockIndexOfType(schema, 'REGISTRANT');
+    const emailIndex = fieldIndex(schema, registrant, 'contact_email');
+
+    const renamed = updateField(schema, registrant, emailIndex, { label: 'Your email' }, true);
+    expect(blockFields(renamed.blocks[registrant])[emailIndex].key).toBe('contact_email');
+    stillValid(renamed, 'after relabelling a system field in draft');
+  });
+
+  it('carries a condition that read the old key across the rename', () => {
+    let schema = addCustomBlock(blankFormSchema('FEEDBACK'), 'Questions');
+    const index = schema.blocks.length - 1;
+    schema = addField(schema, index, 'Source');
+    schema = addField(schema, index, 'Follow up');
+    schema = updateField(schema, index, 1, { condition: { field: 'source', op: 'answered' } });
+
+    const renamed = updateField(schema, index, 0, { label: 'How did you hear' }, true);
+    const fields = blockFields(renamed.blocks[index]);
+
+    expect(fields[0].key).toBe('how_did_you_hear');
+    // The rule follows the question rather than being silently cleared, which
+    // is what dropping the orphan would have done.
+    expect(fields[1].condition?.field).toBe('how_did_you_hear');
+    stillValid(renamed, 'after renaming a condition source');
+  });
+
+  it('keeps keys unique when two questions are given the same label', () => {
+    let schema = addCustomBlock(blankFormSchema('FEEDBACK'), 'Questions');
+    const index = schema.blocks.length - 1;
+    schema = addField(schema, index, 'One');
+    schema = addField(schema, index, 'Two');
+
+    const renamed = updateField(schema, index, 1, { label: 'One' }, true);
+    const keys = blockFields(renamed.blocks[index]).map((field) => field.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    stillValid(renamed, 'after a colliding rename');
+  });
+});

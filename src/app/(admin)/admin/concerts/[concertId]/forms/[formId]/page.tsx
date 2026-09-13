@@ -104,6 +104,7 @@ export default async function FormPage({
           variant="ghost"
           size="sm"
           className="-ml-2"
+          nativeButton={false}
           render={<Link href={`/admin/concerts/${concertId}/forms`} />}
         >
           <ArrowLeft />
@@ -131,6 +132,7 @@ export default async function FormPage({
           <Button
             variant="outline"
             size="sm"
+            nativeButton={false}
             render={<Link href={`/admin/concerts/${concertId}/forms/${formId}/responses`} />}
           >
             <Inbox />
@@ -203,6 +205,9 @@ export default async function FormPage({
             limits={limits.ok ? limits.limits : {}}
             copy={copy}
             readOnly={form.status === 'CLOSED'}
+            // A key is frozen the moment a form can take an answer, because
+            // answers are stored under it (spec/v2.md §8.2.3).
+            canRekey={form.status === 'DRAFT'}
           />
         </TabsContent>
 

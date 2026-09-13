@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useMemo, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Eye, Plus, Save } from 'lucide-react';
+import { Braces, Eye, Plus, Save } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,7 +13,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import { FormRenderer } from '@/components/forms/form-renderer';
 import { emptyAnswers, type FormAnswers } from '@/lib/forms/answers';
-import type { CopyValues } from '@/lib/forms/copy';
+import { COPY_TOKENS, type CopyValues } from '@/lib/forms/copy';
 import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
 import { BlockEditor } from './block-editor';
 import {
@@ -61,6 +61,7 @@ export function FormBuilder({
   limits,
   copy,
   readOnly,
+  canRekey,
 }: {
   concertId: number;
   formId: number;
@@ -69,6 +70,11 @@ export function FormBuilder({
   copy: CopyValues;
   /** A closed form still renders, so its questions can be read and copied forward. */
   readOnly?: boolean;
+  /**
+   * Whether a custom question's key may still follow its label — true only on a
+   * `DRAFT`, where nothing can yet have been answered under the old one.
+   */
+  canRekey?: boolean;
 }) {
   const [schema, setSchema] = useState<FormSchema>(initialSchema);
   const [saved, setSaved] = useState<FormSchema>(initialSchema);
@@ -105,6 +111,23 @@ export function FormBuilder({
   );
 
   const [answers, setAnswers] = useState<FormAnswers>(() => emptyAnswers(schema, limits));
+
+  /**
+   * Whether there is room for the split.
+   *
+   * Starts true because this console is web-first and the server renders no
+   * `matchMedia`: a first paint that assumed a phone would rearrange itself
+   * under the reader on every desktop load, which is the more common case by
+   * far (`surfaces.md` §15.1).
+   */
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)');
+    const sync = () => setWide(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
 
   const edit = useCallback((next: FormSchema) => {
     setSchema(next);
@@ -162,6 +185,29 @@ export function FormBuilder({
 
   const editor = (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
+      {/* Said once, above the sections, rather than under every copy box. Copy
+          interpolates resolved settings so a form's own text never hardcodes a
+          number either (spec/README.md §2.1) — but repeating the token list
+          under all five boxes buries the questions they sit between. */}
+      {!readOnly && (
+        <details className="bg-muted/40 rounded-md border px-3 py-2 text-sm">
+          <summary className="text-muted-foreground flex cursor-pointer items-center gap-2">
+            <Braces className="size-3.5" />
+            Write a number as a token, and the form fills it in
+          </summary>
+          <dl className="text-muted-foreground mt-2 grid gap-1 sm:grid-cols-2">
+            {COPY_TOKENS.map((entry) => (
+              <div key={entry.token}>
+                <dt className="inline">
+                  <code className="text-xs">{`{{${entry.token}}}`}</code>
+                </dt>
+                <dd className="inline"> — {entry.description}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
+
       {readOnly ? (
         <Alert>
           <AlertTitle>This form is closed</AlertTitle>
@@ -198,7 +244,7 @@ export function FormBuilder({
           onAddField={() => edit(addField(schema, index))}
           onRestoreField={(key) => edit(restoreSystemField(schema, index, key))}
           onFieldChange={(fieldIndex: number, patch: FieldPatch) =>
-            edit(updateField(schema, index, fieldIndex, patch))
+            edit(updateField(schema, index, fieldIndex, patch, canRekey))
           }
           onFieldMove={(fieldIndex: number, direction: -1 | 1) =>
             edit(moveField(schema, index, fieldIndex, direction))
@@ -243,25 +289,32 @@ export function FormBuilder({
       )}
 
       {/* Web-first: the split is the point of the screen, so it is a real
-          resizable pair above `lg` and two stacked panes below, rather than a
-          preview hidden behind a tab (`surfaces.md` §15.1). */}
-      <ResizablePanelGroup
-        orientation="horizontal"
-        className="hidden min-h-[70vh] rounded-lg border lg:flex"
-      >
-        <ResizablePanel defaultSize="58%" minSize="30%">
-          {editor}
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize="42%" minSize="25%">
-          {preview}
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          resizable pair on a wide viewport and two stacked panes below, rather
+          than a preview hidden behind a tab (`surfaces.md` §15.1).
 
-      <div className="flex flex-col gap-4 lg:hidden">
-        <div className="rounded-lg border">{editor}</div>
-        <div className="rounded-lg border">{preview}</div>
-      </div>
+          **Chosen at runtime rather than with `lg:hidden`.** Rendering both and
+          hiding one would put two copies of every control in the document,
+          which duplicates the `id`s the field labels point at — a click on a
+          label would focus the copy in the hidden pane. */}
+      {wide ? (
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="flex min-h-[70vh] rounded-lg border"
+        >
+          <ResizablePanel defaultSize="58%" minSize="30%">
+            {editor}
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize="42%" minSize="25%">
+            {preview}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="rounded-lg border">{editor}</div>
+          <div className="rounded-lg border">{preview}</div>
+        </div>
+      )}
     </div>
   );
 }

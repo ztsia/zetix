@@ -62,6 +62,7 @@ export default async function ResponsesPage({
           variant="ghost"
           size="sm"
           className="-ml-2"
+          nativeButton={false}
           render={<Link href={`/admin/concerts/${concertId}/forms/${formId}`} />}
         >
           <ArrowLeft />

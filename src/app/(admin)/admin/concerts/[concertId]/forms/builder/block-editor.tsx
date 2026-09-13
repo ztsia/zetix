@@ -22,7 +22,6 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { blockFields, isRepeaterType, type FormBlock, type FormSchema } from '@/lib/forms/schema';
-import { COPY_TOKENS } from '@/lib/forms/copy';
 import { FieldEditor } from './field-editor';
 import {
   BLOCK_HELP,
@@ -185,13 +184,6 @@ export function BlockEditor({
             placeholder="Shown under the heading."
             onChange={(event) => onCopyChange({ description_md: event.target.value })}
           />
-          <FieldDescription>
-            {/* Copy interpolates resolved settings so a form's own text never
-                hardcodes a number either (spec/README.md §2.1). */}
-            Write <code className="text-xs">{'{{base_quota}}'}</code> and the like rather
-            than a number, and the form fills it in from this segment&rsquo;s settings:{' '}
-            {COPY_TOKENS.map((entry) => `{{${entry.token}}}`).join(', ')}.
-          </FieldDescription>
         </Field>
 
         {isRepeaterType(block.type) && (

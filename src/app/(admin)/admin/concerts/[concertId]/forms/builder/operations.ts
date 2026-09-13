@@ -338,6 +338,19 @@ export function updateField(
   blockIndex: number,
   fieldIndex: number,
   patch: FieldPatch,
+  /**
+   * Whether a custom field's `key` may follow its label.
+   *
+   * **True only while the form is a `DRAFT`.** A key is what an answer is
+   * stored under in `registrations.custom` and `attendees.custom` (§8.2.3), so
+   * once anyone can have answered, it is frozen: re-deriving it then would
+   * leave the answers already given filed under a name nothing looks for.
+   *
+   * Before that it must follow, or a question added and then written keeps the
+   * placeholder it was created with — `new_question`, `new_question_2` — and
+   * the export columns and custom payloads read like a form nobody finished.
+   */
+  rekey = false,
 ): FormSchema {
   const block = schema.blocks[blockIndex];
   if (!block) return schema;
@@ -350,6 +363,26 @@ export function updateField(
   const next: FormField = { ...field };
 
   if (patch.label !== undefined) next.label = patch.label;
+
+  /**
+   * The key follows the label while that is still safe, and every condition
+   * that reads this field follows with it.
+   *
+   * Rewriting the readers is the half that is easy to miss: leaving them
+   * pointing at the old key would strand the rule, and `dropOrphanedConditions`
+   * would then quietly clear it — an admin would watch their own show/hide rule
+   * disappear for renaming a question.
+   */
+  let renamedFrom: string | null = null;
+  if (rekey && !locked && patch.label !== undefined && patch.label.trim() !== '') {
+    const taken = keysInScope(schema, blockIndex);
+    taken.delete(field.key);
+    const candidate = keyFromLabel(patch.label, taken);
+    if (candidate !== field.key) {
+      renamedFrom = field.key;
+      next.key = candidate;
+    }
+  }
   if (patch.help_md !== undefined) {
     if (patch.help_md) next.help_md = patch.help_md;
     else delete next.help_md;
@@ -386,7 +419,27 @@ export function updateField(
   }
 
   fields[fieldIndex] = next;
-  return dropOrphanedConditions(replaceBlock(schema, blockIndex, withFields(block, fields)));
+  const updated = replaceBlock(schema, blockIndex, withFields(block, fields));
+  return dropOrphanedConditions(
+    renamedFrom === null ? updated : repointConditions(updated, renamedFrom, next.key),
+  );
+}
+
+/** Follow a renamed key through every condition that reads it. */
+function repointConditions(schema: FormSchema, from: string, to: string): FormSchema {
+  return {
+    ...schema,
+    blocks: schema.blocks.map((block) =>
+      withFields(
+        block,
+        blockFields(block).map((field) =>
+          field.condition?.field === from
+            ? { ...field, condition: { ...field.condition, field: to } }
+            : field,
+        ),
+      ),
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------

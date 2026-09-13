@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toNameCase } from '@/lib/tickets/name-case';
+import { toNameCase } from '@/lib/names';
 
 /**
  * Names are typed by whoever filled in the form, and the ticket is where that

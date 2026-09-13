@@ -1,7 +1,7 @@
 import { TZDate } from '@date-fns/tz';
 import { format as formatDate } from 'date-fns';
 import { BINDINGS, type Binding, type Layout, bindingsUsed } from './layout';
-import { toNameCase } from './name-case';
+import { toNameCase } from '../names';
 import { qrUrl } from './identifiers';
 
 /**

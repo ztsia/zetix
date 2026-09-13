@@ -6,6 +6,7 @@ import { getDb } from '@/db/client';
 import { requireAdmin } from '@/lib/auth/guards';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
 import { formatInZone, ticketLinks } from '@/lib/email/queue';
+import { toNameCase } from '@/lib/names';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { Button } from '@/components/ui/button';
 import { TemplateEditor, type PreviewRecipient } from './template-editor';
@@ -139,15 +140,17 @@ export default async function TemplatesPage({
       'show.venue_name': row.venue_name ?? '',
       'show.venue_address': row.venue_address ?? '',
       'segment.name': row.segment_name,
-      'registration.contact_name': row.contact_name ?? '',
+      // Cased exactly as `queue.ts` does it, or the preview would show a name
+      // the blast is not going to send.
+      'registration.contact_name': toNameCase(row.contact_name ?? ''),
       'registration.contact_email': row.contact_email,
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
-      attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
+      attendee_names: (row.attendee_names ?? []).filter(Boolean).map(toNameCase).join(', '),
       // Rendered from the real seats, not a stub: `ref.md` §6 — a template
       // bug is almost always a data-shape bug, and this token is the one that
       // changes shape with the size of the party.
-      ticket_links: ticketLinks(row.link_names, row.qr_tokens),
+      ticket_links: ticketLinks((row.link_names ?? []).map(toNameCase), row.qr_tokens),
     },
   }));
 

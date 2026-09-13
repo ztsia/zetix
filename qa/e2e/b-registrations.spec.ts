@@ -33,8 +33,8 @@ test('FLOW-1 manual registration bypasses the form window', async () => {
   await shot(page, 'FLOW-1-step-1-registrations-table');
 
   // Prove the form window really is shut before the admin bypasses it.
-  await sql`insert into registration_forms (segment_id, round_label, title, slug, schema, status, opens_at, closes_at)
-    values (${ids.playerSegment}, 'Round 1', 'Closed form', 'closed-form-b', '{}'::jsonb, 'CLOSED',
+  await sql`insert into registration_forms (segment_id, kind, round_label, title, slug, schema, status, opens_at, closes_at)
+    values (${ids.playerSegment}, 'PLAYER', 'Round 1', 'Closed form', 'closed-form-b', '{}'::jsonb, 'CLOSED',
             '2026-08-01T00:00:00Z', '2026-08-20T00:00:00Z')`;
   const [form] = await sql<{ status: string; closes_at: string }[]>`
     select status, closes_at from registration_forms where slug = 'closed-form-b'`;

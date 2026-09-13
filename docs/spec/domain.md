@@ -226,8 +226,8 @@ party of four that split up at the interval has four of them. The audience is at
 **`mapping_profiles`**
 `id`, `name`, `show_id` (nullable), `audience`, `config` (jsonb — `import.md` §9.3), `created_at`, `updated_at`
 
-**`email_outbox`** — one row per *message*, and every message is addressed to a registration
-`id`, `registration_id` (not null), `template_key`,
+**`email_outbox`** — one row per *message*, and every message has exactly one addressee
+`id`, `registration_id` (nullable), `player_id` (nullable), `template_key`,
 `to_email`, `to_name`,
 `subject`, `body_md`, `context` (jsonb — the merge values the body was rendered from),
 `attachment_paths` (jsonb array, nullable),
@@ -239,6 +239,15 @@ Index: `(status, scheduled_for)`, `(registration_id)`
 create unique index outbox_no_duplicate_pending
   on email_outbox (registration_id, template_key)
   where status in ('DRAFT', 'QUEUED', 'SENDING');
+
+-- V2, for the one player-addressed template. Both keys stay total:
+create unique index outbox_no_duplicate_pending_player
+  on email_outbox (player_id, template_key)
+  where status in ('DRAFT', 'QUEUED', 'SENDING');
+
+alter table email_outbox
+  add constraint email_outbox_one_addressee
+  check (num_nonnulls(registration_id, player_id) = 1);
 ```
 
 **Every email in this system is addressed to a registrant, never to a seat** (`email.md` §11.3): a player receives
@@ -253,8 +262,16 @@ any message before dispatch and the dispatcher sends exactly what was reviewed (
 
 This index is what makes a repeat blast safe (`email.md` §11.4). Do not omit it.
 
-*(V2 note: `player_notes_digest` is the one player-addressed email. It arrives with V2 and adds a
-nullable `player_id` and its own partial unique index; nothing above changes.)*
+**`player_notes_digest` is the one player-addressed email**, and a player has no registration. V2
+therefore made `registration_id` nullable — the exact move the paragraph above warns about — and kept
+the guarantee by **adding a disjoint second key rather than swapping the first**: nullable `player_id`,
+a `check` that exactly one of the two is non-null, and a second partial unique index over the same
+pending statuses. Every registration-addressed row still carries a non-null `registration_id` and the
+original index bites unchanged.
+
+**The check constraint is the load-bearing half.** Without it a row with both keys null conflicts with
+nothing, `on conflict do nothing` silently does nothing, and a double-queued digest sends twice with no
+error anywhere. `tests/schema/outbox.test.ts` proves both halves.
 
 **`app_users`** — backed by Supabase Auth
 `id` (= `auth.users.id`), `email`, `display_name`, `role` (ADMIN | OPERATOR),
@@ -347,14 +364,12 @@ time, not a silent fallback.
 | `allocation.allow_partial_grant` | segment | A boundary request may be granted in part |
 | `form.max_tickets_per_response` | segment | **Total** party size cap, registrant included. The public repeater therefore renders `cap − 1` rows (`v2.md` §8.1.2) |
 | `form.extra_rows_max` | segment | Rows in the "request extras" repeater |
-| `show.auto_complete_after_hours` | show | How long after `ends_at` the show counts as over — the portal's post-show phase and auto-completion both read it (`v2.md` §13.2.1). Inert while `ends_at` is null |
 | `portal.unlock_mode` | show | `ON_ADMISSION`, `OPEN_TO_ALL`, `CLOSED`. **Who** may see unlocked sections, nothing more — it is never flipped by a show reaching `COMPLETED` (`v2.md` §13.2.1) |
 | `portal.booklet_enabled` | show | |
 | `portal.notes_enabled` | concert | |
 | `portal.notes_close_at` | concert | |
 | `portal.feedback_enabled` | show | |
 | `portal.feedback_close_at` | show | |
-| `portal.feedback_send_hour` | concert | Hour in `concert.timezone` at which queued feedback email becomes due (`v2.md` §13.5.2) |
 | `portal.public_wall_enabled` | concert | |
 | `portal.public_wall_visibility` | concert | `ADMIN_ONLY` or `AUDIENCE` |
 | `concert.timezone` | concert | IANA zone; all show times are stored UTC and rendered in it (§6.1) |
@@ -362,11 +377,19 @@ time, not a silent fallback.
 **System values — seeded, rarely changed.** These describe the runtime, not the event, so they do carry
 install-time seeds.
 
+Two of them sit at a show or concert **level** while still being runtime values, and they are listed
+here rather than above because they are seeded: how long after a printed end time an evening counts as
+over, and what hour of the day is a civil one to email people at. Neither is a capacity, a quota or a
+deadline for this concert; both are overridden per show or per concert like anything else in the
+cascade, and their seeds are `v2.md` §13.2.1's and §13.5.2's own worked figures.
+
 | Key | Level | Seed | Meaning |
 |---|---|---|---|
 | `portal.note_max_length` | system | 1000 | V2 |
 | `form.rate_limit_per_ip_per_min` | system | 5 | V2 |
 | `form.verification_grace_hours` | system | 48 | Unverified public registrations older than this are flagged for admin review (`v2.md` §8.1.4) |
+| `show.auto_complete_after_hours` | show | 2 | How long after `ends_at` the show counts as over — the portal's post-show phase and auto-completion both read it (`v2.md` §13.2.1). **Inert while `ends_at` is null.** Overridden per show and per concert |
+| `portal.feedback_send_hour` | concert | 12 | Hour in `concert.timezone` at which queued feedback email becomes due (`v2.md` §13.5.2) |
 | `form.seat_indicator_exact_below` | system | 20 | Below this the form shows a band, not a number (`v2.md` §8.3) |
 | `auth.admin_max_attempts` | system | 5 | Admin sign-in attempts per IP before lockout (`admin.md` §14.3) |
 | `auth.admin_lockout_window_min` | system | 15 | |

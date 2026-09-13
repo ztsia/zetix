@@ -123,8 +123,8 @@ describe('createRegistration', () => {
   it('creates against a segment whose form is closed', async () => {
     const { segmentId } = await publicSegment();
     await sql`
-      insert into registration_forms (segment_id, title, slug, status, closes_at)
-      values (${segmentId}, 'Round 1', 'round-1', 'CLOSED', now() - interval '2 days')
+      insert into registration_forms (segment_id, kind, title, slug, status, closes_at)
+      values (${segmentId}, 'PUBLIC', 'Round 1', 'round-1', 'CLOSED', now() - interval '2 days')
     `;
 
     const result = await createRegistration({

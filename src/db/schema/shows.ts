@@ -37,6 +37,27 @@ export const shows = pgTable(
 
     /** Stored UTC, rendered in `concert.timezone`, never the viewer's (spec/domain.md §6.1). */
     startsAt: timestamp('starts_at', { withTimezone: true }),
+
+    /**
+     * What "the show is over" is measured from (spec/v2.md §13.2.1,
+     * decision 41).
+     *
+     * **Nullable on purpose, and inert when null.** The portal's post-show phase
+     * and auto-completion both derive from
+     * `ends_at + show.auto_complete_after_hours`, read off the clock rather than
+     * from a flag — so with no value there is simply no post-show phase and no
+     * auto-completion, and an admin marks the show `COMPLETED` by hand as
+     * before.
+     *
+     * **No duration is inferred from `starts_at` and this column takes no
+     * default.** A concert with an interval can run well past its nominal
+     * length, and a portal that flipped to "how was your evening?" mid-
+     * performance would be worse than one that waited for a human. A missing
+     * operational value is a validation error at save time, never a guess
+     * (spec/README.md §2.1).
+     */
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+
     doorsOpenAt: timestamp('doors_open_at', { withTimezone: true }),
 
     venueName: text('venue_name'),

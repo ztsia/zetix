@@ -480,6 +480,41 @@ describe('validation levels (§9.4)', () => {
     expect(plan.counts.seats).toBe(1);
   });
 
+  /**
+   * A guest typed `may _zxample@yahoo.com`. It imported with a malformed warning
+   * and was then *delivered* — to `_zxample@yahoo.com`, because an address parser
+   * splits the header on the space and keeps the last token, which was a real
+   * address belonging to somebody else. A bounce would have been the good
+   * outcome.
+   *
+   * So the space comes out here, unconditionally. It is a guess, and the only
+   * one available: an address with a space cannot be delivered as typed, so the
+   * choice is repair or certain failure, and a wrong repair bounces visibly.
+   */
+  it('removes a space from inside an address rather than importing it', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'May', [HEADERS.email]: 'may _zxample@yahoo.com', [HEADERS.name]: 'May', [HEADERS.type]: 'Extra' }, 2)],
+      publicProfile(),
+      publicCtx(),
+    );
+
+    expect(plan.parties[0].contactEmail).toBe('may_zxample@yahoo.com');
+    // Repaired, so there is nothing left to warn about.
+    expect(codes(plan)).not.toContain('CONTACT_EMAIL_MALFORMED');
+    expect(plan.counts.blocking).toBe(0);
+  });
+
+  it('still warns when removing the spaces does not make it an address', () => {
+    const plan = planImport(
+      [row({ [HEADERS.ts]: '2026-09-01T10:00:00Z', [HEADERS.contact]: 'May', [HEADERS.email]: 'not an email', [HEADERS.name]: 'May', [HEADERS.type]: 'Extra' }, 2)],
+      publicProfile(),
+      publicCtx(),
+    );
+
+    expect(codes(plan)).toContain('CONTACT_EMAIL_MALFORMED');
+    expect(plan.counts.seats).toBe(1);
+  });
+
   it('warns on a duplicate attendee email within the file', () => {
     const p = parseMappingProfile({
       columns: {

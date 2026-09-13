@@ -32,7 +32,7 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '- **Where:** {{ show.venue_name }}, {{ show.venue_address }}',
       '- **Guests:** {{ attendee_names }}',
       '',
-      'Please bring each ticket, printed or on a phone. Every guest needs their own.',
+      'Show the QR code on each ticket to the registration crew at the door. Every guest needs their own.',
       '',
       'You can also view them here:',
       '',
@@ -116,7 +116,7 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '- **When:** {{ show.starts_at }} (doors {{ show.doors_open_at }})',
       '- **Where:** {{ show.venue_name }}, {{ show.venue_address }}',
       '',
-      'Please bring your ticket for each guest, printed or on a phone. Seating is unreserved.',
+      'Have the QR code ready to show the registration crew at the door, one per guest. Seating is unreserved.',
     ].join('\n'),
   },
   player_notes_digest: {

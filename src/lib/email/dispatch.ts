@@ -470,7 +470,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
              * attachments were built at all, so the two cannot disagree.
              */
             footer: carriesTickets(row.templateKey)
-              ? 'Your ticket is the attached PDF. Please bring it printed or on a phone — every guest needs their own.'
+              ? 'Your ticket is the attached PDF. Show its QR code to the registration crew at the door — every guest needs their own.'
               : undefined,
           }),
           text: markdownToPlainText(row.bodyMd),

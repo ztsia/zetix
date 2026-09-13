@@ -193,6 +193,45 @@ export function withDirectAttendeeWrites<T>(
   }) as Promise<T>;
 }
 
+/**
+ * Mints a token and pins a template on every confirmed seat of a show, the way
+ * `tickets/issue.ts` does.
+ *
+ * Fixtures need this because a ticket-bearing blast refuses a party that still
+ * has a seat to issue (spec/email.md §11.4). A suite that seeds attendees and
+ * never issues them is arranging a state the blast now declines, so the thing
+ * it means to test — idempotency, editing, confirming — never gets to run.
+ *
+ * The token only has to be unique and the right shape, `[0-9A-Za-z]{22}`: md5
+ * is hex, so 22 characters of it qualify.
+ */
+export async function issueTickets(concertId: number, showId: number): Promise<void> {
+  const [template] = await sql<{ id: string }[]>`
+    insert into ticket_templates (
+      concert_id, name, version, background_kind,
+      page_width_pt, page_height_pt, layout, is_default
+    ) values (
+      ${concertId}, 'Fixture', 1, 'NONE', 595, 280,
+      ${json({ canvas: { width_pt: 595, height_pt: 280, dpi: 300 }, elements: [] })}::text::jsonb,
+      false
+    )
+    -- Callable more than once per concert: returns the template already made
+    -- rather than colliding on (concert_id, name, version).
+    on conflict (concert_id, name, version) do update set version = excluded.version
+    returning id
+  `;
+  await sql`
+    update attendees a
+       set qr_token = coalesce(a.qr_token, substr(md5(random()::text || a.id::text), 1, 22)),
+           ticket_template_id = ${Number(template.id)},
+           ticket_template_version = 1,
+           ticket_issued_at = coalesce(a.ticket_issued_at, now())
+     where a.show_id = ${showId}
+       and a.status = 'CONFIRMED'
+       and a.deleted_at is null
+  `;
+}
+
 export async function setSystemSetting(key: string, value: unknown): Promise<void> {
   await sql`
     insert into system_settings (key, value) values (${key}, ${json(value)}::text::jsonb)

@@ -17,7 +17,7 @@ Companion documents:
 | `spec/` (this) | What the system does and how it behaves | The contract |
 | `../context.md` | This orchestra's concert: real numbers, dates, delivery plan, open questions | The data |
 | `../modules.md` | How V1 is cut into branches and what each owns | The work split |
-| `../modules-v2.md` | The same for V2's ten branches, `J`–`S` | The work split |
+| `../modules-v2.md` | The same for V2's six branches, `J`–`O` | The work split |
 | `../ref.md` | Patterns distilled from Hi.Events, chiefly the door-scanner IA | Background |
 
 ---
@@ -36,7 +36,7 @@ Companion documents:
 | `admin.md` | Admin console structure, notes wall, roles | §14 | F2, A, H |
 | `surfaces.md` | The four surfaces and their UI architecture | §15 | F2, all |
 | `platform.md` | Stack, hosting, connection strings, env vars | §16, §17, Appendices A–B | F1, F2 |
-| `v2.md` | Native forms, the portal and feedback — **specified, not built in V1** | §8, §13 | `J`–`S` |
+| `v2.md` | Native forms, the portal and feedback — **specified, not built in V1** | §8, §13 | `J`–`O` |
 | `decisions.md` | Every settled decision and its reasoning | §19 | everyone |
 
 **Section numbers are unchanged from the single-file spec** and are referenced throughout the

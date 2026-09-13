@@ -14,7 +14,13 @@
 import { z } from 'zod';
 import { isBlank, type FieldValue } from './field-types';
 import { visibleFieldKeys } from './conditions';
-import { blockFields, isRepeaterType, type FormField, type FormSchema } from './schema';
+import {
+  blockFields,
+  flatScopeFields,
+  isRepeaterType,
+  type FormField,
+  type FormSchema,
+} from './schema';
 
 /** One block's answers: a flat map for a flat block, a list of rows for a repeater. */
 export type BlockAnswer =
@@ -88,22 +94,55 @@ export function validateAnswers(
   const raw = asRecord(payload);
   if (!raw) return { ok: false, errors: { _form: 'The submission was not readable.' } };
 
-  for (const block of schema.blocks) {
-    const submitted = raw[block.id];
+  /**
+   * **The flat scope is resolved across all flat blocks before anything is
+   * validated**, because a condition may read any earlier custom field in it —
+   * including one in an earlier block (`schema.ts`). Validating block by block
+   * would evaluate every cross-block condition against an empty source: the
+   * question would never be required, and an answer to it would be dropped as
+   * hidden. Repeater rows are their own scopes and stay per-row.
+   */
+  const flatBlocks = schema.blocks.filter((block) => !isRepeaterType(block.type));
+  const flatSubmitted = new Map<string, Record<string, unknown>>();
+  const flatCoerced: Record<string, FieldValue> = {};
 
+  for (const block of flatBlocks) {
+    const submitted = asRecord(unwrapFlat(raw[block.id])) ?? {};
+    flatSubmitted.set(block.id, submitted);
+    for (const field of blockFields(block)) {
+      flatCoerced[field.key] = coerce(field, submitted[field.key]);
+    }
+  }
+
+  const flatVisible = visibleFieldKeys(flatScopeFields(schema), flatCoerced);
+
+  for (const block of schema.blocks) {
     if (isRepeaterType(block.type)) {
-      answers[block.id] = validateRepeater(block.id, blockFields(block), submitted, options, errors, dropped);
-    } else {
-      const values = validateScope(
+      answers[block.id] = validateRepeater(
+        block.id,
         blockFields(block),
-        asRecord(unwrapFlat(submitted)) ?? {},
+        raw[block.id],
+        options,
+        errors,
+        dropped,
+      );
+      continue;
+    }
+
+    const submitted = flatSubmitted.get(block.id) ?? {};
+    answers[block.id] = {
+      kind: 'flat',
+      values: validateFields(
+        blockFields(block),
+        submitted,
+        flatCoerced,
+        flatVisible,
         (key) => fieldPathKey(block.id, key),
         errors,
         dropped,
         block.id,
-      );
-      answers[block.id] = { kind: 'flat', values };
-    }
+      ),
+    };
   }
 
   for (const key of Object.keys(raw)) {
@@ -154,43 +193,50 @@ function validateRepeater(
     return { kind: 'repeater', rows: [] };
   }
 
-  const rows = rowsInput.map((row, index) =>
-    validateScope(
+  const rows = rowsInput.map((row, index) => {
+    const submitted = asRecord(row) ?? {};
+    // Each row is its own scope: a per-seat condition reads the same seat and
+    // nothing else, which is the only reading of "earlier" that has one meaning
+    // inside a repeater (`schema.ts`).
+    const coerced: Record<string, FieldValue> = {};
+    for (const field of fields) coerced[field.key] = coerce(field, submitted[field.key]);
+
+    return validateFields(
       fields,
-      asRecord(row) ?? {},
+      submitted,
+      coerced,
+      visibleFieldKeys(fields, coerced),
       (key) => fieldPathKey(blockId, key, index),
       errors,
       dropped,
       `${blockId}.${index}`,
-    ),
-  );
+    );
+  });
 
   return { kind: 'repeater', rows };
 }
 
 /**
- * One scope — a flat block's fields, or one repeater row.
+ * The fields of one block, validated against a scope that has already been
+ * coerced and resolved for visibility.
  *
- * Visibility is computed first and answers for hidden fields are **dropped, not
- * rejected**. §8.2.2: "a question that was never shown and a question that was
- * shown and skipped are both empty", and no downstream logic may depend on the
- * difference. A person who answers a question, then changes the answer above it
- * so the question disappears, has not made an error.
+ * Visibility is decided by the **scope**, not by the block, which is what lets a
+ * flat field depend on one in an earlier block. Answers to hidden fields are
+ * **dropped, not rejected**: §8.2.2 says a question that was never shown and one
+ * that was shown and skipped are both empty, and no downstream logic may depend
+ * on the difference. Someone who answers a question, then changes the answer
+ * above it so the question disappears, has not made an error.
  */
-function validateScope(
+function validateFields(
   fields: readonly FormField[],
   submitted: Record<string, unknown>,
+  coerced: Readonly<Record<string, FieldValue>>,
+  visible: ReadonlySet<string>,
   pathFor: (fieldKey: string) => string,
   errors: AnswerErrors,
   dropped: string[],
   scopeLabel: string,
 ): Record<string, FieldValue> {
-  const coerced: Record<string, FieldValue> = {};
-  for (const field of fields) {
-    coerced[field.key] = coerce(field, submitted[field.key]);
-  }
-
-  const visible = visibleFieldKeys(fields, coerced);
   const values: Record<string, FieldValue> = {};
 
   for (const field of fields) {
@@ -253,6 +299,20 @@ function coerce(field: FormField, value: unknown): FieldValue {
   }
 }
 
+/**
+ * The longest a single text answer may be.
+ *
+ * Not an operational value and not a policy an admin tunes: it is a guard, in
+ * the same class as the login throttle's `MAX_DOUBLINGS`. The authoring side of
+ * the contract caps every string it accepts; without a matching ceiling here a
+ * form's *answers* are unbounded, and a 100,000-character name would be stored,
+ * exported, and rendered onto a ticket.
+ *
+ * Set well above any real answer — a paragraph of accessibility notes is a few
+ * hundred characters — so a person filling the form honestly can never meet it.
+ */
+const MAX_ANSWER_LENGTH = 4000;
+
 const emailValue = z.email();
 /** `YYYY-MM-DD`, which is what `<input type="date">` posts and what JSON holds. */
 const dateValue = z.iso.date();
@@ -273,6 +333,10 @@ function checkValue(field: FormField, submitted: unknown, value: FieldValue): st
   }
 
   if (isBlank(value)) return field.required ? 'This is required.' : null;
+
+  if (typeof value === 'string' && value.length > MAX_ANSWER_LENGTH) {
+    return `Please keep this under ${MAX_ANSWER_LENGTH} characters.`;
+  }
 
   switch (field.type) {
     case 'email':

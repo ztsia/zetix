@@ -93,7 +93,7 @@ describe('consumeRateLimit', () => {
 
   it('lets the window slide — a minute later the caller is served again', async () => {
     const bucket = formBucket('203.0.113.11');
-    for (let i = 0; i <= LIMIT; i++) await consumeRateLimit(bucket);
+    for (let i = 0; i < LIMIT; i++) await consumeRateLimit(bucket);
     expect((await consumeRateLimit(bucket)).allowed).toBe(false);
 
     await ageHits(bucket, 61_000);
@@ -102,7 +102,7 @@ describe('consumeRateLimit', () => {
 
   it('reports how long is actually left, not a flat minute', async () => {
     const bucket = formBucket('203.0.113.12');
-    for (let i = 0; i <= LIMIT; i++) await consumeRateLimit(bucket);
+    for (let i = 0; i < LIMIT; i++) await consumeRateLimit(bucket);
 
     // The oldest hit is 50 seconds old, so the window has ten seconds to run.
     await ageHits(bucket, 50_000);
@@ -115,7 +115,7 @@ describe('consumeRateLimit', () => {
 
   it('never reports zero seconds, which reads as "go ahead"', async () => {
     const bucket = formBucket('203.0.113.13');
-    for (let i = 0; i <= LIMIT; i++) await consumeRateLimit(bucket);
+    for (let i = 0; i < LIMIT; i++) await consumeRateLimit(bucket);
 
     // One second left in the window — the rounding boundary. Anything older
     // than the window is swept instead, and the caller is simply served.
@@ -124,6 +124,32 @@ describe('consumeRateLimit', () => {
     if (verdict.allowed) throw new Error('expected a refusal');
     expect(verdict.retryAfterSeconds).toBeGreaterThanOrEqual(1);
     expect(verdict.retryAfterSeconds).toBeLessThanOrEqual(2);
+  });
+
+  it('keeps its Retry-After promise — a client that waits is served', async () => {
+    // Recording refusals too would push the window's oldest hit forward on every
+    // knock, so an obedient client is refused again, and again. Found by the
+    // module's QA pass.
+    const bucket = formBucket('203.0.113.30');
+    for (let i = 0; i < LIMIT; i++) await consumeRateLimit(bucket);
+
+    const refused = await consumeRateLimit(bucket);
+    if (refused.allowed) throw new Error('expected a refusal');
+
+    // Two more knocks while blocked, which must not extend the wait.
+    await consumeRateLimit(bucket);
+    await consumeRateLimit(bucket);
+
+    // Wait exactly as long as the header said, and the next one is served.
+    await ageHits(bucket, refused.retryAfterSeconds * 1000);
+    expect(await consumeRateLimit(bucket)).toEqual({ allowed: true });
+  });
+
+  it('does not record a refused request', async () => {
+    const bucket = formBucket('203.0.113.31');
+    for (let i = 0; i < LIMIT; i++) await consumeRateLimit(bucket);
+    for (let i = 0; i < 5; i++) await consumeRateLimit(bucket);
+    expect(await rowsIn(bucket)).toBe(LIMIT);
   });
 
   it('sweeps its own expired rows, so the table stays bounded without a cron', async () => {

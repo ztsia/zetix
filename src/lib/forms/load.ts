@@ -28,8 +28,9 @@ import { parseFormSchema, type FormSchema } from './schema';
 
 export type FormNotAvailable =
   /**
-   * No such form, a `DRAFT` one, or one whose schema no longer parses — **one
-   * response for all three**, following the ticket page's rule (spec/v2.md §13.2).
+   * No such form, a malformed slug, a `DRAFT` one, or one whose schema no longer
+   * parses — **one response for all of them**, following the ticket page's rule
+   * (spec/v2.md §13.2).
    * A slug is a guessable thing; telling a prober that a draft form exists at
    * this address is telling them the address is worth watching.
    */
@@ -80,10 +81,28 @@ export type LoadFormOptions = {
   now?: Date;
 };
 
+/**
+ * What a slug may be, checked before it reaches the database.
+ *
+ * A path segment is untrusted input like any other, and this is the zod
+ * boundary `CLAUDE.md`'s conventions ask for. Without it a `%00` in the URL
+ * travels intact into a parameterised query and Postgres raises `22021`
+ * ("unsupported Unicode escape sequence") — a `500` with an empty body, on a
+ * public route, for something that is simply not a slug.
+ *
+ * The shape matches how slugs are actually minted: lowercase, digits and
+ * hyphens. Anything else is **not found**, not "bad request" — telling a prober
+ * that their guess was well-formed but absent is one bit more than telling them
+ * nothing.
+ */
+const SLUG = /^[a-z0-9][a-z0-9-]{0,127}$/;
+
 export async function loadFormBySlug(
   slug: string,
   options: LoadFormOptions = {},
 ): Promise<FormLoadResult> {
+  if (!SLUG.test(slug)) return { state: 'NOT_FOUND' };
+
   const now = options.now ?? new Date();
 
   const [row] = await getDb()

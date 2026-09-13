@@ -260,6 +260,65 @@ describe('conditional fields (§8.2.2)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('evaluates a condition whose source is in an earlier block', () => {
+    // The flat scope spans every REGISTRANT and CUSTOM block in document order,
+    // and `schema.ts` accepts a condition across it — so the renderer and this
+    // must both resolve it that way, or the contract accepts a question nothing
+    // ever asks. Found by the module's QA pass.
+    const form = clone(PUBLIC_FORM);
+    const extras = form.blocks.find((b) => b.id === 'extras');
+    if (!extras || extras.type !== 'CUSTOM') throw new Error('bad fixture');
+    extras.fields.push({
+      key: 'poster_where',
+      label: 'Where did you see it?',
+      type: 'text',
+      system: false,
+      required: true,
+      // `heard_from` lives in the REGISTRANT block, two blocks earlier.
+      condition: { field: 'heard_from', op: 'eq', value: 'poster' },
+    });
+
+    // Source not matched: the question is not asked, so its absence is fine…
+    const away = publicPayload();
+    away.registrant = { contact_name: 'A', contact_email: 'a@b.com', heard_from: 'friend' };
+    ok(form, away, PUBLIC_LIMITS);
+
+    // …and matched, a required cross-block question is required.
+    const shown = publicPayload();
+    shown.registrant = { contact_name: 'A', contact_email: 'a@b.com', heard_from: 'poster' };
+    expect(bad(form, shown, PUBLIC_LIMITS)['extras.poster_where']).toBe('This is required.');
+
+    // …and its answer is kept, not dropped as though it were hidden.
+    const answered = publicPayload();
+    answered.registrant = { contact_name: 'A', contact_email: 'a@b.com', heard_from: 'poster' };
+    answered.extras = { newsletter_consent: true, poster_where: 'Outside the library' };
+    const { answers } = ok(form, answered, PUBLIC_LIMITS);
+    expect(answers.extras).toEqual({
+      kind: 'flat',
+      values: { newsletter_consent: true, poster_where: 'Outside the library' },
+    });
+  });
+
+  it('a cross-block "ne" hides rather than staying permanently visible', () => {
+    const form = clone(PUBLIC_FORM);
+    const extras = form.blocks.find((b) => b.id === 'extras');
+    if (!extras || extras.type !== 'CUSTOM') throw new Error('bad fixture');
+    extras.fields.push({
+      key: 'why_not_social',
+      label: 'Anything else?',
+      type: 'text',
+      system: false,
+      required: false,
+      condition: { field: 'heard_from', op: 'ne', value: 'social' },
+    });
+
+    const payload = publicPayload();
+    payload.registrant = { contact_name: 'A', contact_email: 'a@b.com', heard_from: 'social' };
+    payload.extras = { newsletter_consent: true, why_not_social: 'leaked through' };
+    const { answers } = ok(form, payload, PUBLIC_LIMITS);
+    expect(answers.extras).toEqual({ kind: 'flat', values: { newsletter_consent: true } });
+  });
+
   it('a hidden source hides everything downstream of it', () => {
     const form: FormSchema = {
       kind: 'FEEDBACK',
@@ -338,6 +397,33 @@ describe('repeater caps', () => {
     const payload = publicPayload();
     payload.party = { full_name: 'Ben Tan' };
     expect(bad(PUBLIC_FORM, payload, PUBLIC_LIMITS).party).toBe('Expected a list of seats.');
+  });
+});
+
+describe('answer length', () => {
+  it('refuses an answer far longer than any real one', () => {
+    const payload = publicPayload();
+    payload.registrant = {
+      contact_name: 'A'.repeat(100_000),
+      contact_email: 'alice@example.com',
+    };
+    // The authoring side of the contract caps every string it accepts; without
+    // a matching ceiling here the answers are unbounded, and this name would be
+    // stored, exported and rendered onto a ticket.
+    expect(bad(PUBLIC_FORM, payload, PUBLIC_LIMITS)['registrant.contact_name']).toMatch(
+      /keep this under/,
+    );
+  });
+
+  it('accepts a long but plausible answer', () => {
+    const payload = publicPayload();
+    payload.extras = { newsletter_consent: true, interests: [] };
+    payload.registrant = {
+      contact_name: 'Alice Tan',
+      contact_email: 'alice@example.com',
+    };
+    payload.party = [{ full_name: 'B'.repeat(200) }];
+    ok(PUBLIC_FORM, payload, PUBLIC_LIMITS);
   });
 });
 

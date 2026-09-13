@@ -35,8 +35,8 @@ const guestFields = () => GUEST_SYSTEM_FIELDS.map(systemField);
 /**
  * A new, valid, empty form of the given kind.
  *
- * Always parses — `templates.test.ts` proves it for all three, which is what
- * makes this the one safe way to create a form. A builder that hand-assembled
+ * Always parses — `tests/forms/copy.test.ts` proves it for all three, which is
+ * what makes this the one safe way to create a form. A builder that hand-assembled
  * blocks would eventually assemble one the contract refuses, and the admin
  * would meet that refusal on an otherwise blank screen.
  */

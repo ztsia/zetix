@@ -16,7 +16,13 @@ import {
 import { visibleFieldKeys } from '@/lib/forms/conditions';
 import type { FieldValue } from '@/lib/forms/field-types';
 import { interpolateCopy, type CopyValues } from '@/lib/forms/copy';
-import { blockFields, isRepeaterType, type FormBlock, type FormSchema } from '@/lib/forms/schema';
+import {
+  blockFields,
+  flatScopeFields,
+  isRepeaterType,
+  type FormBlock,
+  type FormSchema,
+} from '@/lib/forms/schema';
 import { FormFieldControl } from './form-field';
 import { RichText } from './rich-text';
 
@@ -83,6 +89,22 @@ export function FormRenderer({
   const setBlock = (blockId: string, next: BlockAnswer) =>
     onValueChange({ ...value, [blockId]: next });
 
+  /**
+   * Visibility for the flat scope, resolved **once for the whole form**.
+   *
+   * A condition may read any earlier custom field in the flat scope, including
+   * one in an earlier block (`lib/forms/schema.ts`). Resolving this per block
+   * would evaluate every cross-block condition against an empty source, so the
+   * question would simply never be drawn — and `validateAnswers` resolves the
+   * same scope the same way, because two implementations of "is this field
+   * showing?" eventually disagree, and the way they disagree is a required
+   * answer the form never asked for.
+   */
+  const flatVisible = useMemo(
+    () => visibleFieldKeys(flatScopeFields(schema), flatAnswers(schema, value)),
+    [schema, value],
+  );
+
   return (
     <div className="flex flex-col gap-10">
       {schema.blocks.map((block, index) => (
@@ -97,11 +119,23 @@ export function FormRenderer({
             errors={errors}
             disabled={disabled}
             showCopyWarnings={showCopyWarnings}
+            flatVisible={flatVisible}
           />
         </div>
       ))}
     </div>
   );
+}
+
+/** Every flat block's answers as one map. Keys are unique across the scope by contract. */
+function flatAnswers(schema: FormSchema, value: FormAnswers): Record<string, FieldValue> {
+  const merged: Record<string, FieldValue> = {};
+  for (const block of schema.blocks) {
+    if (isRepeaterType(block.type)) continue;
+    const answer = value[block.id];
+    if (answer?.kind === 'flat') Object.assign(merged, answer.values);
+  }
+  return merged;
 }
 
 type BlockProps = {
@@ -113,6 +147,8 @@ type BlockProps = {
   errors: AnswerErrors;
   disabled: boolean;
   showCopyWarnings: boolean;
+  /** Resolved for the whole flat scope by {@link FormRenderer}, never per block. */
+  flatVisible: ReadonlySet<string>;
 };
 
 function BlockRenderer(props: BlockProps) {
@@ -148,15 +184,14 @@ function BlockRenderer(props: BlockProps) {
   );
 }
 
-function FlatBlock({ block, answer, onChange, errors, disabled }: BlockProps) {
+function FlatBlock({ block, answer, onChange, errors, disabled, flatVisible }: BlockProps) {
   const values = answer?.kind === 'flat' ? answer.values : {};
   const fields = blockFields(block);
-  const visible = visibleFieldKeys(fields, values);
 
   return (
     <FieldGroup>
       {fields
-        .filter((field) => visible.has(field.key))
+        .filter((field) => flatVisible.has(field.key))
         .map((field) => (
           <FormFieldControl
             key={field.key}

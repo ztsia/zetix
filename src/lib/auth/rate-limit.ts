@@ -223,12 +223,25 @@ export type ThrottleContext = {
 };
 
 /**
- * Record this request against `bucket` and say whether it may proceed.
+ * Consume one request against `bucket` and say whether it may proceed.
  *
- * **Records first, then counts, so the request in hand is included.** With a
- * limit of five, the sixth request inside a minute is the one refused — a
- * check-then-record limiter lets one extra through, and the extra one is always
- * the attacker's.
+ * **A refused request is not recorded**, and that is what makes `Retry-After`
+ * true. Recording refusals too would push the window's oldest hit forward every
+ * time someone knocked, so a client that obeyed the header would be refused
+ * again on waking, and again — told to wait one second, five times running. The
+ * login throttle above deliberately does the opposite, because there the growing
+ * lockout *is* the policy; here the policy is a flat window, and the header is a
+ * promise the limiter has to keep.
+ *
+ * It still refuses at the right request. The count is taken **before** the
+ * insert and compared with `>=`, so with a limit of five the sixth request
+ * inside a minute is the one refused — the off-by-one a naive check-then-record
+ * limiter has comes from comparing with `>`, not from the ordering.
+ *
+ * Two callers racing can both read four and both insert, serving one request
+ * over the limit. Left as it is: the cost is one extra form load, and the
+ * alternative is a lock on the hot path of every public page load, taken to
+ * defend a threshold whose whole purpose is to be approximately right.
  *
  * `form.rate_limit_per_ip_per_min` resolves through the cascade
  * (spec/README.md §2.2). It is a **system** value with a seed, so most callers
@@ -269,24 +282,25 @@ export async function consumeRateLimit(
     .delete(authFailures)
     .where(and(eq(authFailures.bucket, bucket), lt(authFailures.createdAt, windowStart)));
 
-  await db.insert(authFailures).values({ bucket });
-
   const [tally] = await db
     .select({ hits: count() })
     .from(authFailures)
     .where(and(eq(authFailures.bucket, bucket), gt(authFailures.createdAt, windowStart)));
 
-  const hits = tally?.hits ?? 0;
-  if (hits <= perMinute) return { allowed: true };
+  if ((tally?.hits ?? 0) < perMinute) {
+    await db.insert(authFailures).values({ bucket });
+    return { allowed: true };
+  }
 
   /**
-   * How long until the window has room again — the age of the oldest hit still
-   * counting, subtracted from the window.
+   * How long until the window has room again — the oldest hit still counting,
+   * plus the window.
    *
-   * A fixed `60` would be a lie for a caller who has been waiting 55 seconds,
-   * and a client that honours `Retry-After` would sleep a minute it did not
-   * need to. Floored at one second, because `Retry-After: 0` reads as "go
-   * ahead".
+   * Exact, because refusals are not recorded: when that hit expires the count
+   * drops below the limit and the next request is served. A fixed `60` would be
+   * a lie to a caller who has already waited 55 seconds, and a client honouring
+   * the header would sleep a minute it did not need to. Floored at one second —
+   * `Retry-After: 0` reads as "go ahead".
    */
   const [oldest] = await db
     .select({ createdAt: authFailures.createdAt })

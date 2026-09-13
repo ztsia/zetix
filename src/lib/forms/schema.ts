@@ -154,6 +154,20 @@ export function blockFields(block: FormBlock): readonly FormField[] {
   return 'guest_fields' in block ? block.guest_fields : block.fields;
 }
 
+/**
+ * Every field of the **flat scope**, in document order across all flat blocks.
+ *
+ * This is the unit a condition resolves against, not the block — see
+ * {@link checkScopes}. The renderer and `answers.ts` both walk it, so a field
+ * whose source lives two blocks earlier is drawn and required by the same rule
+ * the contract accepted it under.
+ */
+export function flatScopeFields(schema: FormSchema): FormField[] {
+  return schema.blocks
+    .filter((block) => !isRepeaterType(block.type))
+    .flatMap((block) => [...blockFields(block)]);
+}
+
 const formShape = z.object({
   kind: z.enum(FORM_KINDS),
   blocks: z.array(blockSchema).min(1).max(50),

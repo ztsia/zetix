@@ -170,6 +170,35 @@ describe('conditional fields', () => {
     expect(ids).not.toContain('base.1.note_detail');
   });
 
+  it('draws a field whose source is in an earlier block', () => {
+    // The contract accepts a condition across the flat scope, so the renderer
+    // has to resolve it across the flat scope too — resolving per block would
+    // evaluate it against an empty source and never draw the question. Found by
+    // the module's QA pass.
+    const form = clone(PUBLIC_FORM);
+    const extras = form.blocks.find((b) => b.id === 'extras');
+    if (!extras || extras.type !== 'CUSTOM') throw new Error('bad fixture');
+    extras.fields.push({
+      key: 'poster_where',
+      label: 'Where did you see it?',
+      type: 'text',
+      system: false,
+      required: false,
+      condition: { field: 'heard_from', op: 'eq', value: 'poster' },
+    });
+
+    const hidden = emptyAnswers(form, PUBLIC_LIMITS);
+    expect(controlIds(render(form, PUBLIC_LIMITS, { value: hidden }))).not.toContain(
+      'extras.poster_where',
+    );
+
+    const shown = emptyAnswers(form, PUBLIC_LIMITS);
+    shown.registrant = { kind: 'flat', values: { heard_from: 'poster' } };
+    expect(controlIds(render(form, PUBLIC_LIMITS, { value: shown }))).toContain(
+      'extras.poster_where',
+    );
+  });
+
   it('hides a field whose source is itself hidden', () => {
     const value = emptyAnswers(PUBLIC_FORM, PUBLIC_LIMITS);
     // `social_handle` depends on `heard_from`, which nobody answered.

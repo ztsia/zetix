@@ -183,6 +183,17 @@ describe('GET /api/forms/{slug}', () => {
     expect(body.schema.blocks).toHaveLength(3);
   });
 
+  it('404s a malformed slug instead of letting it reach Postgres', async () => {
+    // A NUL in the path travelled intact into a parameterised query and Postgres
+    // raised 22021 — a 500 with an empty body, on a public route, for something
+    // that is not a slug. Found by the module's QA pass.
+    for (const slug of ['\u0000', 'Autumn Public', '../../etc/passwd', 'a'.repeat(500)]) {
+      const response = await call(slug, nextIp());
+      expect(response.status, `slug ${JSON.stringify(slug)}`).toBe(404);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+    }
+  });
+
   it('404s a missing slug and a draft alike', async () => {
     await seedForm({ slug: 'draft-form', status: 'DRAFT' });
     expect((await call('nope', nextIp())).status).toBe(404);

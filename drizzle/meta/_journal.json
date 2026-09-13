@@ -50,6 +50,13 @@
       "when": 1788929438700,
       "tag": "0006_panoramic_blockbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1789293131994,
+      "tag": "0100_v2_schema_delta",
+      "breakpoints": true
     }
   ]
 }

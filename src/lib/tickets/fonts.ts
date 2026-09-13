@@ -91,6 +91,41 @@ export function loadFace(key: FaceKey): Uint8Array {
   return bytes;
 }
 
+/**
+ * The fallback face, for characters no embedded font has a glyph for.
+ *
+ * **It is never embedded.** Inter and JetBrains Mono carry no CJK at all, so a
+ * Chinese name printed as a row of `|x|` boxes — the reader drawing `.notdef`
+ * for every character it cannot find. The obvious fix, embedding a CJK font,
+ * costs 10MB *per ticket* here, because `subset: false` is not negotiable in
+ * this renderer (`render/index.ts`). So the glyphs are drawn as vector outlines
+ * instead: only the few characters on that ticket reach the PDF, and the font
+ * itself stays in the bundle. See `render/outline.ts`.
+ *
+ * Kept out of {@link FACES} on purpose — nothing can reach it through
+ * `resolveFace()`, so it cannot be embedded by accident, and
+ * `tests/tickets/glyphs.test.ts` keeps meaning what it says.
+ */
+const OUTLINE_FILE = 'NotoSansSC-Regular.ttf';
+
+let outlineBytes: Uint8Array | undefined;
+
+/** The fallback face's bytes, read once per process. */
+export function loadOutlineFace(): Uint8Array {
+  if (outlineBytes) return outlineBytes;
+  try {
+    outlineBytes = readFileSync(join(FONT_DIR, OUTLINE_FILE));
+  } catch (cause) {
+    throw new Error(
+      `Could not read the fallback font ${OUTLINE_FILE} from ${FONT_DIR}. ` +
+        `Without it a name outside Latin cannot be drawn at all — check ` +
+        `outputFileTracingIncludes in next.config.ts covers the rendering route.`,
+      { cause },
+    );
+  }
+  return outlineBytes;
+}
+
 /** Every face, for tests and for warming the cache. */
 export function allFaceKeys(): FaceKey[] {
   return Object.keys(FACES) as FaceKey[];

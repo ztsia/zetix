@@ -67,7 +67,8 @@ export default async function TemplatesPage({
     round_label: string | null;
     attendee_count: number;
     attendee_names: string[];
-    qr_tokens: string[];
+    link_names: string[] | null;
+    qr_tokens: string[] | null;
   }>(sql`
     (select 'Longest name: ' || coalesce(r.contact_name, '(none)') as label,
             c.name as concert_name, s.name as show_name,
@@ -81,7 +82,15 @@ export default async function TemplatesPage({
        join lateral (
          select count(*)::int as attendee_count,
                 coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
-                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
+                -- Untokened seats are dropped from the link pair here exactly
+                -- as queue.ts does it: postgres.js reads a NULL element of a
+                -- text array back as the string "NULL", which previews as a
+                -- live /t/NULL link. Both aggregates share the filter so the
+                -- names and tokens stay index-aligned.
+                array_agg(a.full_name order by a.id)
+                  filter (where a.qr_token is not null) as link_names,
+                array_agg(a.qr_token order by a.id)
+                  filter (where a.qr_token is not null) as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null
@@ -100,7 +109,15 @@ export default async function TemplatesPage({
        join lateral (
          select count(*)::int as attendee_count,
                 coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
-                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
+                -- Untokened seats are dropped from the link pair here exactly
+                -- as queue.ts does it: postgres.js reads a NULL element of a
+                -- text array back as the string "NULL", which previews as a
+                -- live /t/NULL link. Both aggregates share the filter so the
+                -- names and tokens stay index-aligned.
+                array_agg(a.full_name order by a.id)
+                  filter (where a.qr_token is not null) as link_names,
+                array_agg(a.qr_token order by a.id)
+                  filter (where a.qr_token is not null) as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null and r.player_id is null
@@ -130,7 +147,7 @@ export default async function TemplatesPage({
       // Rendered from the real seats, not a stub: `ref.md` §6 — a template
       // bug is almost always a data-shape bug, and this token is the one that
       // changes shape with the size of the party.
-      ticket_links: ticketLinks(row.attendee_names, row.qr_tokens),
+      ticket_links: ticketLinks(row.link_names, row.qr_tokens),
     },
   }));
 

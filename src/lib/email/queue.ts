@@ -146,13 +146,15 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
     timezone: string;
     attendee_count: number;
     attendee_names: string[];
-    qr_tokens: string[];
+    link_names: string[] | null;
+    qr_tokens: string[] | null;
   }>(sql`
     select r.id as registration_id, r.contact_name, r.contact_email, r.round_label,
            c.name as concert_name, c.timezone,
            s.name as show_name, s.starts_at, s.doors_open_at, s.venue_name, s.venue_address,
            seg.name as segment_name,
-           counts.attendee_count, counts.attendee_names, counts.qr_tokens
+           counts.attendee_count, counts.attendee_names,
+           counts.link_names, counts.qr_tokens
       from registrations r
       join show_segments seg on seg.id = r.segment_id
       join shows s on s.id = r.show_id
@@ -160,7 +162,21 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
       join lateral (
         select count(*)::int as attendee_count,
                array_agg(a.full_name order by a.id) as attendee_names,
-               array_agg(a.qr_token order by a.id) as qr_tokens
+               -- Seats with no qr_token are filtered out of the link pair
+               -- here, in SQL, before the array crosses the wire: postgres.js
+               -- reads a NULL element of a text array back as the string
+               -- "NULL", indistinguishable from a real value, and a seat whose
+               -- ticket has not been issued yet then mails out as a
+               -- live-looking /t/NULL link. Nothing at queue time requires a
+               -- token to exist -- the predicate is ticket_sent_at is null,
+               -- not qr_token is not null -- so the array is the wrong place
+               -- to find that out. Both aggregates carry the same filter,
+               -- because ticketLinks zips them by index: filtering one and not
+               -- the other puts every later link under the wrong guest's name.
+               array_agg(a.full_name order by a.id)
+                 filter (where a.qr_token is not null) as link_names,
+               array_agg(a.qr_token order by a.id)
+                 filter (where a.qr_token is not null) as qr_tokens
           from attendees a
          where a.registration_id = r.id
            and a.status = 'CONFIRMED'
@@ -188,7 +204,7 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
       attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
-      ticket_links: ticketLinks(row.attendee_names, row.qr_tokens),
+      ticket_links: ticketLinks(row.link_names, row.qr_tokens),
     },
   }));
 }
@@ -210,6 +226,14 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
  * "Guest of {contact_name}", `registrations/mutations.ts`), so the ordinal
  * fallback is belt-and-braces rather than the expected path.
  *
+ * **A token is checked against its shape, not against truthiness.** A minted
+ * token is `[0-9A-Za-z]{22}` (`tickets/identifiers.ts`), which is what the door
+ * matches on too; `Boolean(token)` used to be the test, and it waves through
+ * the literal `"NULL"` that `postgres.js` hands back for a null element of a
+ * text array. The SQL above already keeps those out — this is the second door,
+ * because a future query that forgets the `filter` should not be able to mail
+ * four hundred people a dead link.
+ *
  * The name sits *outside* the link brackets: it comes from a spreadsheet
  * import, and a name containing `]` inside a label would otherwise end the
  * link early. `escapeMergeValues()` runs over this string afterwards and
@@ -219,7 +243,7 @@ export function ticketLinks(names: string[] | null, tokens: string[] | null): st
   const base = appUrl();
   return (tokens ?? [])
     .map((token, i) => ({ token, name: (names ?? [])[i] }))
-    .filter(({ token }) => Boolean(token))
+    .filter(({ token }) => QR_TOKEN.test(token ?? ''))
     .map(({ token, name }, i) => `- ${name?.trim() || `Guest ${i + 1}`} — [View ticket](${base}/t/${token})`)
     .join('\n');
 }
@@ -229,6 +253,9 @@ export function ticketLinks(names: string[] | null, tokens: string[] | null): st
  * validating the whole environment here would make queueing a message require
  * the Supabase keys.
  */
+/** The minted shape (§10.1 rule 2) — the door matches on this too. */
+const QR_TOKEN = /^[0-9A-Za-z]{22}$/;
+
 function appUrl(): string {
   return process.env.APP_URL ?? '';
 }

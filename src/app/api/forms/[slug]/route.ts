@@ -76,6 +76,9 @@ export async function GET(
           state: 'OPEN',
           slug: form.slug,
           kind: form.kind,
+          // The version this schema is, so a client that re-reads after an edit
+          // can tell it changed, and a submit can pin what it answered (§8.2.4).
+          schemaVersion: form.schemaVersion,
           title: form.title,
           description: form.description,
           schema: form.schema,

@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
 import { registrationForms } from '@/db/schema/registrations';
@@ -53,9 +53,21 @@ export type LoadedForm = {
   state: 'OPEN';
   id: number;
   slug: string;
-  /** From the JSON, not from a column — the contract is what says what a form is. */
+  /**
+   * The column and the JSON agree, or the form does not load at all — see
+   * below. Both are checked because they answer different questions: the column
+   * decides which parent the form hangs off (`J`'s
+   * `registration_forms_one_parent`), the JSON decides which blocks it may
+   * carry.
+   */
   kind: FormSchema['kind'];
   schema: FormSchema;
+  /**
+   * `registration_forms.schema_version`, so `M` can pin it onto the response it
+   * writes (§8.2.4) and `L` can key its preview on it. Carried here because one
+   * query should answer everything the surface needs.
+   */
+  schemaVersion: number;
   /** The form's own heading, and its lead copy with `{{tokens}}` already resolved. */
   title: string;
   description: string | null;
@@ -63,8 +75,12 @@ export type LoadedForm = {
   limits: Readonly<Record<string, number>>;
   /** The resolved token values, so a consumer can interpolate its own copy the same way. */
   copy: CopyValues;
-  /** Where this form sits, for a caller that needs to resolve anything further. */
-  segmentId: number;
+  /**
+   * Where this form sits. **`segmentId` is null for a `FEEDBACK` form**, which
+   * hangs off the show instead — every cascade read here already takes null and
+   * simply starts one level up.
+   */
+  segmentId: number | null;
   showId: number;
   concertId: number;
   timeZone: string | null;
@@ -109,6 +125,8 @@ export async function loadFormBySlug(
     .select({
       id: registrationForms.id,
       slug: registrationForms.slug,
+      kind: registrationForms.kind,
+      schemaVersion: registrationForms.schemaVersion,
       title: registrationForms.title,
       descriptionMd: registrationForms.descriptionMd,
       schema: registrationForms.schema,
@@ -122,8 +140,22 @@ export async function loadFormBySlug(
       timeZone: concerts.timezone,
     })
     .from(registrationForms)
-    .innerJoin(showSegments, eq(showSegments.id, registrationForms.segmentId))
-    .innerJoin(shows, eq(shows.id, showSegments.showId))
+    /**
+     * **Left, not inner.** A form has exactly one parent and `kind` says which
+     * (`registration_forms_one_parent`): a `FEEDBACK` form hangs off the show
+     * and has no segment at all. An inner join here would silently return "no
+     * such form" for every feedback form in the system.
+     */
+    .leftJoin(showSegments, eq(showSegments.id, registrationForms.segmentId))
+    /**
+     * The show, reached through whichever parent exists. Still inner — a form
+     * with neither parent cannot exist, and if one somehow did there would be no
+     * concert to render its times in.
+     */
+    .innerJoin(
+      shows,
+      sql`${shows.id} = coalesce(${showSegments.showId}, ${registrationForms.showId})`,
+    )
     .innerJoin(concerts, eq(concerts.id, shows.concertId))
     .where(eq(registrationForms.slug, slug))
     .limit(1);
@@ -134,6 +166,24 @@ export async function loadFormBySlug(
   if (row.status === 'DRAFT') return { state: 'NOT_FOUND' };
 
   const parsed = parseFormSchema(row.schema);
+  if (parsed.ok && parsed.schema.kind !== row.kind) {
+    /**
+     * The column and the JSON disagree about what this form is.
+     *
+     * They govern different halves of the same fact — the column decides the
+     * parent, the JSON decides the blocks — so a disagreement is a form whose
+     * seats have nowhere to go: a `PUBLIC` schema hanging off a show, or a
+     * `FEEDBACK` schema on a segment with a party repeater the check constraint
+     * never saw. Neither can be rendered into anything correct, so it reads as
+     * "no such form" like an unparseable schema, and is logged for whoever has
+     * to fix it. Only `L` can write this row, and only by bypassing its own
+     * builder.
+     */
+    console.error(
+      `registration_forms "${slug}": kind column is ${row.kind} but its schema says ${parsed.schema.kind}`,
+    );
+    return { state: 'NOT_FOUND' };
+  }
   if (!parsed.ok) {
     /**
      * A saved schema that no longer parses.
@@ -174,6 +224,7 @@ export async function loadFormBySlug(
     slug: row.slug,
     kind: parsed.schema.kind,
     schema: parsed.schema,
+    schemaVersion: row.schemaVersion,
     title: row.title,
     description: row.descriptionMd ? interpolateCopy(row.descriptionMd, copy).text : null,
     limits: limits.limits,

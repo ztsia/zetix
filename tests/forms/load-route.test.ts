@@ -26,6 +26,8 @@ type FormRow = {
   closesAt?: Date | null;
   title?: string;
   descriptionMd?: string | null;
+  /** The `kind` column (`J`). Defaults to agreeing with the schema's own kind. */
+  kind?: 'PLAYER' | 'PUBLIC' | 'FEEDBACK';
 };
 
 /** `createConcert` derives a unique slug from the name, so each form gets its own. */
@@ -37,14 +39,17 @@ async function seedForm(row: FormRow = {}) {
   const segmentId = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: null });
   await sql`update show_segments set max_tickets_per_response = 4 where id = ${segmentId}`;
 
+  const schema = row.schema === null ? null : (row.schema ?? PUBLIC_FORM);
+
   const [inserted] = await sql<{ id: number }[]>`
-    insert into registration_forms (segment_id, title, description_md, slug, schema, status, opens_at, closes_at)
+    insert into registration_forms (segment_id, kind, title, description_md, slug, schema, status, opens_at, closes_at)
     values (
       ${segmentId},
+      ${row.kind ?? schema?.kind ?? 'PUBLIC'},
       ${row.title ?? 'Come to the concert'},
       ${row.descriptionMd ?? null},
       ${row.slug ?? 'autumn-public'},
-      ${row.schema === null ? null : json(row.schema ?? PUBLIC_FORM)}::text::jsonb,
+      ${schema === null ? null : json(schema)}::text::jsonb,
       ${row.status ?? 'OPEN'},
       ${row.opensAt?.toISOString() ?? null},
       ${row.closesAt?.toISOString() ?? null}
@@ -53,6 +58,22 @@ async function seedForm(row: FormRow = {}) {
   `;
 
   return { concertId, showId, segmentId, formId: Number(inserted.id) };
+}
+
+/** A `FEEDBACK` form, which `J` hangs off a **show** and gives no segment at all. */
+async function seedFeedbackForm(slug = 'how-was-it') {
+  const concertId = await createConcert(`Test Concert ${++concertCounter}`);
+  const showId = await createShow(concertId, null);
+
+  await sql`
+    insert into registration_forms (show_id, kind, title, slug, schema, status)
+    values (
+      ${showId}, 'FEEDBACK', 'How was your evening?', ${slug},
+      ${json(blankFormSchema('FEEDBACK'))}::text::jsonb, 'OPEN'
+    )
+  `;
+
+  return { concertId, showId };
 }
 
 const call = (slug: string, ip = '198.51.100.50') =>
@@ -85,10 +106,38 @@ describe('loadFormBySlug', () => {
     expect(form.copy.max_additional_guests).toBe('3');
   });
 
-  it('takes the kind from the JSON, which is what the contract governs', async () => {
-    await seedForm({ slug: 'feedback', schema: blankFormSchema('FEEDBACK') });
-    const form = await loadFormBySlug('feedback');
-    expect(form.state === 'OPEN' && form.kind).toBe('FEEDBACK');
+  it('loads a FEEDBACK form, which hangs off a show and has no segment', async () => {
+    // `J` made `segment_id` nullable so feedback can attach to a show. An inner
+    // join on `show_segments` would have returned "no such form" for every
+    // feedback form in the system — flagged by this module's QA pass one commit
+    // before `J` landed and made it real.
+    const { showId, concertId } = await seedFeedbackForm();
+
+    const form = await loadFormBySlug('how-was-it');
+    expect(form.state).toBe('OPEN');
+    if (form.state !== 'OPEN') throw new Error('unreachable');
+
+    expect(form.kind).toBe('FEEDBACK');
+    expect(form.segmentId).toBeNull();
+    expect(form.showId).toBe(showId);
+    expect(form.concertId).toBe(concertId);
+    // No seat blocks, so nothing to configure and nothing to cap.
+    expect(form.limits).toEqual({});
+  });
+
+  it('refuses a form whose kind column and schema disagree', async () => {
+    // The column decides the parent, the JSON decides the blocks. A form where
+    // they disagree has seats with nowhere to go, so it reads as "no such form"
+    // rather than rendering into something wrong.
+    await seedForm({ slug: 'mismatched', kind: 'PLAYER' });
+    expect(await loadFormBySlug('mismatched')).toEqual({ state: 'NOT_FOUND' });
+  });
+
+  it('carries schema_version, so a response can pin what it answered', async () => {
+    const { formId } = await seedForm({ slug: 'versioned' });
+    await sql`update registration_forms set schema_version = 4 where id = ${formId}`;
+    const form = await loadFormBySlug('versioned');
+    expect(form.state === 'OPEN' && form.schemaVersion).toBe(4);
   });
 
   it('reports one "not found" for a missing slug, a draft, and a schema that will not parse', async () => {
@@ -149,8 +198,8 @@ describe('loadFormBySlug', () => {
       baseQuota: 2,
     });
     await sql`
-      insert into registration_forms (segment_id, title, slug, schema, status)
-      values (${segmentId}, 'Players', 'players', ${json(blankFormSchema('PLAYER'))}::text::jsonb, 'OPEN')
+      insert into registration_forms (segment_id, kind, title, slug, schema, status)
+      values (${segmentId}, 'PLAYER', 'Players', 'players', ${json(blankFormSchema('PLAYER'))}::text::jsonb, 'OPEN')
     `;
 
     const fresh = await loadFormBySlug('players');

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertFormSchema,
   blockFields,
+  FORM_KINDS,
   InvalidFormSchemaError,
   parseFormSchema,
   type FormSchema,
@@ -78,6 +79,16 @@ describe('the three fixtures', () => {
       'text',
       'textarea',
     ]);
+  });
+});
+
+describe('the contract and the database agree about what a form is', () => {
+  it('FORM_KINDS matches the form_kind enum exactly', async () => {
+    // `J` gave `registration_forms` a `kind` column, and its check constraint
+    // keys the form's parent off it. Two lists of the same three values drift;
+    // this is what notices.
+    const { formKind } = await import('@/db/schema/enums');
+    expect([...FORM_KINDS].sort()).toEqual([...formKind.enumValues].sort());
   });
 });
 

@@ -26,7 +26,7 @@
  */
 
 import { z } from 'zod';
-import { CHOICE_FIELD_TYPES, FIELD_TYPES, isChoiceType, type FieldType } from './field-types';
+import { CHOICE_FIELD_TYPES, FIELD_TYPES, isChoiceType } from './field-types';
 import { CONDITION_OPS, PRESENCE_OPS, type Condition } from './conditions';
 import { RESERVED_FIELD_KEYS, systemFieldsFor, type SystemFieldSpec } from './system-fields';
 

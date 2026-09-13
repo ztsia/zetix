@@ -188,9 +188,11 @@ describe('the response count on the list', () => {
     const forms = await getFormsForConcert(concertId);
     const byTitle = Object.fromEntries(forms.map((form) => [form.title, form.responses]));
 
-    // The count is a correlated subquery, and an unqualified outer reference
-    // made it compare `form_id` against the response's own `id` — which is
-    // silently wrong rather than an error.
+    // The count is a correlated subquery. It is correct as written — this
+    // select carries joins, and Drizzle qualifies every column when it does —
+    // but a correlated count is the kind of thing that goes silently wrong
+    // rather than erroring, so it is pinned here. The sibling subquery in
+    // `getResponses` had exactly that failure for want of the joins.
     expect(byTitle).toEqual({ Mine: 3, Other: 1 });
     expect((await getForm(concertId, mine))!.responses).toBe(3);
   });

@@ -61,8 +61,13 @@ function recordingTransport(behaviour?: (m: OutgoingMessage) => Partial<SendResu
  * `D`'s, and pinning the template at issue time is what makes `loadTicket()`
  * return anything at all.
  */
+let partyCounter = 0;
+
 async function seedParty(opts: { seats: number; subject?: string; templateKey?: string }) {
-  const concertId = await createConcert();
+  // A distinct concert per party: `createConcert()` derives the slug from the
+  // name, and a second "Test Concert" collides on it. Tests that queue several
+  // parties at once need several concerts.
+  const concertId = await createConcert(`Test Concert ${(partyCounter += 1)}`);
   const showId = await createShow(concertId, 400);
   const segmentId = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 300 });
   const registrationId = await createRegistration({ showId, segmentId, contactName: 'Party' });
@@ -91,12 +96,117 @@ async function attendeeStamps(registrationId: number) {
 
 beforeEach(async () => {
   await resetDb();
+  partyCounter = 0;
   await setSystemSetting('email.max_per_dispatch', 25);
   await setSystemSetting('email.max_per_day', 450);
   await setSystemSetting('email.inter_message_delay_ms', 0);
   await setSystemSetting('email.max_attempts', 3);
   await setSystemSetting('email.merge_attachments_above', 8);
   await setSystemSetting('email.max_attachment_mb', 20);
+});
+
+/**
+ * A dispatch has to stop before Vercel stops it (`dispatch.ts`'s
+ * `SEND_WINDOW_MS`).
+ *
+ * A real blast of 244 went out ten at a time and then returned 504: sending is
+ * serial, each message cost about six seconds against the one to two §11.1
+ * assumes, and a batch of 25 simply did not fit in 60. Everything sent stayed
+ * sent — but the rest of the claimed batch was left `SENDING`, where
+ * `claimBatch()` cannot see it and `reclaimStranded()` will not touch it for ten
+ * minutes, so pressing Send again did nothing and then timed out again.
+ */
+describe('staying inside the dispatch window', () => {
+  it('stops starting messages once the window is spent', async () => {
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport, sendWindowMs: 0 });
+
+    expect(result.sent).toBe(1);
+    expect(result.deferred).toBe(2);
+    expect(transport.messages).toHaveLength(1);
+  });
+
+  /**
+   * The first message always goes, whatever the clock says. Deferring the whole
+   * batch would be a queue that never drains — and one message slower than the
+   * window is exactly the case that needs to be attempted, not skipped.
+   */
+  it('always starts the first message', async () => {
+    await seedParty({ seats: 1 });
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport, sendWindowMs: 0 });
+
+    expect(result.sent).toBe(1);
+    expect(result.deferred).toBe(0);
+  });
+
+  it('hands the rest back as QUEUED, not left SENDING', async () => {
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+
+    await dispatchBatch({ transport: recordingTransport(), sendWindowMs: 0 });
+
+    const rows = await sql<{ status: string }[]>`select status from email_outbox order by id`;
+    expect(rows.map((r) => r.status)).toEqual(['SENT', 'QUEUED', 'QUEUED']);
+  });
+
+  /**
+   * The whole point of handing them back rather than leaving them to
+   * `reclaimStranded()`: the next call must find them immediately. A ten-minute
+   * wait reads, from the blast screen, as a blast that has stopped working.
+   */
+  it('lets the very next call send them', async () => {
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+
+    const first = await dispatchBatch({ transport: recordingTransport(), sendWindowMs: 0 });
+    expect(first.remaining).toBe(2);
+
+    const second = await dispatchBatch({ transport: recordingTransport() });
+
+    expect(second.sent).toBe(2);
+    expect(second.reclaimed).toBe(0);
+    expect(second.remaining).toBe(0);
+  });
+
+  /**
+   * The release is by id *and* still-`SENDING`, so a row that reached `SENT`
+   * cannot be dragged back into the queue. Sending someone their tickets twice
+   * is the one failure this module is built to prevent.
+   */
+  it('never hands back a row that was already sent', async () => {
+    const { registrationId } = await seedParty({ seats: 2 });
+    await seedParty({ seats: 1 });
+
+    await dispatchBatch({ transport: recordingTransport(), sendWindowMs: 0 });
+
+    const [row] = await sql<{ status: string }[]>`
+      select status from email_outbox where registration_id = ${registrationId}
+    `;
+    expect(row.status).toBe('SENT');
+
+    const stamps = await attendeeStamps(registrationId);
+    for (const stamp of stamps) expect(stamp.ticket_sent_at).not.toBeNull();
+  });
+
+  it('sends the whole batch when there is time for it', async () => {
+    await seedParty({ seats: 1 });
+    await seedParty({ seats: 1 });
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport });
+
+    expect(result.sent).toBe(2);
+    expect(result.deferred).toBe(0);
+    expect(transport.messages).toHaveLength(2);
+  });
 });
 
 describe('a successful send', () => {

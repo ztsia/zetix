@@ -80,7 +80,7 @@ export function FormFieldControl(props: FormFieldControlProps) {
         <RequiredMark required={field.required} />
       </FieldLabel>
       <Control {...props} invalid={invalid} />
-      <Help field={field} />
+      <Help field={field} path={path} />
       {error ? <FieldError>{error}</FieldError> : null}
     </Field>
   );
@@ -94,12 +94,16 @@ function Control({
   disabled,
   invalid,
 }: FormFieldControlProps & { invalid: boolean }) {
+  /**
+   * `placeholder` is deliberately not in here. It is not a `select` attribute,
+   * and on that control the admin's placeholder labels the empty option
+   * instead — so each branch takes it, or does not, on its own.
+   */
   const shared = {
     id: path,
     disabled,
     'aria-invalid': invalid || undefined,
     'aria-describedby': field.help_md ? `${path}-help` : undefined,
-    placeholder: field.placeholder,
   };
 
   switch (field.type) {
@@ -109,6 +113,7 @@ function Control({
           {...shared}
           className="min-h-24 text-base md:text-sm"
           rows={4}
+          placeholder={field.placeholder}
           value={asText(value)}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -144,6 +149,7 @@ function Control({
           {...shared}
           className={CONTROL}
           type="number"
+          placeholder={field.placeholder}
           // A numeric keypad rather than the full keyboard, on a field that
           // takes digits.
           inputMode="numeric"
@@ -169,6 +175,7 @@ function Control({
           {...shared}
           className={CONTROL}
           type={field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
+          placeholder={field.placeholder}
           // The keyboard and the autofill hint the phone can actually use.
           inputMode={field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : undefined}
           autoComplete={autoCompleteFor(field)}

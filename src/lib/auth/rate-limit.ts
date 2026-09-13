@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, count, desc, eq, gt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, lt } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { authFailures } from '@/db/schema/auth';
 import { requireSetting } from '@/db/settings';
@@ -160,4 +160,143 @@ export async function registerFailure(bucket: string): Promise<RateLimitVerdict>
 /** Clears the bucket. A correct code ends the lockout for that IP immediately. */
 export async function clearFailures(bucket: string): Promise<void> {
   await getDb().delete(authFailures).where(eq(authFailures.bucket, bucket));
+}
+
+// ---------------------------------------------------------------------------
+// Per-IP throttling for the tokenised surfaces (spec/v2.md §8.3, ref.md §7)
+// ---------------------------------------------------------------------------
+
+/**
+ * The second throttle in this module, and it is deliberately in **this** module
+ * rather than a new one (`docs/modules-v2.md` §3, `K`): a second implementation
+ * of "rate limiting" is two behaviours under one name, and the next person to
+ * change the policy would change one of them.
+ *
+ * **It is a different shape from the login throttle above, and the difference is
+ * the point.** That one counts *failures* and grows a lockout, because the thing
+ * being protected is a credential someone is guessing. This one counts *every
+ * request* in a fixed window, because the thing being protected is an
+ * unguessable token — possession of it is the credential (`ref.md` §7), and the
+ * attack is enumeration, which produces no failures a `auth_failures`-shaped
+ * counter would notice. Hi.Events throttles its own tokenised self-service
+ * routes as tightly as 5/min for exactly this reason.
+ *
+ * **Storage is Postgres, following the `auth_failures` pattern** as §8.3
+ * requires. That table is reused rather than a new one added: its own comment
+ * says `bucket` is *"deliberately opaque so the limiter, not the schema, decides
+ * what is being throttled"*, and it is otherwise `(bucket, created_at)` — a
+ * generic timestamped hit log wearing the name of its first use. An in-memory
+ * counter is not an option for the same reason it was not one for the login: on
+ * Vercel each request may land on a different lambda, so the count resets under
+ * exactly the load an attacker generates.
+ *
+ * **It goes in the handler, never in `src/proxy.ts`** (`modules.md` §5.2.1).
+ * The proxy runs on every request including prefetches and never touches the
+ * database, which is what keeps it fast and what keeps a database outage from
+ * taking every route down at once.
+ */
+
+/** `form:<ip>` — the registration surface: the public form, the player form, the edit screen. */
+export function formBucket(ip: string): string {
+  return `form:${ip}`;
+}
+
+/**
+ * `portal:<ip>` — the concert portal's tokenised pages.
+ *
+ * Provided here, mounted by `N`: this branch may not touch the portal
+ * (`docs/modules-v2.md` §3, `K`). It shares the form's policy key rather than
+ * taking one of its own, because the two surfaces face the same threat with the
+ * same kind of token, and a second key is a second thing to get wrong.
+ */
+export function portalBucket(ip: string): string {
+  return `portal:${ip}`;
+}
+
+const ONE_MINUTE_MS = 60_000;
+
+/** Where in the cascade to read the policy, for a caller that already knows. */
+export type ThrottleContext = {
+  segmentId?: number | null;
+  showId?: number | null;
+  concertId?: number | null;
+};
+
+/**
+ * Record this request against `bucket` and say whether it may proceed.
+ *
+ * **Records first, then counts, so the request in hand is included.** With a
+ * limit of five, the sixth request inside a minute is the one refused — a
+ * check-then-record limiter lets one extra through, and the extra one is always
+ * the attacker's.
+ *
+ * `form.rate_limit_per_ip_per_min` resolves through the cascade
+ * (spec/README.md §2.2). It is a **system** value with a seed, so most callers
+ * pass no context at all: at the moment a tokenised route is throttled we have
+ * not looked anything up yet, and looking a form up in order to decide whether
+ * to allow the lookup is the wrong way round. A caller that already holds the
+ * concert — the portal, which resolves its token first — may pass it and get a
+ * per-concert override.
+ *
+ * Missing setting throws, exactly as the login policy does. This is a seeded
+ * system value; its absence means the install is broken, and a limiter that
+ * quietly stops limiting is the outcome this whole module exists to avoid.
+ */
+export async function consumeRateLimit(
+  bucket: string,
+  ctx: ThrottleContext = {},
+): Promise<RateLimitVerdict> {
+  const perMinute = await requireSetting<number>('form.rate_limit_per_ip_per_min', {
+    segmentId: ctx.segmentId ?? null,
+    showId: ctx.showId ?? null,
+    concertId: ctx.concertId ?? null,
+  });
+
+  const db = getDb();
+  const windowStart = new Date(Date.now() - ONE_MINUTE_MS);
+
+  /**
+   * Expired rows for this bucket, dropped on the way in.
+   *
+   * The login throttle stays small without a cron because a correct code
+   * deletes the bucket, and only a credential someone is currently getting
+   * wrong has rows at all. Counting *every* request has no such property — a
+   * successful form load is still a row — so the sweep is what keeps this from
+   * growing without bound. It costs one indexed delete on a bucket that holds
+   * single-digit rows, and it only ever touches the caller's own bucket.
+   */
+  await db
+    .delete(authFailures)
+    .where(and(eq(authFailures.bucket, bucket), lt(authFailures.createdAt, windowStart)));
+
+  await db.insert(authFailures).values({ bucket });
+
+  const [tally] = await db
+    .select({ hits: count() })
+    .from(authFailures)
+    .where(and(eq(authFailures.bucket, bucket), gt(authFailures.createdAt, windowStart)));
+
+  const hits = tally?.hits ?? 0;
+  if (hits <= perMinute) return { allowed: true };
+
+  /**
+   * How long until the window has room again — the age of the oldest hit still
+   * counting, subtracted from the window.
+   *
+   * A fixed `60` would be a lie for a caller who has been waiting 55 seconds,
+   * and a client that honours `Retry-After` would sleep a minute it did not
+   * need to. Floored at one second, because `Retry-After: 0` reads as "go
+   * ahead".
+   */
+  const [oldest] = await db
+    .select({ createdAt: authFailures.createdAt })
+    .from(authFailures)
+    .where(and(eq(authFailures.bucket, bucket), gt(authFailures.createdAt, windowStart)))
+    .orderBy(asc(authFailures.createdAt))
+    .limit(1);
+
+  const expiresAt = (oldest?.createdAt.getTime() ?? Date.now()) + ONE_MINUTE_MS;
+  const retryAfterSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+
+  return { allowed: false, retryAfterSeconds };
 }

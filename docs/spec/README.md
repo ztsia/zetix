@@ -17,6 +17,7 @@ Companion documents:
 | `spec/` (this) | What the system does and how it behaves | The contract |
 | `../context.md` | This orchestra's concert: real numbers, dates, delivery plan, open questions | The data |
 | `../modules.md` | How V1 is cut into branches and what each owns | The work split |
+| `../modules-v2.md` | The same for V2's ten branches, `J`–`S` | The work split |
 | `../ref.md` | Patterns distilled from Hi.Events, chiefly the door-scanner IA | Background |
 
 ---
@@ -35,7 +36,7 @@ Companion documents:
 | `admin.md` | Admin console structure, notes wall, roles | §14 | F2, A, H |
 | `surfaces.md` | The four surfaces and their UI architecture | §15 | F2, all |
 | `platform.md` | Stack, hosting, connection strings, env vars | §16, §17, Appendices A–B | F1, F2 |
-| `v2.md` | Native forms and the portal — **specified, not built** | §8, §13 | nobody, in V1 |
+| `v2.md` | Native forms, the portal and feedback — **specified, not built in V1** | §8, §13 | `J`–`S` |
 | `decisions.md` | Every settled decision and its reasoning | §19 | everyone |
 
 **Section numbers are unchanged from the single-file spec** and are referenced throughout the
@@ -201,14 +202,20 @@ night. It is one read-only page reusing data the door already needs.
 
 | Area | Included |
 |---|---|
-| Native registration | Both form types, the JSON schema renderer, response limiting, editing (`v2.md` §8) |
-| Public verification | Double opt-in, unverified-registration review (`v2.md` §8.1) |
-| Full portal | Progressive disclosure on admission, e-booklet, practical info (`v2.md` §13) |
+| Native registration | Three form kinds, the block-based builder, the JSON renderer, response limiting, editing (`v2.md` §8) |
+| Public verification | Double opt-in, unverified-registration review (`v2.md` §8.1.4) |
+| Full portal | Progressive disclosure on admission and after the show, e-booklet, practical info (`v2.md` §13) |
 | Notes | Leaving notes, moderation, the wall, per-player grouping, digests (`v2.md` §13.4, `admin.md` §14.2) |
+| Feedback | A post-show form, the admitted-only blast, show auto-completion (`v2.md` §13.5) |
 | Rate limiting | Per-IP form and portal throttles (`v2.md` §8.3, `ref.md` §7) |
 
 V2 features are specified in full below rather than deferred to a later document, because the V1 schema
 must not need reshaping to accept them. Where a V1 table carries a column only V2 uses, it is marked.
+
+That promise held for everything V1 shipped. It does **not** cover the refinement of 13 Sep, which
+settled the form-builder shape, the feedback surface and show auto-completion and needs a schema delta
+of its own — one migration, owned by module `J` and enumerated in `../modules-v2.md` §3. The V2 branch
+map is `../modules-v2.md`; V1's is `../modules.md`.
 
 **Admin login rate limiting is V1**, not V2: it is the only credential guarding every attendee's name
 and email (`admin.md` §14.3). The per-form and per-portal throttles wait because in V1 there are no public forms

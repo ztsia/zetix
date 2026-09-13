@@ -40,7 +40,8 @@ concert
 `practical_info_md`, `created_at`, `updated_at`, `deleted_at`
 
 **`shows`**
-`id`, `concert_id`, `name`, `starts_at` (timestamptz), `doors_open_at`, `venue_name`, `venue_address`,
+`id`, `concert_id`, `name`, `starts_at` (timestamptz), `ends_at` (nullable), `doors_open_at`,
+`venue_name`, `venue_address`,
 `capacity`,
 `portal_unlock_mode` (ON_ADMISSION | OPEN_TO_ALL | CLOSED),
 `status` (DRAFT|OPEN|CLOSED|COMPLETED), `ticket_template_id` (nullable),
@@ -52,6 +53,13 @@ set one template for all its shows and a single show can override it. Never read
 
 The show owns the **physical hall**: one capacity number and the door. It carries no audience mode —
 see segments below.
+
+**`ends_at` is nullable and its absence means "do not guess".** It is what "the show is over" is measured
+from — the portal's post-show phase and auto-completion both derive from
+`ends_at + show.auto_complete_after_hours` (`v2.md` §13.2.1). A concert with an interval can run well past
+its nominal length, so no duration is inferred from `starts_at`: with `ends_at` null there is no post-show
+phase and no auto-completion, and an admin marks the show `COMPLETED` by hand as before (§2.1 — a missing
+value is a validation error, never a silent fallback).
 
 **One capacity, not three.** There is no separate soft threshold and no `held_seats` column. Seats you
 want to withhold — staff, press, guests of honour — are simply seats you do not give to any segment:
@@ -96,33 +104,73 @@ Quota is uniform across players in practice, so the admin UI edits it at show le
 override column exists because it costs one nullable column and removes a future migration.
 
 **`registration_forms`**
-`id`, `segment_id`, `round_label` (e.g. "Round 1"), `title`, `description_md`, `slug` (unique),
-`schema` (jsonb — `v2.md` §8.2), `opens_at`, `closes_at`, `max_responses`,
+`id`, `segment_id` (nullable — null for `FEEDBACK`, which attaches to a show), `show_id` (nullable),
+`kind` (PLAYER | PUBLIC | FEEDBACK), `round_label` (e.g. "Round 1"), `title`, `description_md`,
+`slug` (unique),
+`schema` (jsonb — `v2.md` §8.2), `schema_version` (int, bumped on every save),
+`opens_at`, `closes_at`, `max_responses`,
 `one_response_per_identity`, `max_tickets_per_response` (nullable),
 `auto_close_on_capacity`, `allow_edit_until`, `confirmation_message_md`,
 `status` (DRAFT|OPEN|CLOSED), `created_at`, `updated_at`
 
-A form belongs to a segment, and the segment's `audience_mode` decides which form type renders. A
-second registration round is a new form on the same segment with a new `round_label`.
+A registration form belongs to a segment, and `kind` decides which **system blocks** are pre-built into
+it (`v2.md` §8.2) — `PLAYER` and `PUBLIC` must agree with the segment's `audience_mode`. A `FEEDBACK` form
+belongs to a show instead and creates no seats at all (`v2.md` §13.5). A second registration round is a new
+form on the same segment with a new `round_label`.
+
+`schema_version` exists so a response can pin the schema it was answered against (`v2.md` §8.2.4), the same
+way a ticket pins its template version (`tickets.md` §10.5). Without it an admin renaming a question
+retroactively changes what every earlier answer meant.
 
 **`form_responses`**
-`id`, `form_id`, `raw` (jsonb — exact submitted payload, never mutated), `submitted_at`,
-`ip_address`, `user_agent`, `edit_token` (unique, nullable)
+`id`, `form_id`, `raw` (jsonb — exact submitted payload, never mutated),
+`form_schema` (jsonb — the schema as it stood at submit time, `v2.md` §8.2.4),
+`identity_key` (nullable — the player id or lowercased email),
+`supersedes_id` (nullable, self-reference — the response this edit replaces, `v2.md` §8.3.1),
+`submitted_at`, `ip_address`, `user_agent`, `edit_token` (unique, nullable)
+
+```sql
+create unique index form_responses_identity_key
+  on form_responses (form_id, identity_key)
+  where identity_key is not null;
+```
+
+That index is what enforces `one_response_per_identity` (`v2.md` §8.3). A read-then-write check in the
+handler is a race at precisely the moment scarce seats attract double-clicks — the same reasoning that
+makes `claim_seats()` a Postgres function rather than application code.
+
+**An edit inserts a new row rather than mutating `raw`**, chained through `supersedes_id`; the
+registration points at the newest. `raw` is the receipt of what someone actually typed and a dispute is
+settled from it, so nothing may overwrite it.
 
 **`registrations`** — a booking party
 `id`, `show_id`, `segment_id`, `round_label` (nullable),
 `player_id` (nullable), `form_response_id` (nullable), `import_batch_id` (nullable),
 `source` (FORM|IMPORT|ADMIN),
 `contact_name`, `contact_email` (citext), `contact_phone`,
+`custom` (jsonb, nullable — answers to `CUSTOM` blocks, `v2.md` §8.2.3),
 `status` (CONFIRMED|PENDING_REVIEW|WAITLIST|CANCELLED),
+`email_verified_at` (nullable), `verification_token` (unique, nullable, unguessable),
 `requested_at` (timestamptz — the FCFS ordering key),
 `created_by`, `created_at`, `updated_at`, `deleted_at`
 Index: `(segment_id, status, requested_at)`, `(show_id, status)`
 Unique: `(id, segment_id, show_id)` — for the composite foreign key in §5.2
 
+**Verification gates the email, never the seat** (`v2.md` §8.1.4). A public registration is `CONFIRMED`
+the moment it is submitted, because seats are scarce and holding them for an unclicked link would give
+them away; `email_verified_at` decides only whether the ticket email is released. `source = IMPORT` and
+`source = ADMIN` registrations are never gated — an imported registrant never received a link, and
+holding their tickets behind one would strand them (`import.md` §9.4).
+
+**`custom` duplicates `form_responses.raw` on purpose.** `raw` is the immutable receipt and exists only
+for `source = FORM`; an admin table or an export reading it would show blanks for every imported and
+admin-created registration, which is most of them. `custom` is the queryable copy that screens, filters
+and exports read (`v2.md` §8.2.3).
+
 **`attendees`** — one row per seat
 `id`, `registration_id`, `show_id`, `segment_id`,
 `full_name`, `name_source` (PROVIDED|PLACEHOLDER), `email` (citext, nullable),
+`custom` (jsonb, nullable — per-seat answers to custom fields inside a repeater, `v2.md` §8.2.3),
 `allocation_type` (BASE|EXTRA|HELD|COMP),
 `ticket_code` (unique), `qr_token` (unique),
 `status` (CONFIRMED|PENDING_REVIEW|WAITLIST|CANCELLED),
@@ -159,6 +207,16 @@ Index: `(show_id, scanned_at)`, `(attendee_id)`
 `wall_status` (NOT_PUBLISHED|PUBLISHED),
 `moderated_by`, `moderated_at`, `created_at`, `updated_at`
 Index: `(concert_id, moderation_status)`, `(to_player_id)`, `(concert_id, wall_status)`
+
+**`feedback_responses`** — one attendee's answers to a `FEEDBACK` form (`v2.md` §13.5)
+`id`, `form_id`, `attendee_id`, `show_id`,
+`answers` (jsonb), `form_schema` (jsonb — pinned as in §8.2.4), `submitted_at`, `updated_at`
+Unique: `(attendee_id, form_id)`
+
+One response per attendee, not per registration. *"How was your evening?"* is not a group answer, and a
+party of four that split up at the interval has four of them. The audience is attendees with a
+`check_ins` row — a manual or override admit counts, because those people were in the hall
+(`v2.md` §13.5.1).
 
 **`import_batches`**
 `id`, `show_id`, `segment_id`, `filename`, `mapping_profile_id`, `uploaded_by`,
@@ -287,11 +345,16 @@ time, not a silent fallback.
 | `allocation.base_claim_deadline` | segment | After this, unclaimed base releases into that segment's extras pool |
 | `allocation.extras_policy` | segment | `REVIEW` (batch grant) or `AUTO_FCFS` (instant) |
 | `allocation.allow_partial_grant` | segment | A boundary request may be granted in part |
-| `form.max_tickets_per_response` | segment | Party size cap |
+| `form.max_tickets_per_response` | segment | **Total** party size cap, registrant included. The public repeater therefore renders `cap − 1` rows (`v2.md` §8.1.2) |
 | `form.extra_rows_max` | segment | Rows in the "request extras" repeater |
-| `portal.unlock_mode` | show | `ON_ADMISSION`, `OPEN_TO_ALL`, `CLOSED` |
+| `show.auto_complete_after_hours` | show | How long after `ends_at` the show counts as over — the portal's post-show phase and auto-completion both read it (`v2.md` §13.2.1). Inert while `ends_at` is null |
+| `portal.unlock_mode` | show | `ON_ADMISSION`, `OPEN_TO_ALL`, `CLOSED`. **Who** may see unlocked sections, nothing more — it is never flipped by a show reaching `COMPLETED` (`v2.md` §13.2.1) |
+| `portal.booklet_enabled` | show | |
 | `portal.notes_enabled` | concert | |
 | `portal.notes_close_at` | concert | |
+| `portal.feedback_enabled` | show | |
+| `portal.feedback_close_at` | show | |
+| `portal.feedback_send_hour` | concert | Hour in `concert.timezone` at which queued feedback email becomes due (`v2.md` §13.5.2) |
 | `portal.public_wall_enabled` | concert | |
 | `portal.public_wall_visibility` | concert | `ADMIN_ONLY` or `AUDIENCE` |
 | `concert.timezone` | concert | IANA zone; all show times are stored UTC and rendered in it (§6.1) |
@@ -303,6 +366,7 @@ install-time seeds.
 |---|---|---|---|
 | `portal.note_max_length` | system | 1000 | V2 |
 | `form.rate_limit_per_ip_per_min` | system | 5 | V2 |
+| `form.verification_grace_hours` | system | 48 | Unverified public registrations older than this are flagged for admin review (`v2.md` §8.1.4) |
 | `form.seat_indicator_exact_below` | system | 20 | Below this the form shows a band, not a number (`v2.md` §8.3) |
 | `auth.admin_max_attempts` | system | 5 | Admin sign-in attempts per IP before lockout (`admin.md` §14.3) |
 | `auth.admin_lockout_window_min` | system | 15 | |

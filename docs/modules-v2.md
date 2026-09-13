@@ -14,7 +14,7 @@ file allocates work, it does not define it.
 
 ## 1. What V2 actually is
 
-Five areas, from `spec/README.md` §4.2:
+Six areas. Five come from `spec/README.md` §4.2; the sixth was added when V2 was refined on 13 Sep:
 
 | Area | Spec |
 |---|---|
@@ -23,6 +23,7 @@ Five areas, from `spec/README.md` §4.2:
 | Full portal — progressive disclosure on admission, e-booklet, practical info | `v2.md` §13.1–§13.3 |
 | Notes — leaving, moderation, the wall, per-player grouping, digests | `v2.md` §13.4, `admin.md` §14.2 |
 | Rate limiting — per-IP form and portal throttles | `v2.md` §8.3 |
+| **Feedback** — a post-show form, the admitted-only blast, show auto-completion | `v2.md` §13.5 |
 
 **V1 ships a complete system.** Nothing here is a fix; it is the surface set that assumes registration
 has moved off Google Forms. That is why none of it was allowed onto the 19 Sep critical path
@@ -49,48 +50,56 @@ and in migrations `0000`–`0006`:
   `portal.unlock_mode`, `portal.notes_enabled`, `portal.notes_close_at`,
   `portal.public_wall_enabled`, `portal.public_wall_visibility`.
 
-**So look first.** Two gaps were found, both owned by `SC` below. If you believe you have found a
-third, that is a claim about the schema and it goes to `SC` as a small PR — you do not add a column on
-your own branch (`modules.md` §4).
+**So look first.** The promise held for everything above. It did **not** survive the 13 Sep refinement
+untouched: that session settled the form-builder shape, the feedback surface and show auto-completion,
+and those need columns nobody had written down. The full delta is `J`'s scope below.
+
+If you believe you have found a further gap, that is a claim about the schema and it goes to `J` as a
+small PR — you do not add a column on your own branch (`modules.md` §4).
 
 ---
 
 ## 2. The shape of the split
 
 ```
-SC schema delta  ─┐
-                  ├─► FA  form admin
-FK form kernel   ─┤
-                  ├─► FP  public & player forms ──┬──► VF  verification & release
-                  │                               └──► FE  response editing
-                  ├─► PT  portal ──────────────────────► NW  notes, wall & digest
-                  └─► RL  rate limiting
+J  schema delta ─┐
+                 ├─► L  form admin
+K  form kernel  ─┤
+                 ├─► M  public & player forms ──┬──► O  verification & release
+                 │                              └──► P  response editing
+                 ├─► N  portal ─────────────────┬──► Q  notes, wall & digest
+                 │                              └──► R  feedback & post-show
+                 └─► S  rate limiting
 ```
 
-`SC` and `FK` are wave 0 and **run in parallel with each other** — `SC` touches `src/db/schema/` and
-`drizzle/` only, `FK` touches `src/lib/forms/`, `src/components/` and a new route group. They do not
-overlap. Open `SC` first anyway: its migration needs a manual apply to Supabase (`local.md` §4) and
+`J` and `K` are wave 0 and **run in parallel with each other** — `J` touches `src/db/schema/` and
+`drizzle/` only, `K` touches `src/lib/forms/`, `src/components/` and a new route group. They do not
+overlap. Open `J` first anyway: its migration needs a manual apply to Supabase (`local.md` §4) and
 nothing downstream can be tested against production until that lands.
 
-Four edges are real dependencies rather than convenience: **FP waits on FK**, **VF and FE wait on FP**,
-**NW waits on PT** for the section slot and on **SC** for the digest outbox key.
+Five edges are real dependencies rather than convenience: **M waits on K**, **O and P wait on M**,
+**Q waits on N** for the section slot and on **J** for the digest outbox key, and **R waits on N** for
+the same slot and on **K** for the renderer it reuses.
 
-### Why `SC` is serial
+**V1 ran `A`–`I`; V2 continues the same series from `J`.** One letter per branch across both versions,
+so a branch name is unambiguous for the life of the repository.
+
+### Why `J` is serial
 
 Same argument as V1's F1. One migration, applied **by hand** to Supabase — so every V2 column has to be
 in it, or someone runs a second manual apply on concert-adjacent infrastructure. It also touches
 `email_outbox`, which carries a non-negotiable (§3.1 below). A schema built by six sessions at once is
 six migrations that conflict, and Drizzle will generate conflicting files.
 
-### Why `FK` is serial
+### Why `K` is serial
 
 `spec/surfaces.md` §15.2 is explicit: *"One generic renderer drives both form types from the JSON
-schema — do not build two forms."* That renderer has three consumers — `FA`'s live preview, `FP`'s two
-public surfaces, and `FE`'s edit screen. Built once it is a couple of days; built three times it is
+schema — do not build two forms."* That renderer has three consumers — `L`'s live preview, `M`'s two
+public surfaces, and `P`'s edit screen. Built once it is a couple of days; built three times it is
 three divergent renderers and three sets of validation bugs. This is V1's `DataTable` argument,
 unchanged.
 
-Keep `FK` small the same way F2 was kept small: **if something is used by exactly one module, it
+Keep `K` small the same way F2 was kept small: **if something is used by exactly one module, it
 belongs to that module.**
 
 ---
@@ -99,19 +108,40 @@ belongs to that module.**
 
 ### Wave 0 — foundation
 
-#### `SC` — `v2/SC-schema-delta`
+#### `J` — `v2/J-schema-delta`
 
 **Spec:** `domain.md` §5.1, §5.2 · `v2.md` §8.1 · `email.md` §11.3, §11.4
 
-Schema only. No screens, no handlers.
+Schema only. No screens, no handlers. Every column V2 needs is in this one migration.
 
-1. **Registration verification columns.** `v2.md` §8.1 holds a public registration's ticket email until
+1. **Registration verification columns.** `v2.md` §8.1.4 holds a public registration's ticket email until
    the registrant clicks a verification link, and flags unverified registrations older than 48h for
    admin review. `registrations` carries nothing for this today — no verified timestamp and no token.
-   Add them, and make the token unique and unguessable like `players.invite_token` is.
+   Add `email_verified_at` and `verification_token`, the token unique and unguessable like
+   `players.invite_token` is.
 2. **The player-addressed digest.** `domain.md` §5.1 already records the resolution: *"`player_notes_digest`
    is the one player-addressed email. It arrives with V2 and adds a nullable `player_id` and its own
    partial unique index."* See §3.1 — **read it before writing the migration.**
+3. **`shows.ends_at`** (nullable). What "the show is over" is measured from (`v2.md` §13.2.1). **Nullable
+   on purpose and inert when null** — no post-show phase, no auto-completion, no inferred duration
+   (decision 41).
+4. **`registration_forms.kind`** (`PLAYER` | `PUBLIC` | `FEEDBACK`) and **`schema_version`**, plus a
+   nullable `show_id` so a `FEEDBACK` form can attach to a show rather than a segment
+   (`v2.md` §8.1, §8.2.4). `segment_id` becomes nullable for the same reason; add a `check` that a form
+   has exactly one parent.
+5. **`form_responses`**: `form_schema` (the pinned schema), `identity_key` **with its partial unique
+   index** on `(form_id, identity_key)`, and `supersedes_id`. The index is what makes
+   `one_response_per_identity` real rather than a racing read-then-write (`v2.md` §8.3).
+6. **`registrations.custom` and `attendees.custom`** (jsonb, nullable) — the queryable copy of custom
+   answers, because `form_responses.raw` exists only for `source = FORM` (`v2.md` §8.2.3).
+7. **`feedback_responses`**, unique on `(attendee_id, form_id)` (`v2.md` §13.5, `domain.md` §5.1).
+8. **The new settings keys** in the admin catalogue: `show.auto_complete_after_hours`,
+   `portal.booklet_enabled`, `portal.feedback_enabled`, `portal.feedback_close_at`,
+   `portal.feedback_send_hour`, `form.verification_grace_hours` (`domain.md` §6).
+
+**None of these carries an operational default in code** (§2.1). `show.auto_complete_after_hours` and
+`portal.feedback_send_hour` are seeded at system level like every other runtime value and are editable
+per show and per concert.
 
 **Migration numbering: V2 starts at `0100`.** `main` keeps `0007`+ free for any 19 Sep hotfix, so the two
 lines cannot collide while `v2` is open. The gap is deliberate and documents itself.
@@ -119,47 +149,82 @@ lines cannot collide while `v2` is open. The gap is deliberate and documents its
 **Done means:** `pnpm db:generate` produces one migration, `pnpm test` is green including V1's existing
 outbox idempotency tests, and `local.md` carries the manual-apply entry.
 
-#### `FK` — `v2/FK-form-kernel`
+#### `K` — `v2/K-form-kernel`
 
 **Spec:** `v2.md` §8.2 · `surfaces.md` §15.2 · `README.md` §2.2
 
-- The zod contract for the form JSON: four section types (`REGISTRANT`, `GUESTS_BASE`, `GUESTS_EXTRA`,
-  `CUSTOM`) and the ten field types. Shared between the builder, the renderer and submit validation —
-  one schema, three uses, per `CLAUDE.md`'s conventions.
-- **The one generic renderer.** Both form types, driven from the JSON.
+- The zod contract for the form JSON: five block types (`REGISTRANT`, `GUESTS_BASE`, `GUESTS_EXTRA`,
+  `GUESTS_PARTY`, `CUSTOM`) and the ten field types. Shared between the builder, the renderer and submit
+  validation — one schema, three uses, per `CLAUDE.md`'s conventions.
+- **The `system` flag on a field, and the `creates_seat` flag on a `REGISTRANT` block** (`v2.md` §8.2).
+  These are the whole mapping model: a system field's `key`, `type` and `required` are immutable and the
+  zod contract must refuse a schema that alters or omits one. **There is no mapping step anywhere in V2**
+  (decision 35), and this is the boundary that guarantees it.
+- **Conditional logic evaluation, custom-to-custom only** (decision 37). A condition that names a system
+  field as either source or target is a schema error, not a runtime no-op — it must fail loudly at the
+  zod boundary, because the failure mode of the alternative is a form that silently stops asking for an
+  email.
+- **The one generic renderer.** All three form kinds, driven from the JSON.
 - `{{base_quota}}`-style interpolation into `description_md`, resolved through the cascade
   (`README.md` §2.2). This is how copy avoids hardcoding numbers — the same rule as code
   (`CLAUDE.md` non-negotiables).
 - The `(registration)` route group and its layout: single column, no chrome, orchestra branding
   (`surfaces.md` §15.2).
 
-**Done means:** a form JSON fixture renders both a player and a public form from one component, and
-invalid JSON fails at the zod boundary with a usable message.
+**Done means:** one component renders a player form, a public form and a feedback form from three
+fixtures; invalid JSON fails at the zod boundary with a usable message; and a schema that tries to
+delete `contact_email`, retype `full_name`, or condition on a system field is refused with a test
+proving it.
 
 **May not touch:** `email_outbox`, allocation, the portal.
 
 ### Wave 1 — parallel
 
-#### `FA` — `v2/FA-form-admin`
+#### `L` — `v2/L-form-admin`
 
 **Spec:** `v2.md` §8.2 · `domain.md` §5.1 (`registration_forms`) · `admin.md` §14.1
 
 Admin-side form management under `(admin)/admin/concerts/[concertId]/forms/`: create and edit a form,
-edit its JSON schema, set `round_label`, `slug`, the open/close window and the limit columns, move it
-`DRAFT` → `OPEN` → `CLOSED`, and preview it live with `FK`'s renderer. Plus a `form_responses` viewer
-(`DataTable`, server mode — `modules.md` §5.2.1).
+set `round_label`, `slug`, the open/close window and the limit columns, move it `DRAFT` → `OPEN` →
+`CLOSED`, and preview it live with `K`'s renderer. Plus a `form_responses` viewer (`DataTable`, server
+mode — `modules.md` §5.2.1).
+
+**The builder is Google-Forms-shaped and it is the point of the module** — add a block, drag to reorder,
+live preview — but it is not a JSON textarea and it is not a field mapper:
+
+- **System blocks are pre-built from `kind`** and cannot be added or deleted. Their key fields render as
+  locked rows: label, help text and placeholder are editable, `key` and `type` are not (`v2.md` §8.2).
+- **Custom blocks are the free editor** — the ten field types, required, options, and show/hide
+  conditions that may only read and target other custom fields.
+- **Copy interpolates resolved settings** — `{{base_quota}}`, `{{max_additional_guests}}` — so a form's
+  own text never hardcodes a number either (§2.1).
+- **Editing the schema bumps `schema_version`.** Responses pin the version they were answered against,
+  so an edit never rewrites the meaning of an answer already given (`v2.md` §8.2.4).
+
+**Exports are this module's, for both form kinds** (`v2.md` §8.5): columns built from the **pinned
+schema** rather than from the responses, so question order is the admin's and an unanswered question
+still gets a column. Registration forms export one row per registration with the party expanded;
+feedback forms one row per attendee. Reuse `/api/export/xlsx` — `F2` built it.
 
 A second registration round is **a new form on the same segment with a new `round_label`**, not an edit
 of the old one (`domain.md` §5.1). The UI should make that the obvious path.
 
-#### `FP` — `v2/FP-public-player-forms` · *depends on `FK`*
+#### `M` — `v2/M-public-player-forms` · *depends on `K`*
 
 **Spec:** `v2.md` §8.1, §8.3, §8.4 · `surfaces.md` §15.2 · `allocation.md` §7.8
 
 The public-facing surfaces: `/f/{slug}` and the player's `/f/{slug}?k={token}`.
 
-- Player token resolution → known player, prefill, remaining base allocation. No password, no account.
-- Public party submit: one registration, one `contact_email`, N attendees, N tickets.
+- Player token resolution → known player, prefill, **remaining** base allocation — not `base_quota`,
+  which would re-offer seats the player already holds (`v2.md` §8.1.1).
+- **The player form is three blocks** (details, base seats, extra seats); **the public form is two**, and
+  on the public form the registrant **is seat #1** — their own details produce an attendee row as well as
+  the registration's contact fields, so the repeater renders `form.max_tickets_per_response − 1` rows
+  (decision 36).
+- Public party submit: one registration, one `contact_email`, N attendees, N tickets. All public seats
+  are `allocation_type = EXTRA`, exactly where import already puts them (`v2.md` §8.1.2).
+- **Every seat carries a name and every response an email** (`v2.md` §8.1.3). `PLACEHOLDER` names are for
+  imported rows only — do not add a "just give me a number" path to a form we control.
 - Response limiting (§8.3): windows, `max_responses`, `one_response_per_identity`,
   `max_tickets_per_response`, `auto_close_on_capacity`.
 - **The seat indicator shows a band, not a number, below `form.seat_indicator_exact_below`** — it exists
@@ -169,9 +234,53 @@ The public-facing surfaces: `/f/{slug}` and the player's `/f/{slug}?k={token}`.
 **Seats come from `claim_seats()`.** Do not write a second allocation path — that function is the
 correctness core and oversell must be impossible (`CLAUDE.md`, `allocation.md` §7.3, §7.8).
 
-**§8.4 is explicit that `email_outbox` rows are created but NOT sent.** Releasing them is `VF`'s job.
+**§8.4 is explicit that `email_outbox` rows are created but NOT sent.** Releasing them is `O`'s job.
 
-#### `VF` — `v2/VF-verification` · *depends on `FP`, `SC`*
+#### `N` — `v2/N-portal`
+
+**Spec:** `v2.md` §13.1, §13.2, §13.3 · `surfaces.md` §15.3
+
+Grows module `I`'s read-only `/t/{token}` into the full portal. `I` already built the four states of
+§13.2 — **read that page before changing it**, and preserve two properties it got right:
+
+- **The "no such ticket" response is one response for all three reasons** (no match, malformed,
+  soft-deleted), so the page cannot tell a wrong guess from a near miss.
+- **It renders at `200`, it does not call `notFound()`.** §13.2 explains the trade at length and it was
+  measured. Do not "fix" it.
+
+Then: `portal.unlock_mode` (`ON_ADMISSION` / `OPEN_TO_ALL` / `CLOSED`) **resolved through the cascade,
+never read off the column** (§2.2), the unlocked sections of §13.3 — ticket, booklet viewer in a mobile
+PDF reader, practical info — and the admin side of booklet upload and `published`. Each section is
+independently enabled per show: `portal.booklet_enabled`, `portal.notes_enabled`,
+`portal.feedback_enabled`.
+
+**`unlock_mode` answers who, never when** (decision 39). It gates *who* may see unlocked sections;
+it is never flipped by a show reaching `COMPLETED`, because `CLOSED` would take the booklet and the
+feedback form down at the moment attendees are emailed a link to them.
+
+**The post-show phase is derived, not stored** (`v2.md` §13.2.1, decision 40):
+
+```
+show is over  ⇔  now() > shows.ends_at + resolveSetting('show.auto_complete_after_hours')
+```
+
+No job, no flag, correct the instant it is true — a guest opening their link at 11pm on concert night
+gets the post-show portal. **With `ends_at` null there is no post-show phase at all** (decision 41).
+Build the phase as a pure read so `R` can mount the feedback section into it without touching this
+page's data path.
+
+**`concerts.portal_enabled` does not gate the status page.** A printed QR cannot be recalled when a flag
+is flipped, so turning the portal off must never turn a ticket into a dead link (§13.2).
+
+**Leave a seam for notes and for feedback.** `Q` mounts §13.4 and `R` mounts §13.5 into the unlocked
+sections; agree both slots rather than letting either branch rewrite this page. Feedback is **last in
+§13.3's list and first on the page** once the show is over — nobody opens that link to re-read the
+parking instructions — so the slot needs to accept an ordering, not just an append.
+
+**Segment is never shown to the audience** (§13.3). A guest does not need to know they were in the
+"public" block.
+
+#### `O` — `v2/O-verification` · *depends on `M`, `J`*
 
 **Spec:** `v2.md` §8.1 · `email.md` §11.3, §11.4 · `import.md` §9.4
 
@@ -187,7 +296,7 @@ loses its tickets.
 This branch changes outbox release logic. **Re-run the blast idempotency tests** — pressing Send twice
 must still be harmless (`email.md` §11.4).
 
-#### `FE` — `v2/FE-response-editing` · *depends on `FP`*
+#### `P` — `v2/P-response-editing` · *depends on `M`*
 
 **Spec:** `v2.md` §8.3.1 · `tickets.md` §10.6 · `allocation.md` §7.6
 
@@ -205,32 +314,7 @@ implement the table.**
 - A name or email fix after `ticket_sent_at` sets `needs_reissue` (`tickets.md` §10.6).
 - Once tickets are sent, editing closes to the registrant; changes go through admin (`allocation.md` §7.6).
 
-#### `PT` — `v2/PT-portal`
-
-**Spec:** `v2.md` §13.1, §13.2, §13.3 · `surfaces.md` §15.3
-
-Grows module `I`'s read-only `/t/{token}` into the full portal. `I` already built the four states of
-§13.2 — **read that page before changing it**, and preserve two properties it got right:
-
-- **The "no such ticket" response is one response for all three reasons** (no match, malformed,
-  soft-deleted), so the page cannot tell a wrong guess from a near miss.
-- **It renders at `200`, it does not call `notFound()`.** §13.2 explains the trade at length and it was
-  measured. Do not "fix" it.
-
-Then: `shows.portal_unlock_mode` (`ON_ADMISSION` / `OPEN_TO_ALL` / `CLOSED`), the unlocked sections of
-§13.3 — ticket, booklet viewer in a mobile PDF reader, practical info — and the admin side of booklet
-upload and `published`.
-
-**`concerts.portal_enabled` does not gate the status page.** A printed QR cannot be recalled when a flag
-is flipped, so turning the portal off must never turn a ticket into a dead link (§13.2).
-
-**Leave a seam for notes.** `NW` mounts §13.4 into the unlocked sections; agree the slot rather than
-letting `NW` rewrite this page.
-
-**Segment is never shown to the audience** (§13.3). A guest does not need to know they were in the
-"public" block.
-
-#### `NW` — `v2/NW-notes-wall` · *depends on `PT`, `SC`*
+#### `Q` — `v2/Q-notes-wall` · *depends on `N`, `J`*
 
 **Spec:** `v2.md` §13.4 · `admin.md` §14.2 · `email.md` §11.3
 
@@ -248,7 +332,52 @@ bulk, publish to the public wall, export a player's notes, and queue `player_not
 `wall_status` is whether it appears publicly. **A note addressed to a specific player is never
 auto-published**; it is personal mail bound for that player's digest.
 
-#### `RL` — `v2/RL-rate-limiting`
+#### `R` — `v2/R-feedback` · *depends on `N`, `K`, `J`*
+
+**Spec:** `v2.md` §13.5 · `v2.md` §8.5 · `email.md` §11.2, §11.4 · `platform.md` §17.1
+
+The post-show half of the portal, and the only V2 branch that touches show lifecycle and email
+dispatch. Four parts:
+
+1. **The feedback form.** A `kind = FEEDBACK` form with **no seat blocks** — the `REGISTRANT` block
+   collapses to the identity resolved from the attendee's own `qr_token` and everything else is custom
+   fields. Built in `L`'s builder, rendered by `K`'s renderer, exported by `L`'s exporter. One response
+   per attendee, `unique (attendee_id, form_id)`.
+2. **The portal section**, mounted into `N`'s post-show slot and shown first once the show is over.
+3. **Show auto-completion.** `OPEN` → `COMPLETED` once `now() > ends_at + show.auto_complete_after_hours`,
+   run on the **existing daily dispatch cron** — not a new scheduled job. Vercel Hobby allows two crons
+   and both are spent (`platform.md` §17.1), and the precision buys nothing now that the portal phase is
+   read from the clock (decision 40). It only ever moves `OPEN` → `COMPLETED`, never touches `DRAFT` or
+   `CLOSED`, never reopens anything, does nothing at all when `ends_at` is null, and is idempotent.
+4. **The blast.** Completion queues `email_outbox` rows as `QUEUED` with `scheduled_for` set to the next
+   `portal.feedback_send_hour` in `concert.timezone`.
+
+**Admitted only, computed at send time.** The audience is attendees with a `check_ins` row — a manual or
+override admit counts, because those people were in the hall. **Do not freeze the list at completion
+time:** an usher's phone that stayed offline all evening may not drain until the next morning
+(`checkin.manifest_ttl_hours` is 12), and a frozen list would silently omit everyone on that device with
+nothing to reveal it (`v2.md` §13.5.1).
+
+**One email per registration, carrying one link per admitted attendee.** Decision 22 is unchanged: a
+party of four where three were admitted gets one message with three links, the same shape as the ticket
+blast carrying N PDFs.
+
+**This branch narrows decision 23 and must say so where it does.** Feedback rows are queued directly,
+skipping the `DRAFT` review gate — settled as decision 38. Everything else in the outbox keeps the gate.
+`outbox_no_duplicate_pending` is what makes double-queueing harmless; **re-run the blast idempotency
+tests** (`email.md` §11.4).
+
+**Every automatic step needs its manual twin** (decision 42, §2.4): the status dialog still sets
+`COMPLETED` by hand, **Generate feedback emails** queues without waiting for the cron, and **Send now**
+on the blast screen drains immediately. A branch that ships the automation without the buttons is not
+done.
+
+**Done means:** a show with `ends_at` in the past auto-completes on one cron run and not on the next; a
+show with `ends_at` null never auto-completes; feedback queues once for a party with mixed attendance and
+carries exactly the admitted links; running completion twice queues nothing twice; and every automatic
+step has a working button.
+
+#### `S` — `v2/S-rate-limiting`
 
 **Spec:** `v2.md` §8.3 · `ref.md` §7 · `admin.md` §14.3
 
@@ -257,7 +386,7 @@ cascade. **Extend `src/lib/auth/rate-limit.ts`** — V1 already built this for a
 implementation is two behaviours under one name.
 
 Small, and it touches two other modules' surfaces, which is exactly why it has one owner rather than
-being done twice. Land it last. If sessions are scarce it can fold into `FK`, but then `FK` owns the
+being done twice. Land it last. If sessions are scarce it can fold into `K`, but then `K` owns the
 portal side too and must say so.
 
 **It goes in the handler, never in `src/proxy.ts`** — the proxy never reads the database
@@ -277,14 +406,14 @@ has to make `registration_id` nullable to hold a digest row, and that is the exa
 about.
 
 **The warning is about swapping the key to a nullable one, not about adding a disjoint second key.** So
-`SC` must keep both keys total, not optional:
+`J` must keep both keys total, not optional:
 
 - add nullable `player_id`
 - a `check` that **exactly one** of `registration_id` and `player_id` is non-null
 - a second partial unique index on `(player_id, template_key)` over the same pending statuses
 
 Every registration-addressed row then still has a non-null `registration_id` and the original index
-bites exactly as before. **If `SC` lands without that check constraint, the non-negotiable is gone and
+bites exactly as before. **If `J` lands without that check constraint, the non-negotiable is gone and
 nothing will tell you** — a row with both keys null conflicts with nothing, and `on conflict do nothing`
 silently does nothing (`domain.md` §5.1). Write the test that proves a double-queued digest is refused.
 
@@ -292,7 +421,7 @@ silently does nothing (`domain.md` §5.1). Write the test that proves a double-q
 
 ## 4. Rules for parallel sessions
 
-Everything in `modules.md` §4 still holds, unchanged: **the schema is frozen once `SC` merges**, nobody
+Everything in `modules.md` §4 still holds, unchanged: **the schema is frozen once `J` merges**, nobody
 rebuilds `DataTable`, stay inside your route group, **no operational value reaches code**, every branch
 ends with a `qa` pass, and every branch ends with a handoff under `docs/handoff/` per
 `docs/handoff/README.md`.
@@ -311,7 +440,9 @@ those up by merging `main` in; individual branches should not each do it separat
 merge — nothing downstream is waiting on a concert.
 
 **Read `spec/decisions.md` §19.1 before proposing anything that contradicts a decision.** The obvious
-simplification was usually considered and is worse. V2 inherits 36 settled decisions.
+simplification was usually considered and is worse. V2 inherits 44 settled decisions, of which
+**35–42 were written for V2 itself** on 13 Sep and answer most of what a branch would otherwise
+re-litigate.
 
 ---
 
@@ -319,15 +450,15 @@ simplification was usually considered and is worse. V2 inherits 36 settled decis
 
 | Wave | Branches | Notes |
 |---|---|---|
-| 0 | `SC`, `FK` | Parallel with each other. Open `SC` first — its migration needs a manual Supabase apply before anything downstream can be tested against production |
-| 1 | `FA`, `FP`, `PT` | Fan out behind `FK`. `PT` needs neither wave-0 branch and could start immediately |
-| 2 | `VF`, `FE`, `NW` | Behind `FP` and `PT` |
-| 3 | `RL` | Last. Touches the surfaces the others built |
+| 0 | `J`, `K` | Parallel with each other. Open `J` first — its migration needs a manual Supabase apply before anything downstream can be tested against production |
+| 1 | `L`, `M`, `N` | Fan out behind `K`. `N` needs neither wave-0 branch and could start immediately |
+| 2 | `O`, `P`, `Q`, `R` | Behind `M` and `N` |
+| 3 | `S` | Last. Touches the surfaces the others built |
 
-Nine branches, against V1's eleven. **There is no critical path** — V2's whole premise is that
+Ten branches, against V1's eleven. **There is no critical path** — V2's whole premise is that
 registration already works on Google Forms, so nothing here blocks a concert.
 
-The one ordering constraint worth respecting is `SC` → manual apply → everything that writes
+The one ordering constraint worth respecting is `J` → manual apply → everything that writes
 verification or digest rows. That is a human step in the middle of the graph (`local.md` §4), not a
 merge.
 
@@ -340,7 +471,7 @@ the shared `AlertDialogAction` fix (25 call sites across 7 files leave a modal s
 shell — `docs/handoff/archive/blast-queue-banner-outgoing.md`), and the stale `qa/e2e/f-blast.spec.ts`
 FLOW-10 assertion. Both predate `v2` and both should land on `main` and flow in.
 
-**The `registrations_no_duplicate_import` index is not V2 either**, but `SC` is the natural place to
+**The `registrations_no_duplicate_import` index is not V2 either**, but `J` is the natural place to
 carry it — it was written out and deliberately deferred only because a migration before 19 Sep meant a
 manual deployment step (`docs/handoff/archive/import-reimport-dedup.md`). That reason expires with the
 concert. The SQL is in that handoff.

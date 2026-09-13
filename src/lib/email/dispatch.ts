@@ -37,6 +37,28 @@ import type { MailTransport } from './transport';
  */
 export const MAX_DISPATCH_SECONDS = 60;
 
+/**
+ * How long the send loop may keep *starting* messages, in seconds.
+ *
+ * **The dispatcher has to stop before the platform stops it.** Sending is
+ * serial — one message at a time, and one PDF at a time inside each — so a
+ * batch sized for messages that turn out to cost more than expected simply runs
+ * past 60s and Vercel returns a 504. Everything already sent stays sent, but the
+ * rest of the claimed batch is left `SENDING`, invisible to `claimBatch()`, and
+ * not reclaimed for ten minutes: pressing Send again appears to do nothing, and
+ * then times out again on the same work.
+ *
+ * A real blast found this at 244 messages, going out roughly ten at a time —
+ * about six seconds each against the one to two §11.1 assumes, which is the
+ * difference between a batch of 25 fitting and not fitting.
+ *
+ * The quarter left over is for the work after the loop: returning the unstarted
+ * rows to the queue, closing the transport, and the two counting queries behind
+ * the result. That has to finish *inside* the same invocation, or the rows it
+ * was releasing stay stranded anyway.
+ */
+const SEND_WINDOW_MS = MAX_DISPATCH_SECONDS * 1000 * 0.75;
+
 /** Safety factor on {@link MAX_DISPATCH_SECONDS} before a row is called stranded. */
 const RECLAIM_FACTOR = 10;
 
@@ -46,6 +68,12 @@ const RECLAIM_AFTER_SECONDS = MAX_DISPATCH_SECONDS * RECLAIM_FACTOR;
 export type DispatchResult = {
   sent: number;
   failed: number;
+  /**
+   * Rows claimed by this call but handed back unsent, because the dispatch
+   * window ran out. They are `QUEUED` again by the time this is returned, and
+   * are counted in {@link DispatchResult.remaining}.
+   */
+  deferred: number;
   /** `QUEUED` rows still waiting, so the UI knows whether to call again. */
   remaining: number;
   dailyCapReached: boolean;
@@ -217,6 +245,31 @@ async function markFailed(row: ClaimedRow, maxAttempts: number, error: unknown):
 }
 
 /**
+ * Returns rows this call claimed but never started to the queue.
+ *
+ * The deliberate counterpart to {@link reclaimStranded}: that one cleans up
+ * after a dispatch that died, this one after a dispatch that stopped on
+ * purpose. Only ids the caller holds, and only rows still `SENDING` — a row
+ * that reached `SENT` between the decision and this statement must not be
+ * dragged back into the queue and sent twice.
+ */
+async function releaseClaimed(ids: number[]): Promise<void> {
+  // Placeholders, not an interpolated list: these ids came from a query rather
+  // than from a user, and building SQL by string concatenation is a habit that
+  // is wrong the first time it meets something that did.
+  const list = sql.join(
+    ids.map((id) => sql`${id}::bigint`),
+    sql`, `,
+  );
+  await getDb().execute(sql`
+    update email_outbox
+       set status = 'QUEUED', updated_at = now()
+     where status = 'SENDING'
+       and id in (${list})
+  `);
+}
+
+/**
  * Returns rows stranded in `SENDING` to the queue.
  *
  * **Without this a dispatch that dies mid-batch loses its rows for ever.**
@@ -336,6 +389,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export type DispatchOptions = {
   /** Injected by tests; production builds one from the environment. */
   transport?: MailTransport;
+  /**
+   * Overrides {@link SEND_WINDOW_MS}. Injected by tests, which cannot spend
+   * forty-five seconds proving that the loop stops after forty-five seconds.
+   */
+  sendWindowMs?: number;
 };
 
 export async function dispatchBatch(options: DispatchOptions = {}): Promise<DispatchResult> {
@@ -368,6 +426,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     return {
       sent: 0,
       failed: 0,
+      deferred: 0,
       remaining: await remainingQueued(),
       dailyCapReached: true,
       warnings: [],
@@ -381,6 +440,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     return {
       sent: 0,
       failed: 0,
+      deferred: 0,
       remaining: 0,
       dailyCapReached: false,
       warnings: [],
@@ -399,8 +459,25 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
   let sent = 0;
   let failed = 0;
 
+  const startedAt = Date.now();
+  let deferred: number[] = [];
+
   try {
     for (const [index, row] of batch.entries()) {
+      /**
+       * Checked *before* starting a message rather than after finishing one:
+       * the question is whether there is room for another send, and a message
+       * that has begun cannot be handed back without risking a double send.
+       */
+      if (index > 0 && Date.now() - startedAt > (options.sendWindowMs ?? SEND_WINDOW_MS)) {
+        deferred = batch.slice(index).map((r) => r.id);
+        warnings.push(
+          `stopped after ${index} of ${batch.length} to stay inside the dispatch window; ` +
+            `${deferred.length} returned to the queue for the next call`,
+        );
+        break;
+      }
+
       try {
         /**
          * **Only a ticket-bearing template renders PDFs** (§11.3). A
@@ -500,11 +577,19 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     }
   } finally {
     await transport.close();
+    /**
+     * Straight back to `QUEUED`, rather than left for {@link reclaimStranded}.
+     * These rows were claimed and never touched, so nothing was delivered from
+     * them and nothing is stamped — and waiting out the ten-minute reclaim
+     * window would make the next Send look broken for no reason.
+     */
+    if (deferred.length > 0) await releaseClaimed(deferred);
   }
 
   return {
     sent,
     failed,
+    deferred: deferred.length,
     remaining: await remainingQueued(),
     dailyCapReached: false,
     warnings,

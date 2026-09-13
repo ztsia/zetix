@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { requireAdmin } from '@/lib/auth/guards';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
-import { ticketLinks } from '@/lib/email/queue';
+import { formatInZone, ticketLinks } from '@/lib/email/queue';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { Button } from '@/components/ui/button';
 import { TemplateEditor, type PreviewRecipient } from './template-editor';
@@ -56,6 +56,9 @@ export default async function TemplatesPage({
     label: string;
     concert_name: string;
     show_name: string;
+    starts_at: string | null;
+    doors_open_at: string | null;
+    timezone: string;
     venue_name: string | null;
     venue_address: string | null;
     segment_name: string;
@@ -67,7 +70,8 @@ export default async function TemplatesPage({
     qr_tokens: string[];
   }>(sql`
     (select 'Longest name: ' || coalesce(r.contact_name, '(none)') as label,
-            c.name as concert_name, s.name as show_name, s.venue_name, s.venue_address,
+            c.name as concert_name, s.name as show_name,
+            s.starts_at, s.doors_open_at, c.timezone, s.venue_name, s.venue_address,
             seg.name as segment_name, r.contact_name, r.contact_email, r.round_label,
             counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
@@ -85,7 +89,8 @@ export default async function TemplatesPage({
       limit 1)
     union all
     (select 'No player linked: ' || coalesce(r.contact_name, '(none)') as label,
-            c.name, s.name, s.venue_name, s.venue_address,
+            c.name, s.name,
+            s.starts_at, s.doors_open_at, c.timezone, s.venue_name, s.venue_address,
             seg.name, r.contact_name, r.contact_email, r.round_label,
             counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
@@ -108,8 +113,12 @@ export default async function TemplatesPage({
     context: {
       'concert.name': row.concert_name,
       'show.name': row.show_name,
-      'show.starts_at': '',
-      'show.doors_open_at': '',
+      // Formatted with the blast's own helper, not a stub. These two were
+      // hardcoded to '' here, so the preview showed an empty "When:" line
+      // whether or not the show had times — the one thing §11.5's preview is
+      // for. If they still render blank, the show really has no times set.
+      'show.starts_at': formatInZone(row.starts_at, row.timezone),
+      'show.doors_open_at': formatInZone(row.doors_open_at, row.timezone),
       'show.venue_name': row.venue_name ?? '',
       'show.venue_address': row.venue_address ?? '',
       'segment.name': row.segment_name,

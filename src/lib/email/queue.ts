@@ -237,8 +237,13 @@ function appUrl(): string {
  * Show times render in `concert.timezone`, never the viewer's
  * (spec/domain.md §6.1). An audience member travelling must see the time at the
  * venue.
+ *
+ * **Exported so the template preview formats these two tokens the same way the
+ * blast does.** The preview used to hardcode both to `''`, so a show with times
+ * set previewed identically to one without — and §11.5's preview exists
+ * precisely to catch a merge field that renders blank.
  */
-function formatInZone(value: string | null, timezone: string): string {
+export function formatInZone(value: string | null, timezone: string): string {
   if (!value) return '';
   return new Intl.DateTimeFormat('en-GB', {
     dateStyle: 'full',

@@ -52,6 +52,7 @@ export function TemplateEditor({
   const renderedSubject = renderTemplate(subject, context);
   const renderedBody = renderTemplate(bodyMd, context);
   const unknown = [...new Set([...renderedSubject.unknown, ...renderedBody.unknown])];
+  const empty = [...new Set([...renderedSubject.empty, ...renderedBody.empty])];
 
   function save() {
     const formData = new FormData();
@@ -163,6 +164,23 @@ export function TemplateEditor({
                 <Alert variant="destructive">
                   <AlertTitle>
                     Unknown token(s): {unknown.join(', ')} — these render as blank.
+                  </AlertTitle>
+                </Alert>
+              ) : null}
+
+              {/*
+                A *known* token with no value behind it reads the same way in an
+                inbox: `**When:**` followed by nothing. The template is fine and
+                the data is missing, so this is a warning rather than an error —
+                `registration.round_label` is legitimately blank for plenty of
+                rows — but it must be on screen before the blast, not after.
+              */}
+              {empty.length > 0 ? (
+                <Alert>
+                  <AlertTitle>
+                    Blank for this recipient: {empty.join(', ')} — the token resolves, but there is
+                    no value to put in it. Fill it in on the show or concert, or drop it from the
+                    wording.
                   </AlertTitle>
                 </Alert>
               ) : null}

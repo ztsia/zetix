@@ -154,7 +154,7 @@ belongs to that module.**
 
 ### Wave 0 — foundation
 
-#### `J` — `v2/J-schema-delta`
+#### `J` — `claude/J-schema-delta`
 
 **Spec:** `domain.md` §5.1, §5.2 · `v2.md` §8.1.4 · `email.md` §11.3, §11.4
 
@@ -195,7 +195,7 @@ lines cannot collide while `v2` is open. The gap is deliberate and documents its
 **Done means:** `pnpm db:generate` produces one migration, `pnpm test` is green including V1's existing
 outbox idempotency tests, and `local.md` carries the manual-apply entry.
 
-#### `K` — `v2/K-form-kernel`
+#### `K` — `claude/K-form-kernel`
 
 **Spec:** `v2.md` §8.2, §8.3 · `surfaces.md` §15.2 · `README.md` §2.2 · `ref.md` §7
 
@@ -232,7 +232,7 @@ and a throttled surface returns the right response without the proxy touching th
 
 ### Wave 1 — parallel
 
-#### `L` — `v2/L-form-admin` · *depends on `K`*
+#### `L` — `claude/L-form-admin` · *depends on `K`*
 
 **Spec:** `v2.md` §8.2, §8.5 · `domain.md` §5.1 (`registration_forms`) · `admin.md` §14.1
 
@@ -261,7 +261,7 @@ schema** rather than from the responses, so question order is the admin's and an
 still gets a column. Registration forms export one row per registration with the party expanded;
 feedback forms one row per attendee. Reuse `/api/export/xlsx` — `F2` built it.
 
-#### `M` — `v2/M-registration-surface` · *depends on `K`, `J`*
+#### `M` — `claude/M-registration-surface` · *depends on `K`, `J`*
 
 **Spec:** `v2.md` §8.1, §8.3, §8.3.1, §8.4 · `surfaces.md` §15.2 · `allocation.md` §7.8, §7.6 ·
 `email.md` §11.3, §11.4 · `tickets.md` §10.6 · `import.md` §9.4
@@ -325,7 +325,7 @@ the table.**
 **This is the largest branch in V2. If it runs long, verification is the clean seam to split out** — it
 is the one part with its own email templates and its own admin screen.
 
-#### `N` — `v2/N-portal`
+#### `N` — `claude/N-portal`
 
 **Spec:** `v2.md` §13.1, §13.2, §13.2.1, §13.3, §13.5 · `surfaces.md` §15.3 · `email.md` §11.2, §11.4 ·
 `platform.md` §17.1
@@ -408,7 +408,7 @@ auto-completes on one cron run and not on the next; a show with `ends_at` null n
 feedback queues once for a party with mixed attendance and carries exactly the admitted links; and every
 automatic step has a working button.
 
-#### `O` — `v2/O-notes-wall` · *depends on `N`, `J`*
+#### `O` — `claude/O-notes-wall` · *depends on `N`, `J`*
 
 **Spec:** `v2.md` §13.4 · `admin.md` §14.2 · `email.md` §11.3
 
@@ -462,6 +462,10 @@ ends with a `qa` pass, and every branch ends with a handoff under `docs/handoff/
 `docs/handoff/README.md`.
 
 Five things are specific to V2:
+
+**Branch names use the `claude/` prefix, as V1's did** — `claude/J-schema-delta`, and so on. Not
+`v2/J-…`: git cannot hold both a branch named `v2` and a branch under `v2/`, since a ref is either a
+file or a directory. The integration branch owns that name.
 
 **PRs target `v2`, never `main`.** CI (`on: pull_request`, unfiltered) runs on them already. Note that
 `v2` is **not** branch-protected the way `main` is, so green CI does not by itself block a merge —

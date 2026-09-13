@@ -228,10 +228,39 @@ async function markSent(rowId: number, attendeeIds: number[]): Promise<void> {
  * `ticket_sent_at = null` and is picked up by the next blast, which is the
  * behaviour that makes the pending count on the blast screen a real number.
  */
+/**
+ * An address that cannot be delivered as written, and never will be.
+ *
+ * Retrying it is not a recovery, it is three more attempts at the same wrong
+ * thing, so {@link markFailed} takes it straight to `FAILED` where an admin can
+ * see it and fix the address.
+ */
+export class UndeliverableAddressError extends Error {
+  constructor(readonly address: string) {
+    super(
+      `"${address}" is not a deliverable address: an address cannot contain a space. ` +
+        'Fix it on the registration and resend — nothing was sent.',
+    );
+    this.name = 'UndeliverableAddressError';
+  }
+}
+
+/**
+ * The shape an address must have before this will hand it to a mailer.
+ *
+ * **The point is the whitespace.** `may _zxample@yahoo.com` was stored, composed
+ * into a `To:` header, and delivered — to `_zxample@yahoo.com`, because an
+ * address parser splits on the space and keeps the last token, and that token
+ * was a real address belonging to somebody else. The mailer did nothing wrong;
+ * it was asked to send to something that means two different things depending on
+ * who reads it, and the only safe answer is to refuse.
+ */
+const DELIVERABLE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 async function markFailed(row: ClaimedRow, maxAttempts: number, error: unknown): Promise<void> {
   const attempts = row.attempts + 1;
   const message = error instanceof Error ? error.message : String(error);
-  const exhausted = attempts >= maxAttempts;
+  const exhausted = attempts >= maxAttempts || error instanceof UndeliverableAddressError;
 
   await getDb().execute(sql`
     update email_outbox
@@ -479,6 +508,13 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       }
 
       try {
+        /**
+         * Checked before the PDFs are built, not after: rendering a party's
+         * tickets for a message that cannot be addressed is wasted work, and
+         * this is the one failure where *not* sending is the whole point.
+         */
+        if (!DELIVERABLE.test(row.toEmail)) throw new UndeliverableAddressError(row.toEmail);
+
         /**
          * **Only a ticket-bearing template renders PDFs** (§11.3). A
          * cancellation or a decline attaches nothing, and — the half that

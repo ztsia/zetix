@@ -209,6 +209,89 @@ describe('staying inside the dispatch window', () => {
   });
 });
 
+/**
+ * An address with a space in it is refused, not sent.
+ *
+ * `may _zxample@yahoo.com` was stored, composed into a `To:` header and
+ * delivered — to `_zxample@yahoo.com`, because an address parser splits on the
+ * space and keeps the last token, and that token was a real address belonging
+ * to a stranger. Every layer behaved reasonably and a guest's tickets went to
+ * the wrong person; a bounce would have been the *good* outcome.
+ *
+ * So the dispatcher refuses anything it cannot address unambiguously. The
+ * import strips whitespace out of addresses now as well (`import/plan.ts`), but
+ * a row can reach the outbox by other routes — typed into the admin, edited
+ * afterwards — and this is the last place before a mailer sees it.
+ */
+describe('an address that cannot be addressed', () => {
+  const seedWithAddress = async (toEmail: string) => {
+    const { registrationId } = await seedParty({ seats: 1 });
+    await sql`update email_outbox set to_email = ${toEmail} where registration_id = ${registrationId}`;
+    return registrationId;
+  };
+
+  it('is not sent', async () => {
+    await seedWithAddress('may _zxample@yahoo.com');
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport });
+
+    expect(transport.messages).toHaveLength(0);
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  /**
+   * Straight to `FAILED`, not back to the queue: a space will not spell itself
+   * out on the second attempt, and three retries only delay the moment an admin
+   * sees it.
+   */
+  it('fails permanently rather than retrying', async () => {
+    const registrationId = await seedWithAddress('may _zxample@yahoo.com');
+
+    await dispatchBatch({ transport: recordingTransport() });
+
+    const [row] = await sql<{ status: string; attempts: number; last_error: string }[]>`
+      select status, attempts, last_error from email_outbox where registration_id = ${registrationId}
+    `;
+    expect(row.status).toBe('FAILED');
+    expect(row.attempts).toBe(1);
+    expect(row.last_error).toContain('cannot contain a space');
+  });
+
+  it('stamps nothing, so the seats stay pending for a later blast', async () => {
+    const registrationId = await seedWithAddress('may _zxample@yahoo.com');
+
+    await dispatchBatch({ transport: recordingTransport() });
+
+    const stamps = await attendeeStamps(registrationId);
+    expect(stamps).toHaveLength(1);
+    expect(stamps[0].ticket_sent_at).toBeNull();
+  });
+
+  it('does not hold up the rest of the batch', async () => {
+    await seedWithAddress('may _zxample@yahoo.com');
+    await seedParty({ seats: 1 });
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport });
+
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(transport.messages).toHaveLength(1);
+  });
+
+  it('still sends an ordinary address', async () => {
+    await seedWithAddress('may_zxample@yahoo.com');
+    const transport = recordingTransport();
+
+    const result = await dispatchBatch({ transport });
+
+    expect(result.sent).toBe(1);
+    expect(transport.messages[0].to).toBe('may_zxample@yahoo.com');
+  });
+});
+
 describe('a successful send', () => {
   it('marks the row SENT and stamps every seat it carried', async () => {
     const { registrationId } = await seedParty({ seats: 3 });

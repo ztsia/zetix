@@ -3,6 +3,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
+import { toNameCase } from '../names';
 import { escapeMergeValues, renderTemplate, type MergeContext } from './render';
 import { carriesTickets } from './templates';
 
@@ -273,12 +274,18 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
       'show.venue_name': row.venue_name ?? '',
       'show.venue_address': row.venue_address ?? '',
       'segment.name': row.segment_name,
-      'registration.contact_name': row.contact_name ?? '',
+      /**
+       * **Cased the same way the ticket is** (`lib/names.ts`). A guest reading
+       * "Dear LOH KAI XIN" above a PDF printed "Loh Kai Xin" has been given
+       * two answers to the same question, and the email is the half they read
+       * first. The stored row keeps what they typed, here as in the renderer.
+       */
+      'registration.contact_name': toNameCase(row.contact_name ?? ''),
       'registration.contact_email': row.contact_email,
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
-      attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
-      ticket_links: ticketLinks(row.link_names, row.qr_tokens),
+      attendee_names: (row.attendee_names ?? []).filter(Boolean).map(toNameCase).join(', '),
+      ticket_links: ticketLinks((row.link_names ?? []).map(toNameCase), row.qr_tokens),
     },
   }));
 }
@@ -388,7 +395,11 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
 
   try {
     /**
-     * One row per recipient: `values ($1,$2,$3,$4), ($5,…)`.
+     * One row per recipient: `values ($1,$2,$3,$4,$5), ($6,…)`.
+     *
+     * `to_name` rides along rather than being read off `registrations` in the
+     * select, because the name in the `To:` header should read the way the name
+     * in the message does — and the casing happens in TypeScript.
      *
      * Module `C` shipped the failure this shape avoids — joining placeholders
      * bare gives one row of N columns, which Postgres accepts silently and
@@ -399,7 +410,9 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
     const values = sql.join(
       rendered.map(
         (r) =>
-          sql`(${r.recipient.registrationId}::bigint, ${r.subject}::text, ${r.bodyMd}::text, ${JSON.stringify(r.recipient.context)}::jsonb)`,
+          sql`(${r.recipient.registrationId}::bigint, ${r.subject}::text, ${r.bodyMd}::text, ${JSON.stringify(r.recipient.context)}::jsonb, ${
+            r.recipient.contactName ? toNameCase(r.recipient.contactName) : null
+          }::text)`,
       ),
       sql`, `,
     );
@@ -426,9 +439,9 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
       insert into email_outbox (
         registration_id, template_key, to_email, to_name, subject, body_md, context, status
       )
-      select r.id, ${target.templateKey}, r.contact_email, r.contact_name,
+      select r.id, ${target.templateKey}, r.contact_email, v.to_name,
              v.subject, v.body_md, v.context, 'DRAFT'
-        from (values ${values}) as v(registration_id, subject, body_md, context)
+        from (values ${values}) as v(registration_id, subject, body_md, context, to_name)
         join registrations r on r.id = v.registration_id
        where ${IS_LIVE_REGISTRATION}
          and ${HAS_UNDELIVERED_SEAT}

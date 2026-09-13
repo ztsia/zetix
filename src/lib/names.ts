@@ -1,5 +1,9 @@
 /**
- * Normalising a person's name for print (`spec/tickets.md` §10.2).
+ * Normalising a person's name for display (`spec/tickets.md` §10.4).
+ *
+ * Shared by the ticket renderer and the email blast, because a guest who reads
+ * "Dear LOH KAI XIN" above a ticket printed "Loh Kai Xin" has been sent two
+ * different answers to the same question.
  *
  * Names arrive from a Google Form typed by whoever filled it in, so the same
  * ticket run carries `LOH KAI XIN`, `loh kai xin` and `Loh Kai Xin`. All
@@ -8,8 +12,8 @@
  * **Normalising at render time rather than at import** is deliberate: the
  * imported row stays exactly as the guest wrote it, so an admin comparing the
  * sheet to the database sees the same string, and a future correction to these
- * rules reaches tickets that have not been rendered yet without rewriting
- * anybody's stored name.
+ * rules reaches everything not yet rendered without rewriting anybody's stored
+ * name.
  */
 
 /**

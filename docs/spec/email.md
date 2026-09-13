@@ -144,6 +144,13 @@ labels come from the same `array_agg(... order by a.id)` as the tokens and are z
 filtered — filtering one alone slides every later link onto the wrong person's name, and a ticket
 labelled with someone else's name is worse than an unlabelled one.
 
+**Every name in a message is cased for display** — `registration.contact_name`, `attendee_names`,
+the labels on `ticket_links`, and the `To:` header — through the same rules the ticket renderer uses
+(`tickets.md` §10.4, `lib/names.ts`). They have to agree: a guest who typed their name in capitals
+would otherwise read "Dear LOH KAI XIN" above a PDF printed "Loh Kai Xin", which is two answers to
+the same question, and the email is the half they read first. The stored rows keep what the guest
+typed, so the sheet and the admin screens are unaffected.
+
 **The HTML half is sent inside a document, not as a bare fragment.** Table layout (Outlook supports
 neither flex nor grid), styles both inlined and declared in `<head>` (a client that strips the block
 still renders something readable), explicit colours with `color-scheme: light` (a client left to guess

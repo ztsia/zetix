@@ -483,8 +483,8 @@ merge — nothing downstream is waiting on a concert.
 verification and feedback respectively. Taking one is a normal call, not a departure from this file.
 
 **Read `spec/decisions.md` §19.1 before proposing anything that contradicts a decision.** The obvious
-simplification was usually considered and is worse. V2 inherits 44 settled decisions, of which
-**35–42 were written for V2 itself** on 13 Sep and answer most of what a branch would otherwise
+simplification was usually considered and is worse. V2 inherits 45 settled decisions, of which
+**35–42 were written for V2 itself** on 13 Sep, and **43 was settled by `L`** and answer most of what a branch would otherwise
 re-litigate.
 
 ---

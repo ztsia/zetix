@@ -158,11 +158,22 @@ export const formResponses = pgTable(
     formSchema: jsonb('form_schema').notNull(),
 
     /**
-     * The player id or the lowercased email — whatever `one_response_per_identity`
-     * means for this form (spec/v2.md §8.3). Null when the form does not limit
-     * by identity, which is why the unique index below is partial.
+     * The player id or the email — whatever `one_response_per_identity` means
+     * for this form (spec/v2.md §8.3). Null when the form does not limit by
+     * identity, which is why the unique index below is partial.
+     *
+     * **`citext`, not `text`.** §8.3 says "the lowercased email", and a `text`
+     * column would leave that rule living in every handler that writes one:
+     * `Ada@x.test` and `ada@x.test` would be two identities, the index would
+     * not notice, and the form would take two responses from one person at
+     * exactly the moment seats are scarce. The type is where this project
+     * already puts case folding — `players.email` is `citext` for the same
+     * reason, against a spec line that also said `lower(email)` — and the
+     * schema freezes when this branch merges, so it is the type or nothing.
+     *
+     * A player id folds to itself, so the one column still serves both.
      */
-    identityKey: text('identity_key'),
+    identityKey: citext('identity_key'),
 
     /** The response this edit replaces. Null starts a chain (spec/v2.md §8.3.1). */
     supersedesId: fk('supersedes_id'),
@@ -327,6 +338,16 @@ export const registrations = pgTable(
      * guarantee. It was deferred only because a migration before 19 Sep meant a
      * manual deployment step; that reason expired with the concert
      * (`modules-v2.md` §6).
+     *
+     * **Despite the name, it governs every source, not just `IMPORT`.** The
+     * archived SQL is unconditional and is carried verbatim, which is the right
+     * call — a public form double-submit and an admin creating the same party
+     * twice are the same mistake as a re-uploaded sheet, and refusing all three
+     * is better than refusing one. The cost is the error an admin sees: a raw
+     * `duplicate key … "registrations_no_duplicate_import"` on a path that is
+     * not an import. Mapping that to a sentence belongs to whichever screen
+     * raises it, not here; `tests/schema/v2-delta.test.ts` pins the behaviour so
+     * it is a known property rather than a surprise.
      *
      * Partial on `deleted_at is null`, because a delete means the row should
      * never have existed (spec/allocation.md §7.6) and an export still carrying

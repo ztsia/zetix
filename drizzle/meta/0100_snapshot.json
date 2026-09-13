@@ -1,5 +1,5 @@
 {
-  "id": "f88163ce-0b24-4ba5-949d-6401933319c1",
+  "id": "373d9a57-fe59-4b4e-b74f-5a9851cb9aaa",
   "prevId": "032f0948-bbba-4869-acc7-afd4d9aaf670",
   "version": "7",
   "dialect": "postgresql",
@@ -2725,7 +2725,7 @@
         },
         "identity_key": {
           "name": "identity_key",
-          "type": "text",
+          "type": "citext",
           "primaryKey": false,
           "notNull": false
         },

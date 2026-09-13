@@ -186,6 +186,16 @@ describe('form_responses — spec/v2.md §8.2.4, §8.3, §8.3.1', () => {
     await expect(respond('someone@example.test', otherFormId)).resolves.toHaveLength(1);
   });
 
+  it('folds case, so one person is one identity however they type it', async () => {
+    // §8.3 says the key is "the lowercased email", and `identity_key` is citext
+    // so that rule lives in the type rather than in every handler that writes
+    // one. With `text` here, Ada@x.test and ada@x.test would be two identities,
+    // the index would not notice, and the form would take two responses from one
+    // person at exactly the moment seats are scarce.
+    await expect(respond('Ada@Example.test')).resolves.toHaveLength(1);
+    await expect(respond('ada@example.test')).rejects.toThrow(/form_responses_identity_key/);
+  });
+
   it('lets a form that does not limit by identity take many responses', async () => {
     // Partial index: two nulls must not conflict, or an unlimited form would
     // accept exactly one submission.
@@ -468,6 +478,31 @@ describe('registrations_no_duplicate_import — spec/import.md §9.2, decision 3
     await expect(importParty(publicSegmentId, 'party@example.test')).rejects.toThrow(
       /registrations_no_duplicate_import/,
     );
+  });
+
+  it('governs every source, not only IMPORT — despite the name', async () => {
+    // The archived SQL is unconditional and is carried verbatim. A public form
+    // double-submit and an admin creating the same party twice are the same
+    // mistake as a re-uploaded sheet, so refusing all three is right — but the
+    // name says `import`, and an admin hitting it sees a constraint that claims
+    // to be about a path they were not on. Pinned here so that is a known
+    // property of the index rather than a surprise to whoever fields the
+    // support question; the friendly message belongs to the screen that raises
+    // it, not to the schema.
+    await sql`
+      insert into registrations (show_id, segment_id, source, contact_name, contact_email,
+                                 status, requested_at)
+      values (${showId}::bigint, ${publicSegmentId}::bigint, 'ADMIN', 'A Party',
+              'admin@example.test', 'CONFIRMED', ${AT}::text::timestamptz)
+    `;
+    await expect(
+      sql`
+        insert into registrations (show_id, segment_id, source, contact_name, contact_email,
+                                   status, requested_at)
+        values (${showId}::bigint, ${publicSegmentId}::bigint, 'ADMIN', 'A Party',
+                'admin@example.test', 'CONFIRMED', ${AT}::text::timestamptz)
+      `,
+    ).rejects.toThrow(/registrations_no_duplicate_import/);
   });
 
   it('cannot dedup a party with no email, which is the known limit', async () => {

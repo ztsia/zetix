@@ -10,7 +10,7 @@ import {
   type DataTableColumn,
 } from '@/components/data-table';
 import type { ExportColumn } from '@/lib/export';
-import { formatInZone } from '@/lib/export';
+import type { ResponseTableRow } from './rows';
 
 /**
  * The responses a form has taken, paged in Postgres (`modules.md` §5.2.1).
@@ -26,16 +26,6 @@ import { formatInZone } from '@/lib/export';
  * two answer different questions, so the schema-aware export sits above the
  * table where it cannot be mistaken for "export what I am looking at".
  */
-
-export type ResponseTableRow = {
-  id: number;
-  submittedAt: string;
-  identityKey: string | null;
-  seats: number;
-  superseded: boolean;
-  isEdit: boolean;
-  ipAddress: string | null;
-};
 
 export function ResponsesTable({
   rows,
@@ -65,6 +55,23 @@ export function ResponsesTable({
       meta: { label: 'Submitted' },
       header: ({ column }) => <DataTableColumnHeader column={column} title="Submitted" />,
       cell: ({ row }) => <span className="tabular-nums">{row.original.submittedAt}</span>,
+    },
+    {
+      id: 'registrant',
+      meta: { label: 'Registrant' },
+      enableSorting: false,
+      header: () => 'Registrant',
+      // Read through the response's own pinned schema, so a form whose
+      // registrant block was renamed still shows a name (`queries.ts`).
+      cell: ({ row }) =>
+        row.original.contactName || row.original.contactEmail ? (
+          <div className="flex flex-col">
+            <span>{row.original.contactName ?? '—'}</span>
+            <span className="text-muted-foreground text-xs">{row.original.contactEmail}</span>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
     },
     {
       accessorKey: 'identityKey',
@@ -144,28 +151,4 @@ export function ResponsesTable({
       emptyDescription="Answers appear here as they arrive."
     />
   );
-}
-
-/** Formats a response's timestamp for both the table and its export. */
-export function responseRow(
-  row: {
-    id: number;
-    submittedAt: Date;
-    identityKey: string | null;
-    seats: number;
-    supersedesId: number | null;
-    supersededById: number | null;
-    ipAddress: string | null;
-  },
-  timeZone: string,
-): ResponseTableRow {
-  return {
-    id: row.id,
-    submittedAt: formatInZone(row.submittedAt, timeZone),
-    identityKey: row.identityKey,
-    seats: row.seats,
-    superseded: row.supersededById !== null,
-    isEdit: row.supersedesId !== null,
-    ipAddress: row.ipAddress,
-  };
 }

@@ -114,9 +114,15 @@ test.describe('FLOW-1 build a public form and open it', () => {
 
     // DRAFT -> OPEN
     await page.getByRole('button', { name: /open the form/i }).click();
-    await expect(page.getByText(/Form is now open|OPEN/i).first()).toBeVisible();
-    const [opened] = await sql<{ status: string }[]>`select status from registration_forms where id = ${formId}`;
-    expect(opened.status).toBe('OPEN');
+    await expect
+      .poll(
+        async () =>
+          (await sql<{ status: string }[]>`select status from registration_forms where id = ${formId}`)[0]
+            .status,
+        { timeout: 15_000 },
+      )
+      .toBe('OPEN');
+    await expect(page.getByText(/^open$/i).first()).toBeVisible();
     await shot(page, 'FLOW-1-step-5-open');
   });
 });
@@ -145,7 +151,7 @@ test.describe('FLOW-2 the locked system field cannot be deleted', () => {
 });
 
 test.describe('FLOW-3 conditions are custom-to-custom', () => {
-  test('the source picker never offers a system field', async ({ page }) => {
+  test('the source picker offers earlier custom fields only, never a system one', async ({ page }) => {
     await loginAdmin(page);
     await createForm(page, {
       kind: 'PUBLIC',
@@ -159,20 +165,23 @@ test.describe('FLOW-3 conditions are custom-to-custom', () => {
     await page.getByRole('button', { name: /add a question/i }).last().click();
     await shot(page, 'FLOW-3-step-1-two-custom-questions');
 
-    // Open the second custom question's editor and look at what a condition may read.
-    const editButtons = page.getByRole('button', { name: /^Edit New question/i });
-    await editButtons.last().click();
-    await shot(page, 'FLOW-3-step-2-field-editor');
+    // Open the second custom question's settings and read what a condition may read.
+    await page.getByRole('button', { name: /^Edit New question/i }).last().click();
+    const sourceSelect = page.getByLabel('Show this only when').first();
+    await expect(sourceSelect).toBeVisible();
+    const sources = await sourceSelect.locator('option').allTextContents();
+    // eslint-disable-next-line no-console
+    console.log('CONDITION SOURCES OFFERED ->', JSON.stringify(sources));
+    // Only "Always show it" plus the one earlier custom question.
+    expect(sources.length).toBe(2);
+    expect(sources[0]).toMatch(/always show it/i);
+    expect(sources.join(' ')).not.toMatch(/email|phone|full name|contact/i);
+    await shot(page, 'FLOW-3-step-2-only-custom-sources');
 
+    // And no system key is offered as an option value anywhere on the screen.
     const body = await page.content();
-    // A system field key must not appear as an option anywhere in the condition UI.
-    const conditionSelect = page.locator('select').filter({ hasText: /New question/ });
-    if ((await conditionSelect.count()) > 0) {
-      const options = await conditionSelect.first().locator('option').allTextContents();
-      expect(options.join(' ')).not.toMatch(/contact_email|contact_name|full_name/);
-    }
     expect(body).not.toMatch(/value="contact_email"/);
-    await shot(page, 'FLOW-3-step-3-no-system-source');
+    expect(body).not.toMatch(/value="full_name"/);
   });
 });
 
@@ -199,9 +208,14 @@ test.describe('FLOW-4 interpolated copy and the resolved cascade', () => {
 
     // The preview interpolates the resolved figure rather than a literal.
     await page.getByRole('tab', { name: /questions/i }).click();
-    const preview = page.getByText(/\{\{max_additional_guests\}\}/);
-    expect(await preview.count()).toBe(0);
-    await shot(page, 'FLOW-4-step-2-preview-no-raw-token');
+    await page.locator('#party-description').fill('You may bring up to {{max_additional_guests}} guests.');
+    const previewPane = page.locator('div').filter({ has: page.getByText('Live preview') }).last();
+    // cap 4 on the segment, registrant is seat #1, so the copy resolves to 3 (decision 36).
+    await expect(previewPane.getByText('You may bring up to 3 guests.')).toBeVisible();
+    await expect(previewPane.getByText(/\{\{max_additional_guests\}\}/)).toHaveCount(0);
+    // eslint-disable-next-line no-console
+    console.log('PREVIEW COPY ->', (await previewPane.innerText()).replace(/\s+/g, ' ').slice(0, 300));
+    await shot(page, 'FLOW-4-step-2-preview-interpolated');
 
     const [row] = await sql<{ max_tickets_per_response: number | null }[]>`
       select max_tickets_per_response from registration_forms where id = ${formId}
@@ -240,14 +254,40 @@ test.describe('FLOW-5 a second round is a new form', () => {
     await page.getByRole('button', { name: /new round/i }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Round').fill('Round 2');
+    await dialog.getByLabel('Link').fill(`qa-rounds-r2-${RUN}`);
+    // The dialog's "close this round" switch is on by default; it is left alone
+    // so that what it actually submits is what gets tested.
+    // eslint-disable-next-line no-console
+    console.log('FLOW-5 SWITCH ->', await dialog.getByRole('switch').getAttribute('aria-checked'));
+    // eslint-disable-next-line no-console
+    console.log('FLOW-5 FORMDATA ->', JSON.stringify(await dialog.locator('form').evaluate((f) => [...new FormData(f as HTMLFormElement).entries()].map(([k, v]) => [k, String(v)]))));
     await dialog.getByRole('button', { name: /create the round/i }).click();
-    await page.waitForURL(/\/forms\/\d+$/);
+    await expect
+      .poll(
+        async () =>
+          Number(
+            (await sql<{ count: string }[]>`
+              select count(*) from registration_forms where slug = ${'qa-rounds-r2-' + RUN}
+            `)[0].count,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(1);
+    await expect
+      .poll(
+        async () =>
+          (await sql<{ status: string }[]>`select status from registration_forms where id = ${firstId}`)[0].status,
+        { timeout: 15_000 },
+      )
+      .toBe('CLOSED');
     await shot(page, 'FLOW-5-step-1-round-2-created');
 
-    const rows = await sql<{ id: number; round_label: string; status: string; segment_id: number; schema_version: number }[]>`
-      select id, round_label, status, segment_id, schema_version
-      from registration_forms where slug like ${'qa-rounds%-' + RUN} or slug like ${'qa-rounds-r1-' + RUN + '%'} order by id
+    const rows = await sql<{ id: number; round_label: string; status: string; segment_id: number; schema_version: number; slug: string }[]>`
+      select id, round_label, status, segment_id, schema_version, slug
+      from registration_forms where slug in (${'qa-rounds-r1-' + RUN}, ${'qa-rounds-r2-' + RUN}) order by id
     `;
+    // eslint-disable-next-line no-console
+    console.log('ROUNDS ->', JSON.stringify(rows));
     expect(rows).toHaveLength(2);
     expect(rows[0].status).toBe('CLOSED');
     expect(rows[1].round_label).toBe('Round 2');
@@ -255,7 +295,8 @@ test.describe('FLOW-5 a second round is a new form', () => {
     expect(rows[1].schema_version).toBe(1);
 
     await page.goto(`/admin/concerts/${SEED.concertId}/forms`);
-    await expect(page.getByText('Round 2')).toBeVisible();
+    await expect(page.getByText('Round 2').first()).toBeVisible();
+    await expect(page.getByText('Round 1').first()).toBeVisible();
     await shot(page, 'FLOW-5-step-2-both-rounds-listed');
   });
 });
@@ -341,9 +382,15 @@ test.describe('FLOW-7 responses and export', () => {
               'ada@example.test', now())
     `;
 
-    await page.goto(`/admin/concerts/${SEED.concertId}/forms/${formId}/responses`);
-    await expect(page.getByText('ada@example.test').first()).toBeVisible();
+    const response = await page.goto(`/admin/concerts/${SEED.concertId}/forms/${formId}/responses`);
+    // Evidence first: whatever this page does, it is captured before the assertion.
     await shot(page, 'FLOW-7-step-1-responses-table');
+    // eslint-disable-next-line no-console
+    console.log('RESPONSES PAGE STATUS ->', response?.status());
+    // eslint-disable-next-line no-console
+    console.log('RESPONSES PAGE TEXT ->', (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600));
+    await expect(page.getByRole('heading', { name: 'Responses' })).toBeVisible();
+    await expect(page.getByText('ada@example.test').first()).toBeVisible();
 
     const download = page.waitForEvent('download', { timeout: 30_000 });
     await page.getByRole('button', { name: /export|xlsx|spreadsheet/i }).first().click();
@@ -449,5 +496,210 @@ test.describe('FLOW-14 cross-concert URL tampering', () => {
     console.log('CROSS-CONCERT PAGE ->', response?.status(), page.url());
     expect(await page.content()).not.toMatch(/QA Tamper/);
     await shot(page, 'FLOW-14-step-1-cross-concert-refused');
+  });
+});
+
+
+test.describe('FLOW-15 settings, limits and the concert clock', () => {
+  test('the window and the switches survive a save, and times render in the concert zone', async ({ page }) => {
+    await loginAdmin(page);
+    const formId = await createForm(page, {
+      kind: 'PUBLIC',
+      parentLabel: /Public Block/,
+      title: 'QA Settings',
+      slug: 'qa-settings',
+    });
+
+    await page.getByRole('tab', { name: /settings/i }).click();
+    await expect(page.getByText(/Asia\/Singapore/)).toBeVisible();
+    await page.getByLabel('Opens').fill('2026-10-01T09:00');
+    await page.getByLabel('Closes').fill('2026-10-08T23:30');
+    await page.getByLabel('Maximum responses').fill('40');
+    await shot(page, 'FLOW-15-step-1-settings-filled');
+
+    await page.getByRole('button', { name: /save settings|save/i }).last().click();
+    await expect
+      .poll(
+        async () =>
+          (await sql<{ opens_at: Date | null }[]>`select opens_at from registration_forms where id = ${formId}`)[0]
+            .opens_at !== null,
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    const [row] = await sql<{
+      opens_at: Date;
+      closes_at: Date;
+      max_responses: number | null;
+      one_response_per_identity: boolean;
+      auto_close_on_capacity: boolean;
+    }[]>`
+      select opens_at, closes_at, max_responses, one_response_per_identity, auto_close_on_capacity
+      from registration_forms where id = ${formId}
+    `;
+    // eslint-disable-next-line no-console
+    console.log('SETTINGS ROW ->', JSON.stringify(row));
+    // 09:00 Asia/Singapore is 01:00 UTC — the venue's clock, not the reader's.
+    expect(row.opens_at.toISOString()).toBe('2026-10-01T01:00:00.000Z');
+    expect(row.closes_at.toISOString()).toBe('2026-10-08T15:30:00.000Z');
+    expect(row.max_responses).toBe(40);
+    await shot(page, 'FLOW-15-step-2-saved');
+
+    // A closing time before the opening one is refused, and nothing moves.
+    await page.getByLabel('Closes').fill('2026-09-30T09:00');
+    await page.getByRole('button', { name: /save settings|save/i }).last().click();
+    await expect(page.getByRole('alert').first()).toBeVisible();
+    // eslint-disable-next-line no-console
+    console.log('BAD WINDOW, AS SHOWN ->', (await page.getByRole('alert').first().innerText()).trim());
+    await shot(page, 'FLOW-15-step-3-window-refused');
+    const [unchanged] = await sql<{ closes_at: Date }[]>`select closes_at from registration_forms where id = ${formId}`;
+    expect(unchanged.closes_at.toISOString()).toBe('2026-10-08T15:30:00.000Z');
+  });
+});
+
+test.describe('FLOW-12 a reader in another timezone', () => {
+  test('the form window does not move with the browser clock', async ({ browser }) => {
+    const sg = await browser.newContext({ timezoneId: 'Asia/Singapore' });
+    const ny = await browser.newContext({ timezoneId: 'America/New_York' });
+    const [pageSG, pageNY] = [await sg.newPage(), await ny.newPage()];
+
+    await loginAdmin(pageSG);
+    const formId = await createForm(pageSG, {
+      kind: 'PUBLIC',
+      parentLabel: /Public Block/,
+      title: 'QA Timezone',
+      slug: 'qa-timezone',
+    });
+    await sql`
+      update registration_forms
+      set opens_at = '2026-10-01T01:00:00Z', closes_at = '2026-10-08T15:30:00Z'
+      where id = ${formId}
+    `;
+
+    await pageSG.goto(`/admin/concerts/${SEED.concertId}/forms`);
+    const sgText = (await pageSG.locator('body').innerText()).replace(/\s+/g, ' ');
+    await shot(pageSG, 'FLOW-12-step-1-singapore');
+
+    await loginAdmin(pageNY);
+    await pageNY.goto(`/admin/concerts/${SEED.concertId}/forms`);
+    const nyText = (await pageNY.locator('body').innerText()).replace(/\s+/g, ' ');
+    await shot(pageNY, 'FLOW-12-step-2-new-york');
+
+    const windowOf = (text: string) => text.match(/QA Timezone[\s\S]{0,200}/)?.[0] ?? '';
+    // eslint-disable-next-line no-console
+    console.log('SG  ->', windowOf(sgText));
+    // eslint-disable-next-line no-console
+    console.log('NY  ->', windowOf(nyText));
+    expect(windowOf(nyText)).toBe(windowOf(sgText));
+    await sg.close();
+    await ny.close();
+  });
+});
+
+test.describe('FLOW-16 the boolean switches on this module’s screens', () => {
+  test('turning "One response per person" on and saving stores it', async ({ page }) => {
+    await loginAdmin(page);
+    const formId = await createForm(page, {
+      kind: 'PUBLIC',
+      parentLabel: /Public Block/,
+      title: 'QA Switches',
+      slug: 'qa-switches',
+    });
+
+    await page.getByRole('tab', { name: /settings/i }).click();
+    const identity = page.getByRole('switch').first();
+    await identity.click();
+    await expect(identity).toHaveAttribute('aria-checked', 'true');
+    await shot(page, 'FLOW-16-step-1-switch-on');
+
+    await page.getByRole('button', { name: /save settings/i }).click();
+    await expect(page.getByText(/Settings saved/i)).toBeVisible();
+    await shot(page, 'FLOW-16-step-2-saved');
+
+    const [row] = await sql<{ one_response_per_identity: boolean | null }[]>`
+      select one_response_per_identity from registration_forms where id = ${formId}
+    `;
+    // eslint-disable-next-line no-console
+    console.log('ONE RESPONSE PER IDENTITY IN DB ->', JSON.stringify(row));
+    expect(row.one_response_per_identity).toBe(true);
+  });
+});
+
+test.describe('FLOW-17 the "close this round" switch', () => {
+  test('default-checked, untouched: what reaches the action', async ({ page }) => {
+    await loginAdmin(page);
+    const firstId = await createForm(page, {
+      kind: 'PUBLIC',
+      parentLabel: /Public Block/,
+      title: 'QA Close Switch',
+      slug: 'qa-close-switch',
+    });
+    await page.getByRole('button', { name: /open the form/i }).click();
+    await expect
+      .poll(async () => (await sql`select status from registration_forms where id = ${firstId}`)[0].status, {
+        timeout: 15_000,
+      })
+      .toBe('OPEN');
+
+    await page.getByRole('button', { name: /new round/i }).click();
+    const dialog = page.getByRole('dialog');
+    const closeSwitch = dialog.getByRole('switch');
+    // eslint-disable-next-line no-console
+    console.log('SWITCH aria-checked ->', await closeSwitch.getAttribute('aria-checked'));
+    // eslint-disable-next-line no-console
+    console.log('HIDDEN INPUTS ->', await dialog.locator('input[name="closeCurrent"]').count(),
+      JSON.stringify(await dialog.locator('input[name="closeCurrent"]').evaluateAll((els) =>
+        els.map((el) => ({ type: (el as HTMLInputElement).type, value: (el as HTMLInputElement).value, checked: (el as HTMLInputElement).checked })))));
+    await shot(page, 'FLOW-17-step-1-new-round-dialog');
+
+    await dialog.locator('input[name="roundLabel"]').fill('Round 2');
+    await dialog.locator('input[name="slug"]').fill(`qa-close-switch-r2-${RUN}`);
+    // What the browser would actually submit from this dialog.
+    // eslint-disable-next-line no-console
+    console.log('FORMDATA ->', JSON.stringify(await dialog.locator('form').evaluate((f) => [...new FormData(f as HTMLFormElement).entries()].map(([k, v]) => [k, String(v)]))));
+    await dialog.getByRole('button', { name: /create the round/i }).click();
+    await page.waitForURL(/\/forms\/\d+$/);
+
+    await expect
+      .poll(
+        async () =>
+          (await sql<{ status: string }[]>`select status from registration_forms where id = ${firstId}`)[0].status,
+        { timeout: 15_000 },
+      )
+      .toBe('CLOSED');
+    const [before] = await sql<{ status: string }[]>`select status from registration_forms where id = ${firstId}`;
+    // eslint-disable-next-line no-console
+    console.log('ROUND 1 AFTER, SWITCH LEFT ON ->', before.status);
+    await shot(page, 'FLOW-17-step-2-round-1-status');
+    expect(before.status).toBe('CLOSED');
+  });
+});
+
+test.describe('FLOW-18 the custom field type picker', () => {
+  test('offers exactly the ten types the spec lists', async ({ page }) => {
+    await loginAdmin(page);
+    await createForm(page, {
+      kind: 'PUBLIC',
+      parentLabel: /Public Block/,
+      title: 'QA Field Types',
+      slug: 'qa-field-types',
+    });
+
+    await page.getByRole('button', { name: /add a section/i }).click();
+    await page.getByRole('button', { name: /add a question/i }).last().click();
+    await page.getByRole('button', { name: /^Edit New question/i }).last().click();
+
+    const typeSelect = page.getByLabel('Answer type').first();
+    await expect(typeSelect).toBeVisible();
+    const values = await typeSelect.locator('option').evaluateAll((els) =>
+      els.map((el) => (el as HTMLOptionElement).value),
+    );
+    // eslint-disable-next-line no-console
+    console.log('FIELD TYPES OFFERED ->', JSON.stringify(values));
+    expect(values).toEqual([
+      'text', 'textarea', 'email', 'tel', 'number',
+      'select', 'multiselect', 'checkbox', 'radio', 'date',
+    ]);
+    await shot(page, 'FLOW-18-step-1-field-types');
   });
 });

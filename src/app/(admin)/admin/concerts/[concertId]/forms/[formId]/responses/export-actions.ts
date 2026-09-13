@@ -8,6 +8,7 @@ import { attendees, registrationForms } from '@/db/schema/registrations';
 import { shows, showSegments } from '@/db/schema/shows';
 import { requireAdmin } from '@/lib/auth/guards';
 import { buildExportTable, type ExportableResponse, type ExportTable } from '@/lib/forms/export';
+import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
 import { formatInZone } from '@/lib/export';
 import { getResponsesForExport } from '../../queries';
 
@@ -38,6 +39,7 @@ async function loadForm(concertId: number, formId: number) {
       title: registrationForms.title,
       slug: registrationForms.slug,
       roundLabel: registrationForms.roundLabel,
+      schema: registrationForms.schema,
       timeZone: concerts.timezone,
     })
     .from(registrationForms)
@@ -76,10 +78,14 @@ export async function buildFormExportAction(
     };
   }
 
+  // Only used when nothing has been answered yet — see `buildExportTable`.
+  const current = parseFormSchema(form.schema);
+  const fallback = current.ok ? current.schema : undefined;
+
   const table =
     form.kind === 'FEEDBACK'
-      ? await feedbackTable(formId, timeZone)
-      : await registrationTable(formId, timeZone);
+      ? await feedbackTable(formId, timeZone, fallback)
+      : await registrationTable(formId, timeZone, fallback);
 
   const base = [form.title, form.roundLabel].filter(Boolean).join(' ');
 
@@ -103,7 +109,11 @@ export async function buildFormExportAction(
  * reads when a registrant disputes what they submitted. Which row is current is
  * a column, so the reader can filter in the spreadsheet.
  */
-async function registrationTable(formId: number, timeZone: string): Promise<ExportTable> {
+async function registrationTable(
+  formId: number,
+  timeZone: string,
+  fallback?: FormSchema,
+): Promise<ExportTable> {
   const rows = await getResponsesForExport(formId);
   const supersededIds = new Set(
     rows.map((row) => row.supersedesId).filter((id): id is number => id !== null),
@@ -129,11 +139,15 @@ async function registrationTable(formId: number, timeZone: string): Promise<Expo
     { header: 'Identity', key: 'Identity', width: 28 },
     { header: 'Replaces', key: 'Replaces' },
     { header: 'Superseded', key: 'Superseded' },
-  ]);
+  ], fallback);
 }
 
 /** One row per attendee (spec/v2.md §13.5) — the person, not the party, answered. */
-async function feedbackTable(formId: number, timeZone: string): Promise<ExportTable> {
+async function feedbackTable(
+  formId: number,
+  timeZone: string,
+  fallback?: FormSchema,
+): Promise<ExportTable> {
   const rows = await getDb()
     .select({
       id: feedbackResponses.id,
@@ -168,5 +182,5 @@ async function feedbackTable(formId: number, timeZone: string): Promise<ExportTa
     { header: 'Submitted', key: 'Submitted', width: 20 },
     { header: 'Attendee', key: 'Attendee', width: 28 },
     { header: 'Show', key: 'Show', width: 24 },
-  ]);
+  ], fallback);
 }

@@ -26,7 +26,7 @@ import { parseFormSchema, type FormKind } from '@/lib/forms/schema';
 export type FormStatus = 'DRAFT' | 'OPEN' | 'CLOSED';
 
 /** The show a form ultimately belongs to, whichever parent it hangs off. */
-const formShowId = sql<number>`coalesce(${showSegments.showId}, ${registrationForms.showId})`;
+const formShowId = sql<number>`coalesce(${showSegments.showId}, ${registrationForms.showId})::int`;
 
 export type FormListRow = {
   id: number;
@@ -66,6 +66,15 @@ export async function getConcertHeader(concertId: number) {
  * every selected column for the sake of one number.
  */
 export async function getFormsForConcert(concertId: number): Promise<FormListRow[]> {
+  /**
+   * How many responses this form has taken.
+   *
+   * Interpolated safely **because this select carries joins**: Drizzle
+   * qualifies every column when it does, so the outer `registration_forms.id`
+   * renders fully and the correlation binds where it should. It does *not* do
+   * that for a single-table select — see the `supersededBy` subquery in
+   * {@link getResponses}, which had to be written out for that reason.
+   */
   const responseCount = sql<number>`(
     select count(*)::int from ${formResponses}
     where ${formResponses.formId} = ${registrationForms.id}
@@ -311,11 +320,34 @@ export async function getResponses(
   options: { pageIndex: number; pageSize: number; sort: ResponseSortKey; desc: boolean; search: string },
 ): Promise<ResponsePage> {
   const db = getDb();
-  const search = options.search.trim();
 
+  /**
+   * `%` and `_` are `LIKE` wildcards, so an unescaped term means something
+   * other than what was typed — a search for `%` matches every response and
+   * reads as "no filter applied" rather than "nothing found".
+   *
+   * The same escape module `H` applies to the scan log
+   * (`src/lib/checkin/dashboard.ts`), for the same reason. The term is
+   * parameterised either way, so this is about the search meaning what it
+   * says, not about injection.
+   */
+  const search = options.search.trim();
+  const escaped = search.replace(/([\\%_])/g, '\\$1');
+
+  /**
+   * The response that replaced this one, if any (spec/v2.md §8.3.1).
+   *
+   * **Written out rather than interpolated, and it has to be.** This select has
+   * no joins, and for a single-table select Drizzle renders a column
+   * *unqualified* — so `${formResponses.id}` became a bare `"id"`, which the
+   * subquery resolved against its own `later` alias. The test read
+   * `later.supersedes_id = later.id`, false for every row, and the "superseded"
+   * badge never appeared for anybody. Nothing errored; the column was simply
+   * always null.
+   */
   const supersededBy = sql<number | null>`(
-    select later.id from ${formResponses} later
-    where later.supersedes_id = ${formResponses.id}
+    select later.id from form_responses later
+    where later.supersedes_id = form_responses.id
     limit 1
   )`;
 
@@ -333,8 +365,8 @@ export async function getResponses(
     ? and(
         eq(formResponses.formId, formId),
         or(
-          ilike(sql`${formResponses.raw}::text`, `%${search}%`),
-          ilike(sql`coalesce(${formResponses.identityKey}::text, '')`, `%${search}%`),
+          ilike(sql`${formResponses.raw}::text`, `%${escaped}%`),
+          ilike(sql`coalesce(${formResponses.identityKey}::text, '')`, `%${escaped}%`),
         ),
       )
     : eq(formResponses.formId, formId);

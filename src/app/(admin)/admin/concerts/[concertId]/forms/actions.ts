@@ -5,7 +5,7 @@ import { TZDate } from '@date-fns/tz';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
-import { dbErrorMessage } from '@/db/errors';
+import { dbErrorMessage, pgError } from '@/db/errors';
 import { concerts } from '@/db/schema/concerts';
 import { formResponses, registrationForms } from '@/db/schema/registrations';
 import { shows, showSegments } from '@/db/schema/shows';
@@ -44,6 +44,23 @@ import type { FormState } from '../../form-state';
  * values read through the cascade, and this screen shows them rather than
  * setting them (`party-cap.ts`, CLAUDE.md).
  */
+
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * A clash on `registration_forms_slug_key`, said in words.
+ *
+ * The link is unique across **every** concert, so the form it collides with may
+ * not be one the admin can see from here — which is exactly why the raw
+ * Postgres sentence is no use to them. Modules `A` and `B` map this code for
+ * the same reason.
+ */
+function formErrorMessage(error: unknown, slug: string): string {
+  if (pgError(error)?.code === UNIQUE_VIOLATION) {
+    return `The link "${slug}" is already taken by another form. Links are unique across every concert, so try something more specific.`;
+  }
+  return dbErrorMessage(error);
+}
 
 const blankToNull = (value: unknown) => {
   const trimmed = typeof value === 'string' ? value.trim() : value;
@@ -252,7 +269,7 @@ export async function createFormAction(
     revalidatePath(`/admin/concerts/${concertId}/forms`);
     return { error: null, message: String(created.id) };
   } catch (error) {
-    return { error: dbErrorMessage(error) };
+    return { error: formErrorMessage(error, slug) };
   }
 }
 
@@ -411,7 +428,7 @@ export async function saveFormSettingsAction(
     revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`);
     return { error: null, message: 'Settings saved.' };
   } catch (error) {
-    return { error: dbErrorMessage(error) };
+    return { error: formErrorMessage(error, slug) };
   }
 }
 
@@ -585,6 +602,6 @@ export async function startNewRoundAction(
     revalidatePath(`/admin/concerts/${concertId}/forms`);
     return { error: null, message: String(created.id) };
   } catch (error) {
-    return { error: dbErrorMessage(error) };
+    return { error: formErrorMessage(error, slug) };
   }
 }

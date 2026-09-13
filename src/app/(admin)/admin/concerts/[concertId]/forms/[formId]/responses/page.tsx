@@ -5,7 +5,8 @@ import { ArrowLeft } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { getForm, getResponses, isResponseSortKey } from '../../queries';
-import { ResponsesTable, responseRow } from './responses-table';
+import { ResponsesTable } from './responses-table';
+import { responseRow } from './rows';
 import { SchemaExportButton } from './schema-export-button';
 
 export const metadata: Metadata = { title: 'Responses' };

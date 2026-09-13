@@ -188,8 +188,10 @@ function columnsForBlock(
 function answerColumns(
   responses: readonly ExportableResponse[],
   used: Set<string>,
+  currentSchema?: FormSchema,
 ): ColumnSpec[] {
-  const schemas = schemasNewestFirst(responses);
+  const pinned = schemasNewestFirst(responses);
+  const schemas = pinned.length > 0 ? pinned : currentSchema ? [currentSchema] : [];
   const seats = seatCounts(responses);
   const seen = new Set<string>();
   const specs: ColumnSpec[] = [];
@@ -252,6 +254,21 @@ function readCell(spec: ColumnSpec, response: ExportableResponse): ExportValue {
 export function buildExportTable(
   responses: readonly ExportableResponse[],
   metaColumns: readonly { header: string; key: string; width?: number }[],
+  /**
+   * The form's schema as it stands now, used **only when no response has
+   * pinned one yet**.
+   *
+   * An export of an open form nobody has answered should still describe the
+   * form: rule 1 says a question nobody answered gets a column, and with zero
+   * responses that is every question. Without this the file is meta columns
+   * and nothing else, which tells a reader nothing about what was asked.
+   *
+   * It is a fallback and never an override — the moment one response exists,
+   * its pinned schema is what the columns come from, because a form edited
+   * after the fact must not reshape a download of answers already given
+   * (§8.2.4).
+   */
+  currentSchema?: FormSchema,
 ): ExportTable {
   const used = new Set<string>();
   const specs: ColumnSpec[] = [
@@ -263,7 +280,7 @@ export function buildExportTable(
         width: column.width,
       }),
     ),
-    ...answerColumns(responses, used),
+    ...answerColumns(responses, used, currentSchema),
   ];
 
   return {

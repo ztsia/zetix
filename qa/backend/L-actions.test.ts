@@ -9,7 +9,12 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, sql } from '../../tests/helpers/db';
-import { createConcert, createSegment, createShow } from '../../tests/helpers/fixtures';
+import {
+  createConcert,
+  createSegment,
+  createShow,
+  withDirectAttendeeWrites,
+} from '../../tests/helpers/fixtures';
 
 class RedirectSignal extends Error {
   constructor(readonly to: string) {
@@ -652,5 +657,95 @@ describe('exports', () => {
     console.log('NO TIMEZONE EXPORT ->', JSON.stringify(result));
     expect(result.error).toBeTruthy();
     expect(result.data).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-38 — a feedback export is one row per attendee (v2.md §8.5 rule 2)
+// ---------------------------------------------------------------------------
+describe('feedback export', () => {
+  it('writes one row per attendee, with the attendee and show named', async () => {
+    await signIn('ADMIN');
+    const { concertId, showId, publicSegment } = await scenario();
+    const created = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'FEEDBACK', parentId: String(showId), title: 'How was it' }),
+    );
+    const formId = Number(created.message);
+
+    const [{ schema }] = await sql<{ schema: any }[]>`
+      select schema from registration_forms where id = ${formId}
+    `;
+    const pinned = JSON.parse(JSON.stringify(schema));
+    pinned.blocks.push({
+      id: 'extras',
+      type: 'CUSTOM',
+      title: 'Your evening',
+      fields: [
+        { key: 'enjoyed', label: 'What did you enjoy?', type: 'text', system: false, required: false },
+        { key: 'unasked', label: 'Nobody answered this', type: 'text', system: false, required: false },
+      ],
+    });
+
+    const [registration] = await sql<{ id: number }[]>`
+      insert into registrations (show_id, segment_id, source, contact_name, contact_email, status, requested_at)
+      values (${showId}, ${publicSegment}, 'ADMIN', 'Ada', 'ada@example.test', 'CONFIRMED', now())
+      returning id
+    `;
+    const names = ['Ada Lovelace', 'Bob Tan'];
+    for (const [i, name] of names.entries()) {
+      // The database refuses a direct attendee insert — every grant goes through
+      // `claim_seats()` (allocation.md §7.6). A fixture opts out visibly.
+      const [attendee] = await withDirectAttendeeWrites((tx) => tx<{ id: number }[]>`
+        insert into attendees (registration_id, show_id, segment_id, full_name, name_source, allocation_type, status)
+        values (${registration.id}, ${showId}, ${publicSegment}, ${name}, 'PROVIDED', 'EXTRA', 'CONFIRMED')
+        returning id
+      `);
+      await sql`
+        insert into feedback_responses (form_id, attendee_id, show_id, answers, form_schema, submitted_at)
+        values (${formId}, ${attendee.id}, ${showId},
+                ${JSON.stringify({ extras: { kind: 'flat', values: { enjoyed: `answer-${i}` } } })}::text::jsonb,
+                ${JSON.stringify(pinned)}::text::jsonb, now())
+      `;
+    }
+
+    const result = await buildFormExportAction(concertId, formId);
+    // eslint-disable-next-line no-console
+    console.log('FEEDBACK HEADERS ->', JSON.stringify(result.data?.headers));
+    // eslint-disable-next-line no-console
+    console.log('FEEDBACK ROWS ->', JSON.stringify(result.data?.rows));
+    expect(result.error).toBeNull();
+    expect(result.data!.rows).toHaveLength(2);
+    expect(result.data!.headers).toContain('Attendee');
+    expect(result.data!.headers).toContain('Nobody answered this');
+    expect(result.data!.rows.flat().map(String)).toContain('Ada Lovelace');
+    expect(result.data!.rows.flat().map(String)).toContain('answer-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-6 — kind must agree with the segment's audience_mode, proved here too
+// ---------------------------------------------------------------------------
+describe('kind and audience must agree', () => {
+  it('refuses both mismatches and writes nothing', async () => {
+    await signIn('ADMIN');
+    const { concertId, publicSegment, playerSegment } = await scenario();
+
+    const publicOnPlayer = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PUBLIC', parentId: String(playerSegment), title: 'Wrong 1' }),
+    );
+    const playerOnPublic = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PLAYER', parentId: String(publicSegment), title: 'Wrong 2' }),
+    );
+    // eslint-disable-next-line no-console
+    console.log('KIND MISMATCH ->', JSON.stringify({ publicOnPlayer, playerOnPublic }, null, 2));
+    expect(publicOnPlayer.error).toBeTruthy();
+    expect(playerOnPublic.error).toBeTruthy();
+    expect(await formCount()).toBe(0);
   });
 });

@@ -76,14 +76,6 @@ export async function saveEditAction(
       `${result.removed} seat${result.removed === 1 ? '' : 's'} released back to the pool.`,
     );
   }
-  /**
-   * Said out loud, because it is a promise the registrant should not be left to
-   * infer: the ticket they already hold no longer matches, and somebody has to
-   * decide about a reissue (`tickets.md` §10.6).
-   */
-  if (result.reissueFlagged > 0) {
-    parts.push('We will re-issue the affected tickets before the concert.');
-  }
   return { ok: true, message: parts.join(' '), editToken: result.editToken };
 }
 

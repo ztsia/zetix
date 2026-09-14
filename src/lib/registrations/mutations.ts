@@ -4,6 +4,7 @@ import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import {
   claimSeats,
+  lockShowForClaim,
   promoteSeats,
   type AllocationType,
   type Executor,
@@ -178,6 +179,22 @@ export async function createRegistration(
   try {
     return await getDb().transaction(async (tx) => {
       const { showId } = await segmentContext(tx, input.segmentId);
+
+      /**
+       * **The hall lock, before the insert below references the show.**
+       *
+       * Same hazard the public submit path has: the `registrations` insert takes
+       * `FOR KEY SHARE` on the `shows` row through its FK, and `claim_seats()`
+       * then asks to upgrade that to `FOR UPDATE` — so two concurrent callers
+       * deadlock with `40P01` instead of queueing (`allocation.md` §7.8).
+       *
+       * Contention is lower here than on a public form — this is an admin
+       * screen — but "lower" is not "none": two committee members entering
+       * late registrations at once is an ordinary evening, and an import runs
+       * through the same engine. Found by a QA pass on module `M`; fixed here
+       * too rather than left as the same bug in the other caller.
+       */
+      await lockShowForClaim(showId, tx);
 
       const rows = await tx.execute<{ id: string }>(sql`
         insert into registrations (

@@ -267,6 +267,73 @@ describe('submitRegistration — the player form', () => {
   });
 });
 
+/**
+ * **Who gets a verification token — §8.1.4's two exemptions.**
+ *
+ * A QA pass broke "player forms do not verify" by issuing a token on every
+ * submit, and the entire suite stayed green: 128 files, 1862 tests, all passing.
+ * That is the worst shape a gap can take, because the failure it hides is
+ * silent — a player's tickets held back behind a link the roster address never
+ * asked for, with nothing on any screen to say why.
+ *
+ * The gate reads one column, so these assert that column directly.
+ */
+describe('submitRegistration — verification is issued only where §8.1.4 says', () => {
+  it('issues a token on a public form', async () => {
+    const { segmentId } = await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    await submit();
+
+    const [row] = await sql<{ has_token: boolean; verified: boolean }[]>`
+      select verification_token is not null as has_token,
+             email_verified_at is not null as verified
+        from registrations where segment_id = ${segmentId}
+    `;
+    expect(row.has_token).toBe(true);
+    // The seat is confirmed regardless: verification gates the email, never the
+    // seat.
+    expect(row.verified).toBe(false);
+  });
+
+  it('issues no token on a player form — the address came from the roster', async () => {
+    const { concertId, segmentId } = await seedForm({
+      schema: PLAYER_FORM,
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 50,
+      baseQuota: 2,
+    });
+    await createPlayers(concertId, 1);
+
+    const result = await submitRegistration({
+      slug: SLUG,
+      token: `tok-${concertId}-1`,
+      schemaVersion: 1,
+      addressConfirmed: false,
+      answers: {
+        registrant: {
+          kind: 'flat',
+          values: { contact_name: 'Player 1', contact_email: 'p1@example.test', contact_phone: '' },
+        },
+        base: { kind: 'repeater', rows: [{ full_name: 'Guest A', email: '', seat_note: '' }] },
+        extras: { kind: 'repeater', rows: [] },
+        logistics: { kind: 'flat', values: { transport: 'car', parking_plate: '', accessibility: '' } },
+      } as FormAnswers,
+    });
+    expect(result.ok).toBe(true);
+
+    const [row] = await sql<{ has_token: boolean }[]>`
+      select verification_token is not null as has_token
+        from registrations where segment_id = ${segmentId}
+    `;
+    /**
+     * **The one that strands people if it is wrong.** A token here means the
+     * player's party is held out of every ticket blast until somebody clicks a
+     * link that was never sent to a stranger's address — it came from the
+     * roster. `IS_VERIFIED` in `queue.ts` reads exactly this column.
+     */
+    expect(row.has_token).toBe(false);
+  });
+});
+
 describe('submitRegistration — response limiting (§8.3)', () => {
   it('refuses a closed form', async () => {
     await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50, status: 'CLOSED' });

@@ -1,8 +1,9 @@
 import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { claimSeats } from '@/db/allocation';
+import { claimSeats, lockShowForClaim } from '@/db/allocation';
 import { getDb } from '@/db/client';
+import { resolveSetting } from '@/db/settings';
 
 /**
  * Editing a response (spec/v2.md §8.3.1) — **the sharpest rule set in V2**.
@@ -43,6 +44,7 @@ export type EditableResponse = {
   slug: string;
   segmentId: number;
   showId: number;
+  concertId: number;
   contactName: string;
   contactEmail: string;
   contactPhone: string | null;
@@ -81,6 +83,7 @@ export async function loadEditableResponse(
     slug: string;
     segment_id: string;
     show_id: string;
+    concert_id: string;
     contact_name: string;
     contact_email: string;
     contact_phone: string | null;
@@ -93,6 +96,7 @@ export async function loadEditableResponse(
       f.slug,
       r.segment_id,
       r.show_id,
+      s.concert_id,
       r.contact_name,
       r.contact_email,
       r.contact_phone,
@@ -106,6 +110,7 @@ export async function loadEditableResponse(
     -- checked afterwards because the flag was unreachable code -- an earlier
     -- version carried an is_current boolean that no test could make false.
     join registrations r on r.form_response_id = fr.id
+    join shows s on s.id = r.show_id
     where fr.edit_token = ${editToken}
       and r.deleted_at is null
       and r.status <> 'CANCELLED'
@@ -150,6 +155,7 @@ export async function loadEditableResponse(
     slug: row.slug,
     segmentId: Number(row.segment_id),
     showId: Number(row.show_id),
+    concertId: Number(row.concert_id),
     contactName: row.contact_name,
     contactEmail: row.contact_email,
     contactPhone: row.contact_phone,
@@ -172,10 +178,31 @@ export type EditInput = {
 
 export type EditOutcome = {
   removed: number;
-  reissueFlagged: number;
   /** The new response's token — the old one is superseded and stops working. */
   editToken: string;
 };
+
+/**
+ * **Why nothing here flags `needs_reissue`.**
+ *
+ * §8.3.1 says a name fix flags a reissue when `ticket_sent_at` is set — and on
+ * *this* screen that is unreachable, because the row above it in the same table
+ * closes editing to the registrant entirely once tickets are sent. A party with
+ * any live sent seat gets `closedReason: 'TICKETS_SENT'` and never reaches the
+ * update.
+ *
+ * So the reissue decision belongs where §8.3.1 sends it — to admin
+ * (`allocation.md` §7.6) — and module `B` already makes it properly:
+ * `renameAttendee()` calls `flagReissueForChangedFields()`, which checks whether
+ * the attendee's **pinned template actually prints the field** rather than
+ * assuming every name change matters.
+ *
+ * An earlier version of this module hand-rolled the flag here anyway. A QA pass
+ * found it reported zero every time — `RETURNING` sees the updated row, so the
+ * before/after comparison was always false — and that the branch could not run
+ * at all. Both are gone rather than fixed: code no test can reach is not a
+ * safety net, it is a claim nobody can check.
+ */
 
 /**
  * Apply the §8.3.1 table.
@@ -233,37 +260,16 @@ export async function applyResponseEdit(
 
   try {
     return await getDb().transaction(async (tx) => {
-      let reissueFlagged = 0;
-
       for (const seat of input.seats) {
-        /**
-         * **A bound field changing after the ticket is out sets
-         * `needs_reissue`** (`tickets.md` §10.6), rather than letting the PDF
-         * somebody already holds and the PDF we would render silently diverge.
-         * The door is unaffected either way — check-in matches on `qr_token`,
-         * which never changes — so this is about the admin's reissue decision,
-         * not about admission.
-         *
-         * **Only when the name actually changed.** `full_name` is what the
-         * template binds (§10.2); re-saving the form without touching a name
-         * must not manufacture reissue work for an admin to wade through. The
-         * `is distinct from` is what makes that true for nulls too.
-         */
-        const updated = await tx.execute<{ flagged: boolean }>(sql`
+        await tx.execute(sql`
           update attendees
              set full_name = ${seat.fullName},
                  email = ${seat.email},
-                 name_source = 'PROVIDED',
-                 needs_reissue = needs_reissue
-                   or (ticket_sent_at is not null and full_name is distinct from ${seat.fullName})
+                 name_source = 'PROVIDED'
            where id = ${seat.attendeeId}::bigint
              and registration_id = ${current.registrationId}::bigint
              and deleted_at is null
-          returning (
-            ticket_sent_at is not null and full_name is distinct from ${seat.fullName}
-          ) as flagged
         `);
-        if (updated[0]?.flagged) reissueFlagged += 1;
       }
 
       /**
@@ -350,7 +356,7 @@ export async function applyResponseEdit(
            and r.status <> 'CANCELLED'
       `);
 
-      return { removed: removedIds.length, reissueFlagged, editToken: newToken };
+      return { removed: removedIds.length, editToken: newToken };
     });
   } catch (error) {
     console.error('response edit failed:', error);
@@ -382,11 +388,62 @@ export async function requestExtraSeats(
   const current = await loadEditableResponse(editToken);
   if (!current) return { error: 'That edit link is no longer valid.' };
 
+  /**
+   * **The same three refusals `applyResponseEdit()` makes, and for stronger
+   * reasons.**
+   *
+   * An earlier version of this function checked only that the token resolved,
+   * which made it a second allocation path with none of the guards its sibling
+   * has eleven lines above. A QA pass drained a segment's extras pool from a
+   * public URL with one edit token: `form.extra_rows_max` of 2, forty names
+   * requested, forty granted.
+   *
+   * Editing is *correcting*; this is *claiming*. So every limit that closes the
+   * edit screen closes this too — and where the two differ, this one is the one
+   * that must be stricter, never looser.
+   */
+  if (current.closedReason === 'TICKETS_SENT') {
+    return {
+      error:
+        'Your tickets have already been sent, so extra seats need to go through the orchestra. Please get in touch.',
+    };
+  }
+  if (current.closedReason === 'WINDOW') {
+    return { error: 'The window for changing this registration has closed.' };
+  }
+
   const wanted = names.map((name) => name.trim()).filter((name) => name !== '');
   if (wanted.length === 0) return { error: 'Add at least one name.' };
 
+  /**
+   * `form.extra_rows_max` through the cascade — the same key that governs the
+   * `GUESTS_EXTRA` repeater on the form itself (§8.3's table), because this is
+   * that repeater arriving by another door.
+   *
+   * **A cap that does not resolve refuses**, exactly as `limits.ts` refuses
+   * rather than rendering a repeater with an invented number. Here the stakes
+   * are higher than a mis-drawn form: an unresolved cap that defaulted to
+   * "unlimited" is precisely the bug this guard was written for.
+   */
+  const cap = await resolveSetting<number>('form.extra_rows_max', {
+    segmentId: current.segmentId,
+    showId: current.showId,
+    concertId: current.concertId,
+  });
+  if (typeof cap !== 'number' || !Number.isFinite(cap) || cap <= 0) {
+    return { error: 'Extra seats cannot be requested for this show. Please contact the orchestra.' };
+  }
+  if (wanted.length > Math.trunc(cap)) {
+    return {
+      error: `You may request at most ${Math.trunc(cap)} extra seat${Math.trunc(cap) === 1 ? '' : 's'} at a time.`,
+    };
+  }
+
   try {
     return await getDb().transaction(async (tx) => {
+      // The hall lock first, for the same reason the submit path takes it.
+      await lockShowForClaim(current.showId, tx);
+
       /**
        * A fresh registration carrying a fresh `requested_at` — which *is* the
        * new queue position, since that column is the ordering key.

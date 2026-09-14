@@ -6,7 +6,13 @@ import {
   requestExtraSeats,
 } from '@/lib/registrations/edit';
 import { resetDb, sql } from '../helpers/db';
-import { createConcert, createSegment, createShow, json } from '../helpers/fixtures';
+import {
+  createConcert,
+  createSegment,
+  createShow,
+  json,
+  setSystemSetting,
+} from '../helpers/fixtures';
 import { PUBLIC_FORM } from './fixtures';
 
 /**
@@ -380,6 +386,12 @@ describe('requestExtraSeats', () => {
   beforeEach(async () => {
     await resetDb();
     ids = await scenario();
+    /**
+     * Stated, never defaulted. `requestExtraSeats()` refuses when this does not
+     * resolve — an unresolved cap must never read as "unlimited" — so a test
+     * that omits it is testing the refusal, not the request.
+     */
+    await setSystemSetting('form.extra_rows_max', 3);
   });
 
   it('creates a separate registration rather than growing the party', async () => {
@@ -424,6 +436,83 @@ describe('requestExtraSeats', () => {
 
     const pool = await segmentPool(tight.segmentId);
     expect(pool.confirmed).toBe(1);
+  });
+
+  /**
+   * **The three guards `requestExtraSeats()` was missing**, each found by a QA
+   * pass driving the real function.
+   *
+   * It is the *claiming* half of this screen, and an earlier version checked
+   * only that the edit token resolved — none of the limits its sibling
+   * `applyResponseEdit()` applies eleven lines above it. That made it a second
+   * allocation path reachable from a public URL with none of the guards, which
+   * is precisely what §8.3.1 exists to prevent.
+   */
+  describe('the limits that close the edit screen close this too', () => {
+    it('caps the request at form.extra_rows_max', async () => {
+      await party(ids, ['Alice Tan']);
+      await setSystemSetting('form.extra_rows_max', 2);
+
+      const result = await requestExtraSeats(
+        'edit-token-1',
+        Array.from({ length: 40 }, (_, i) => `Crowd ${i + 1}`),
+      );
+      expect(result).toHaveProperty('error');
+
+      // And nothing was granted: QA drained a segment this way, 40 for 40.
+      const [{ n }] = await sql<{ n: number }[]>`
+        select count(*)::int as n from attendees where segment_id = ${ids.segmentId}
+      `;
+      expect(n).toBe(1);
+    });
+
+    it('grants up to the cap', async () => {
+      await party(ids, ['Alice Tan']);
+      await setSystemSetting('form.extra_rows_max', 2);
+
+      const result = await requestExtraSeats('edit-token-1', ['Dana Tan', 'Eve Tan']);
+      expect(result).toMatchObject({ requested: 2 });
+    });
+
+    /**
+     * A cap that does not resolve refuses, exactly as `limits.ts` refuses rather
+     * than rendering an invented number. An unresolved cap defaulting to
+     * "unlimited" is the bug this guard was written for.
+     */
+    it('refuses when the cap resolves to nothing', async () => {
+      await party(ids, ['Alice Tan']);
+      await sql`delete from system_settings where key = 'form.extra_rows_max'`;
+      await expect(requestExtraSeats('edit-token-1', ['Dana Tan'])).resolves.toHaveProperty('error');
+    });
+
+    it('refuses once the party tickets are sent', async () => {
+      const { registrationId } = await party(ids, ['Alice Tan']);
+      await setSystemSetting('form.extra_rows_max', 2);
+      await sql`update attendees set ticket_sent_at = now() where registration_id = ${registrationId}`;
+
+      const result = await requestExtraSeats('edit-token-1', ['Dana Tan']);
+      expect(result).toHaveProperty('error');
+      const [{ n }] = await sql<{ n: number }[]>`
+        select count(*)::int as n from attendees where segment_id = ${ids.segmentId}
+      `;
+      expect(n).toBe(1);
+    });
+
+    it('refuses after allow_edit_until has passed', async () => {
+      await party(ids, ['Alice Tan']);
+      await setSystemSetting('form.extra_rows_max', 2);
+      await sql`
+        update registration_forms set allow_edit_until = now() - interval '1 hour'
+         where id = ${ids.formId}
+      `;
+
+      const result = await requestExtraSeats('edit-token-1', ['Dana Tan']);
+      expect(result).toHaveProperty('error');
+      const [{ n }] = await sql<{ n: number }[]>`
+        select count(*)::int as n from attendees where segment_id = ${ids.segmentId}
+      `;
+      expect(n).toBe(1);
+    });
   });
 
   it('refuses an empty request', async () => {

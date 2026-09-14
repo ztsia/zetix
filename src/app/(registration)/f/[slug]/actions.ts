@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { sql } from 'drizzle-orm';
-import { claimSeats, type SeatRequest } from '@/db/allocation';
+import { claimSeats, lockShowForClaim, type SeatRequest } from '@/db/allocation';
 import { getDb } from '@/db/client';
 import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
 import { adviseOnAddress } from '@/lib/email/address';
@@ -405,6 +405,14 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
 
   try {
     const confirmationUrl = await getDb().transaction(async (tx) => {
+      /**
+       * **The hall lock first, before anything references the show.** Without
+       * it two concurrent submits deadlock: the registration insert's foreign
+       * key takes a shared lock on the `shows` row and `claim_seats()` then asks
+       * to upgrade it. See `lockShowForClaim()`.
+       */
+      await lockShowForClaim(form.showId, tx);
+
       /**
        * The receipt first, because the registration points at it
        * (`registrations.form_response_id`, §8.3.1 — *"the registration points at

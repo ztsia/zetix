@@ -242,6 +242,27 @@ export default async function EmailPage({
             </Alert>
           ) : null}
 
+          {/*
+            Held by the double opt-in gate (spec/v2.md §8.1.4), named for the
+            same reason as the unissued parties above: it is a gap between the
+            number the admin expects and the number that queues, and a silent
+            gap reads as a broken blast. These parties keep their seats —
+            verification gates the email, never the seat — so the fix is either
+            a reminder or the admin's own override, never a re-allocation.
+          */}
+          {split.heldForVerification > 0 ? (
+            <Alert>
+              <AlertTitle>
+                {split.heldForVerification} part
+                {split.heldForVerification === 1 ? 'y has' : 'ies have'} not verified their email
+              </AlertTitle>
+              <AlertDescription>
+                They are excluded from this blast and keep their seats. Review them under
+                Registrations → Unverified, where you can release a party whose address you trust.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           {!carriesTickets(templateKey) ? (
             <Alert>
               <AlertTitle>This template carries no tickets</AlertTitle>

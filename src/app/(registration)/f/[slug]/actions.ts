@@ -9,6 +9,7 @@ import { adviseOnAddress } from '@/lib/email/address';
 import { validateAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import { loadFormBySlug } from '@/lib/forms/load';
 import { resolveRegistrant } from '@/lib/forms/registrant';
+import { mintVerificationToken, queueVerificationEmail } from '@/lib/registrations/verification';
 import { blockFields, isRepeaterType, type FormField, type FormSchema } from '@/lib/forms/schema';
 
 /**
@@ -385,6 +386,18 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
   const { seats, seatCustom } = partyFor(form.schema, answers);
   if (seats.length === 0) return { ok: false, message: 'Please add at least one seat.' };
 
+  /**
+   * **Only a public form's registrant is asked to verify** (§8.1.4).
+   *
+   * A player's address came from the roster rather than from a stranger typing
+   * it, and an imported registrant never received a link at all — so neither is
+   * issued a token, and `queue.ts` reads the absence of one as "nothing to wait
+   * for". Deciding it here, by form kind, is what keeps that rule in one place:
+   * nothing in the schema distinguishes a player form from an import, and
+   * nothing should (`J`'s handoff).
+   */
+  const verificationToken = form.kind === 'PUBLIC' ? mintVerificationToken() : null;
+
   const editToken = crypto.randomUUID().replaceAll('-', '');
   const userAgent = requestHeaders.get('user-agent');
   const ip = clientIp(requestHeaders);
@@ -427,7 +440,8 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       const inserted = await tx.execute<{ id: string }>(sql`
         insert into registrations (
           show_id, segment_id, round_label, player_id, source, form_response_id,
-          contact_name, contact_email, contact_phone, status, requested_at, custom
+          contact_name, contact_email, contact_phone, status, requested_at, custom,
+          verification_token
         ) values (
           ${form.showId}::bigint, ${segmentId}::bigint, ${form.copy.round_label ?? null},
           ${registrant.kind === 'PLAYER' ? registrant.playerId : null}::bigint, 'FORM',
@@ -440,7 +454,8 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
           -- as confirmed with no seats.
           'WAITLIST',
           ${now.toISOString()}::timestamptz,
-          ${registrantCustom === null ? null : JSON.stringify(registrantCustom)}::text::jsonb
+          ${registrantCustom === null ? null : JSON.stringify(registrantCustom)}::text::jsonb,
+          ${verificationToken}
         )
         returning id
       `);
@@ -511,6 +526,28 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
              and status = 'OPEN'
              and (segment_pool(${segmentId}::bigint)->>'extras_pool')::int <= 0
         `);
+      }
+
+      /**
+       * The verification message, drafted in the same transaction as the
+       * registration it belongs to. Either both land or neither does — a
+       * registration carrying a token nobody was ever sent is a party that can
+       * never be ticketed and has nothing on screen to say why.
+       */
+      if (verificationToken !== null) {
+        const [context] = await tx.execute<{ concert_name: string; show_name: string }>(sql`
+          select c.name as concert_name, s.name as show_name
+            from shows s join concerts c on c.id = s.concert_id
+           where s.id = ${form.showId}::bigint
+        `);
+        await queueVerificationEmail(tx, {
+          registrationId,
+          contactName,
+          contactEmail,
+          token: verificationToken,
+          concertName: context?.concert_name ?? '',
+          showName: context?.show_name ?? '',
+        });
       }
 
       return `/f/${form.slug}/done?r=${editToken}`;

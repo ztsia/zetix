@@ -52,6 +52,23 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+/**
+ * The pool, or null when the segment is not configured enough to have one.
+ *
+ * Only the engine's own refusal is caught. Anything else — a dead connection, a
+ * missing function — is a real fault and must keep propagating rather than
+ * quietly rendering "not open yet" over a broken database.
+ */
+async function poolOrNull(segmentId: number) {
+  try {
+    return await segmentPool(segmentId);
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    if (code === 'P0001') return null;
+    throw error;
+  }
+}
+
 export default async function RegistrationFormPage({
   params,
   searchParams,
@@ -131,7 +148,24 @@ export default async function RegistrationFormPage({
    * anyway — it is answered from the portal, which is `N`'s — but the null
    * check is what makes that true rather than assumed.
    */
-  const pool = form.segmentId === null ? null : await segmentPool(form.segmentId);
+  const pool = form.segmentId === null ? null : await poolOrNull(form.segmentId);
+
+  /**
+   * **A segment with no capacity is `NOT_CONFIGURED`, not a 500.**
+   *
+   * `loadFormBySlug` refuses when a *repeater cap* does not resolve, but the
+   * segment's **capacity** is a different setting and `segment_pool()` raises
+   * its own refusal for it — so a form whose caps resolve can still sit on a
+   * segment that has no capacity, and this page called the pool unconditionally
+   * and turned that raise into a stack trace on a public URL.
+   *
+   * Rendering the form anyway would be worse than refusing: `claim_seats()`
+   * makes the same refusal at submit, so it would be a form that cannot
+   * possibly take a registration.
+   */
+  if (form.segmentId !== null && pool === null) {
+    return <FormNotConfigured title={form.title} missing={['segment capacity']} />;
+  }
   const exactBelow = await resolveSetting<number>('form.seat_indicator_exact_below', {
     segmentId: form.segmentId,
     showId: form.showId,

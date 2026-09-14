@@ -5,7 +5,8 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { requireAdmin } from '@/lib/auth/guards';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
-import { ticketLinks } from '@/lib/email/queue';
+import { formatInZone, ticketLinks } from '@/lib/email/queue';
+import { toNameCase } from '@/lib/names';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { Button } from '@/components/ui/button';
 import { TemplateEditor, type PreviewRecipient } from './template-editor';
@@ -56,6 +57,9 @@ export default async function TemplatesPage({
     label: string;
     concert_name: string;
     show_name: string;
+    starts_at: string | null;
+    doors_open_at: string | null;
+    timezone: string;
     venue_name: string | null;
     venue_address: string | null;
     segment_name: string;
@@ -64,10 +68,12 @@ export default async function TemplatesPage({
     round_label: string | null;
     attendee_count: number;
     attendee_names: string[];
-    qr_tokens: string[];
+    link_names: string[] | null;
+    qr_tokens: string[] | null;
   }>(sql`
     (select 'Longest name: ' || coalesce(r.contact_name, '(none)') as label,
-            c.name as concert_name, s.name as show_name, s.venue_name, s.venue_address,
+            c.name as concert_name, s.name as show_name,
+            s.starts_at, s.doors_open_at, c.timezone, s.venue_name, s.venue_address,
             seg.name as segment_name, r.contact_name, r.contact_email, r.round_label,
             counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
@@ -77,7 +83,15 @@ export default async function TemplatesPage({
        join lateral (
          select count(*)::int as attendee_count,
                 coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
-                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
+                -- Untokened seats are dropped from the link pair here exactly
+                -- as queue.ts does it: postgres.js reads a NULL element of a
+                -- text array back as the string "NULL", which previews as a
+                -- live /t/NULL link. Both aggregates share the filter so the
+                -- names and tokens stay index-aligned.
+                array_agg(a.full_name order by a.id)
+                  filter (where a.qr_token is not null) as link_names,
+                array_agg(a.qr_token order by a.id)
+                  filter (where a.qr_token is not null) as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null
@@ -85,7 +99,8 @@ export default async function TemplatesPage({
       limit 1)
     union all
     (select 'No player linked: ' || coalesce(r.contact_name, '(none)') as label,
-            c.name, s.name, s.venue_name, s.venue_address,
+            c.name, s.name,
+            s.starts_at, s.doors_open_at, c.timezone, s.venue_name, s.venue_address,
             seg.name, r.contact_name, r.contact_email, r.round_label,
             counts.attendee_count, counts.attendee_names, counts.qr_tokens
        from registrations r
@@ -95,7 +110,15 @@ export default async function TemplatesPage({
        join lateral (
          select count(*)::int as attendee_count,
                 coalesce(array_agg(a.full_name order by a.id), '{}') as attendee_names,
-                coalesce(array_agg(a.qr_token order by a.id), '{}') as qr_tokens
+                -- Untokened seats are dropped from the link pair here exactly
+                -- as queue.ts does it: postgres.js reads a NULL element of a
+                -- text array back as the string "NULL", which previews as a
+                -- live /t/NULL link. Both aggregates share the filter so the
+                -- names and tokens stay index-aligned.
+                array_agg(a.full_name order by a.id)
+                  filter (where a.qr_token is not null) as link_names,
+                array_agg(a.qr_token order by a.id)
+                  filter (where a.qr_token is not null) as qr_tokens
            from attendees a where a.registration_id = r.id and a.deleted_at is null
        ) counts on true
       where s.concert_id = ${concertId} and r.deleted_at is null and r.player_id is null
@@ -108,20 +131,26 @@ export default async function TemplatesPage({
     context: {
       'concert.name': row.concert_name,
       'show.name': row.show_name,
-      'show.starts_at': '',
-      'show.doors_open_at': '',
+      // Formatted with the blast's own helper, not a stub. These two were
+      // hardcoded to '' here, so the preview showed an empty "When:" line
+      // whether or not the show had times — the one thing §11.5's preview is
+      // for. If they still render blank, the show really has no times set.
+      'show.starts_at': formatInZone(row.starts_at, row.timezone),
+      'show.doors_open_at': formatInZone(row.doors_open_at, row.timezone),
       'show.venue_name': row.venue_name ?? '',
       'show.venue_address': row.venue_address ?? '',
       'segment.name': row.segment_name,
-      'registration.contact_name': row.contact_name ?? '',
+      // Cased exactly as `queue.ts` does it, or the preview would show a name
+      // the blast is not going to send.
+      'registration.contact_name': toNameCase(row.contact_name ?? ''),
       'registration.contact_email': row.contact_email,
       'registration.round_label': row.round_label ?? '',
       attendee_count: String(row.attendee_count),
-      attendee_names: (row.attendee_names ?? []).filter(Boolean).join(', '),
+      attendee_names: (row.attendee_names ?? []).filter(Boolean).map(toNameCase).join(', '),
       // Rendered from the real seats, not a stub: `ref.md` §6 — a template
       // bug is almost always a data-shape bug, and this token is the one that
       // changes shape with the size of the party.
-      ticket_links: ticketLinks(row.attendee_names, row.qr_tokens),
+      ticket_links: ticketLinks((row.link_names ?? []).map(toNameCase), row.qr_tokens),
     },
   }));
 

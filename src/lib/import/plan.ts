@@ -193,6 +193,23 @@ function cell(
   if (raw == null) return null;
   let v = transforms.trimWhitespace ? raw.trim() : raw;
   if (v.trim() === '') return null;
+  /**
+   * **Whitespace inside an address is removed, not trimmed.**
+   *
+   * A guest typed `may _zxample@yahoo.com`. It was imported with a malformed
+   * warning and then *delivered* — to `_zxample@yahoo.com`, because an address
+   * parser splits the header on the space and keeps the last token, which was a
+   * perfectly valid address belonging to somebody else. A bounce would have been
+   * the good outcome.
+   *
+   * Removing the space is a guess, but it is the only guess available and it is
+   * a safe one: an address with a space in it cannot be delivered as typed, so
+   * the alternatives are "repair it" or "certainly fail". If the repair is wrong
+   * the mail bounces, which is visible; leaving it alone is what sent a
+   * stranger somebody's ticket. Unconditional, because it is a correctness
+   * repair rather than a preference like `lowercase_emails`.
+   */
+  if (kind === 'email') v = v.replace(/\s+/g, '');
   if (kind === 'email' && transforms.lowercaseEmails) v = v.toLowerCase();
   if (kind === 'name' && transforms.titlecaseNames) v = titlecase(v);
   return v;

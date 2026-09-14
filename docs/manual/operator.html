@@ -1,0 +1,961 @@
+<title>Door Scanner Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Karla:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* ---------------------------------------------------------------
+     Door Scanner Handbook — for ushers
+     Read on a phone, often standing up, sometimes in a dim foyer.
+     So: one column, large type, short blocks, and the three door
+     signals shown in the exact colours the scanner paints them
+     (src/app/globals.css).
+     --------------------------------------------------------------- */
+
+  :root {
+    color-scheme: light;
+
+    --ground:      #FAF9F7;
+    --surface:     #FFFFFF;
+    --surface-2:   #F3F1EC;
+    --ink:         #1B1A18;
+    --ink-2:       #55534D;
+    --ink-3:       #86837B;
+    --rule:        #E4E1DA;
+    --rule-strong: #CAC6BC;
+    --accent:      #2E2A66;
+    --accent-ink:  #FFFFFF;
+    --accent-soft: #ECEAF7;
+    --accent-line: #C6C1E5;
+
+    --warn:      oklch(0.52 0.11 72);
+    --warn-soft: oklch(0.96 0.05 82);
+    --bad:       oklch(0.50 0.19 27);
+    --bad-soft:  oklch(0.96 0.03 27);
+    --ok:        oklch(0.48 0.13 148);
+    --ok-soft:   oklch(0.95 0.04 148);
+
+    /* The door signals, exactly as the phone paints them. */
+    --door-green: oklch(0.65 0.19 145);
+    --door-amber: oklch(0.78 0.16 80);
+    --door-red:   oklch(0.58 0.24 27);
+    --door-green-ink: #08150B;
+    --door-amber-ink: #1E1704;
+    --door-red-ink:   #FFFFFF;
+
+    --serif: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+    --sans:  'Karla', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --mono:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+
+      --ground:      #131311;
+      --surface:     #1C1B18;
+      --surface-2:   #24231F;
+      --ink:         #F2F0EA;
+      --ink-2:       #B5B1A7;
+      --ink-3:       #8A877E;
+      --rule:        #32302B;
+      --rule-strong: #4A473F;
+      --accent:      #ABA4F0;
+      --accent-ink:  #17153A;
+      --accent-soft: #25234A;
+      --accent-line: #403D74;
+
+      --warn:      oklch(0.82 0.13 82);
+      --warn-soft: oklch(0.31 0.06 75);
+      --bad:       oklch(0.72 0.17 25);
+      --bad-soft:  oklch(0.29 0.07 25);
+      --ok:        oklch(0.78 0.15 150);
+      --ok-soft:   oklch(0.30 0.06 150);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --ground:      #131311;
+    --surface:     #1C1B18;
+    --surface-2:   #24231F;
+    --ink:         #F2F0EA;
+    --ink-2:       #B5B1A7;
+    --ink-3:       #8A877E;
+    --rule:        #32302B;
+    --rule-strong: #4A473F;
+    --accent:      #ABA4F0;
+    --accent-ink:  #17153A;
+    --accent-soft: #25234A;
+    --accent-line: #403D74;
+
+    --warn:      oklch(0.82 0.13 82);
+    --warn-soft: oklch(0.31 0.06 75);
+    --bad:       oklch(0.72 0.17 25);
+    --bad-soft:  oklch(0.29 0.07 25);
+    --ok:        oklch(0.78 0.15 150);
+    --ok-soft:   oklch(0.30 0.06 150);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .page {
+    max-width: 720px;
+    margin-inline: auto;
+    padding-inline: 20px;
+    padding-block: 0 88px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    padding-block: 48px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  .masthead h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(2.2rem, 9vw, 3.2rem);
+    line-height: 1.03;
+    letter-spacing: -0.018em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: 1.15rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+  }
+
+  /* ---------- the one-minute card ---------- */
+
+  .quickcard {
+    margin-top: 28px;
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    border-radius: 12px;
+    padding: 20px 20px 22px;
+  }
+
+  .quickcard h2 {
+    margin: 0 0 4px;
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .quickcard ol {
+    margin: 12px 0 0;
+    padding-left: 1.2em;
+    color: var(--ink);
+    font-size: 1.02rem;
+  }
+
+  .quickcard li { margin-top: 8px; }
+  .quickcard li::marker { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  /* ---------- sections ---------- */
+
+  .section {
+    padding-block: 40px 0;
+    scroll-margin-top: 16px;
+  }
+
+  .section + .section { border-top: 1px solid var(--rule); }
+
+  h2.sec {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(1.7rem, 6vw, 2.15rem);
+    line-height: 1.12;
+    letter-spacing: -0.014em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .sec-sub {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    margin: 4px 0 0;
+    letter-spacing: 0.02em;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 1.02rem;
+    margin: 28px 0 0;
+    color: var(--ink);
+  }
+
+  p { margin: 12px 0 0; color: var(--ink-2); }
+  p.lead { color: var(--ink); font-size: 1.08rem; }
+  p strong, li strong { color: var(--ink); font-weight: 700; }
+
+  ul, ol { margin: 12px 0 0; padding-left: 1.25em; color: var(--ink-2); }
+  li { margin-top: 8px; }
+  li::marker { color: var(--ink-3); }
+
+  code, .path, kbd {
+    font-family: var(--mono);
+    font-size: 0.85em;
+  }
+
+  code, .path {
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  kbd {
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    padding: 3px 9px;
+    color: var(--ink);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* ---------- steps ---------- */
+
+  .steps {
+    counter-reset: s;
+    list-style: none;
+    padding: 0;
+    margin: 18px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .steps > li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 42px;
+    margin: 0;
+  }
+
+  .steps > li::before {
+    content: counter(s);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .steps > li > strong { display: block; color: var(--ink); font-size: 1.04rem; }
+  .steps > li > span { display: block; color: var(--ink-2); font-size: 0.97rem; margin-top: 2px; }
+
+  /* ---------- the five results ---------- */
+
+  .results {
+    margin-top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .result {
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .result .flag {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    opacity: 0.75;
+  }
+
+  .result b {
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+
+  .result p {
+    margin: 0;
+    color: inherit;
+    opacity: 0.88;
+    font-size: 0.96rem;
+    line-height: 1.5;
+  }
+
+  .result .sound {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    opacity: 0.72;
+    margin-top: 2px;
+  }
+
+  /* Bold inside a coloured card takes the card's ink, not the page's — the
+     page's near-white would sit on amber in dark mode. */
+  .result strong, .result b { color: inherit; }
+
+  .result.green { background: var(--door-green); color: var(--door-green-ink); }
+  .result.amber { background: var(--door-amber); color: var(--door-amber-ink); }
+  .result.red   { background: var(--door-red);   color: var(--door-red-ink); }
+
+  /* ---------- notes ---------- */
+
+  .note {
+    margin-top: 22px;
+    padding: 16px 18px;
+    border-radius: 10px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 9px; }
+  .note ul { margin-top: 8px; }
+
+  .note.warn   { background: var(--warn-soft); border-color: transparent; }
+  .note.warn   .note-label { color: var(--warn); }
+  .note.danger { background: var(--bad-soft); border-color: transparent; }
+  .note.danger .note-label { color: var(--bad); }
+  .note.good   { background: var(--ok-soft); border-color: transparent; }
+  .note.good   .note-label { color: var(--ok); }
+  .note.key    { background: var(--accent-soft); border-color: transparent; }
+  .note.key    .note-label { color: var(--accent); }
+
+  /* ---------- tabs illustration ---------- */
+
+  .tabbar {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .tabbar > div {
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-right: 1px solid var(--rule);
+    text-align: center;
+  }
+
+  .tabbar > div:last-child { border-right: 0; }
+
+  .tabbar b { font-size: 0.98rem; color: var(--ink); }
+  .tabbar span { font-size: 0.82rem; color: var(--ink-2); line-height: 1.4; }
+
+  /* ---------- tables ---------- */
+
+  .table-wrap {
+    margin-top: 20px;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  table { border-collapse: collapse; width: 100%; min-width: 420px; font-size: 0.95rem; }
+
+  th, td {
+    text-align: left;
+    padding: 11px 15px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    color: var(--ink-2);
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 400;
+    background: var(--surface-2);
+  }
+
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+  tbody th { font-weight: 700; color: var(--ink); }
+
+  /* ---------- checklist ---------- */
+
+  .checklist {
+    list-style: none;
+    padding: 0;
+    margin: 18px 0 0;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .checklist li {
+    margin: 0;
+    padding: 13px 18px 13px 46px;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+    color: var(--ink);
+    font-size: 0.98rem;
+  }
+
+  .checklist li:last-child { border-bottom: 0; }
+
+  .checklist li::before {
+    content: '';
+    position: absolute;
+    left: 18px;
+    top: 18px;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--rule-strong);
+    border-radius: 3px;
+  }
+
+  .checklist li span {
+    display: block;
+    color: var(--ink-2);
+    font-size: 0.88rem;
+    line-height: 1.45;
+  }
+
+  /* ---------- colophon ---------- */
+
+  .colophon {
+    margin-top: 44px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    line-height: 1.75;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Orchestra concert ticketing · For ushers</p>
+    <h1>Door Scanner Handbook</h1>
+    <p class="standfirst">
+      How to check people in with your phone. Ten minutes to read, and worth
+      reading before the night rather than during it.
+    </p>
+  </header>
+
+  <div class="quickcard">
+    <h2>If you only read one thing</h2>
+    <ol>
+      <li>Sign in at <span class="path">/scan</span> <strong>before</strong> you get to the venue, on wifi.</li>
+      <li>Open your show once while you still have signal, so the guest list downloads to the phone.</li>
+      <li>Press <kbd>Start scanning</kbd>. This turns on the camera <em>and</em> the sounds.</li>
+      <li><strong>Green means let them in.</strong> Amber and red mean stop and read — but you can always let a real guest in anyway.</li>
+      <li>If a family shows one phone, tap <kbd>Admit remaining</kbd> so all of them are counted.</li>
+    </ol>
+  </div>
+
+  <!-- ============================================ -->
+  <section class="section" id="before">
+    <h2 class="sec">Before the night</h2>
+    <p class="sec-sub">Five minutes at home beats five minutes with a queue</p>
+
+    <p class="lead">
+      Your admin will give you two things: a <strong>display name</strong> and an
+      <strong>access code</strong>. Not an email address — you will never need one
+      for this.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <strong>Open <span class="path">/scan</span> on the phone you will actually use</strong>
+        <span>Use that phone, not a different one. The sign-in stays on the device, so you only do this once.</span>
+      </li>
+      <li>
+        <strong>Type your display name exactly as it was given to you</strong>
+        <span>Spelling and spacing matter. If it doesn't work, it is nearly always this.</span>
+      </li>
+      <li>
+        <strong>Type the access code</strong>
+        <span>Let your phone save it. If you lose it, your admin issues a new one — nobody can look up the old one.</span>
+      </li>
+      <li>
+        <strong>Add the page to your home screen</strong>
+        <span>So you are not hunting through browser tabs in a dark foyer.</span>
+      </li>
+      <li>
+        <strong>Run the device check at <span class="path">/scan/diagnostics</span></strong>
+        <span>Two taps and three questions: does this phone buzz, does it beep, does the camera start? Better to find out now.</span>
+      </li>
+    </ol>
+
+    <div class="note warn">
+      <span class="note-label">iPhones: two things to know</span>
+      <p>
+        <strong>iPhones do not vibrate</strong> for this at all — that is the phone,
+        not a fault. And the silent switch may mute the scan sounds. If both are
+        off, <strong>colour is your only signal</strong>, which is exactly why the
+        colours are so bright.
+      </p>
+    </div>
+
+    <div class="note">
+      <span class="note-label">If the phone has no camera permission</span>
+      <p>
+        The first time you press <kbd>Start scanning</kbd> the phone asks to use the
+        camera. Say yes. If you tapped past it, the Search tab still works by name —
+        and your phone's browser settings can give the permission back.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="setup">
+    <h2 class="sec">Setting up at the door</h2>
+    <p class="sec-sub">Do this while you still have signal</p>
+
+    <ol class="steps">
+      <li>
+        <strong>Open the app and pick your show</strong>
+        <span>You will only be offered shows you have been assigned. If you have exactly one, it is chosen for you.</span>
+      </li>
+      <li>
+        <strong>Wait a moment for the guest list to download</strong>
+        <span>This is the important bit. Once it is on the phone, <strong>scanning works with no signal at all.</strong></span>
+      </li>
+      <li>
+        <strong>Check the name at the top of the screen</strong>
+        <span>That grey pill is the show you are admitting. It stays there all night on purpose.</span>
+      </li>
+      <li>
+        <strong>Press <kbd>Start scanning</kbd></strong>
+        <span>One press turns on both the camera and the sounds. Skip it and your first several scans are silent.</span>
+      </li>
+    </ol>
+
+    <div class="note danger">
+      <span class="note-label">Check the show name before the first guest</span>
+      <p>
+        With two nights of the same programme, an usher on the wrong show will
+        reject every single valid ticket in front of them. One glance at the pill
+        at the top costs you nothing and this costs you the evening.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="tabs">
+    <h2 class="sec">The three tabs</h2>
+    <p class="sec-sub">Along the bottom, thumb-reachable</p>
+
+    <div class="tabbar">
+      <div><b>Scan</b><span>The camera. Where you spend the night.</span></div>
+      <div><b>Search</b><span>Find someone by name or code.</span></div>
+      <div><b>Stats</b><span>How many are in.</span></div>
+    </div>
+
+    <p>
+      Switching tabs does not turn the camera off, so glancing at Search and coming
+      straight back costs you nothing.
+    </p>
+
+    <h3>Scan</h3>
+    <p>
+      Hold the phone so the QR fills a good part of the screen. You do not press
+      anything — it reads continuously. The same ticket held in front of the camera
+      will not register twice in a row; that is deliberate.
+    </p>
+
+    <h3>Search</h3>
+    <p>
+      For the person whose phone is dead, whose printout is crumpled, or who says
+      "I'm sure I'm on the list". Type a <strong>name</strong> or a
+      <strong>ticket code</strong>.
+    </p>
+    <div class="note key">
+      <span class="note-label">Typing a ticket code</span>
+      <p>
+        You do not need the whole thing. Type just the last few characters — three
+        is enough. If the code on the paper reads <code>ORC-7KTD</code>, typing
+        <code>7KTD</code> finds it.
+      </p>
+    </div>
+    <p>
+      Tap the person to open their card, then admit them from there.
+    </p>
+
+    <h3>Stats</h3>
+    <p>
+      Four numbers: <strong>Admitted here</strong>, <strong>Remaining</strong>,
+      <strong>Expected</strong>, and <strong>Awaiting sync</strong>.
+    </p>
+    <div class="note">
+      <span class="note-label">These are your phone's numbers, not the hall's</span>
+      <p>
+        If three of you are on the door, each phone counts only what it admitted
+        until everything syncs. <strong>The desk has the real total.</strong> Don't
+        panic at a low number on your own screen.
+      </p>
+      <p>
+        <strong>Awaiting sync</strong> is how many of your scans haven't reached the
+        server yet. Any number here is fine; it clears itself when you have signal.
+      </p>
+    </div>
+    <p>
+      <kbd>Refresh roster</kbd> pulls the guest list again. Use it if the desk tells
+      you someone was added late.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="results">
+    <h2 class="sec">The five results</h2>
+    <p class="sec-sub">A colour, a sound, and a buzz. Read at arm's length.</p>
+
+    <p>
+      The whole screen flashes for about a second, and the result stays up long
+      enough to read. <strong>Green clears itself</strong> so you can keep moving.
+      Amber and red stay put, because those are the ones with something to read.
+    </p>
+
+    <div class="results">
+      <div class="result green">
+        <span class="flag">Let them in</span>
+        <b>Admitted</b>
+        <p>A valid ticket, first scan. Shows their name, their seat type, and — for a player's guest — who invited them.</p>
+        <p class="sound">Two rising beeps · one short buzz</p>
+      </div>
+
+      <div class="result amber">
+        <span class="flag">Stop and read</span>
+        <b>Already checked in</b>
+        <p>This exact QR was scanned before. It tells you <strong>when</strong> and <strong>by which usher</strong>. Usually a second family member showing the same PDF by mistake, or a double scan.</p>
+        <p class="sound">One flat beep · two short buzzes</p>
+      </div>
+
+      <div class="result red">
+        <span class="flag">Stop and read</span>
+        <b>Wrong show</b>
+        <p>A real ticket, for a different night. The screen names the show it is actually for. Send them to the desk — politely; they have a genuine ticket.</p>
+        <p class="sound">Two falling beeps · one long buzz</p>
+      </div>
+
+      <div class="result red">
+        <span class="flag">Stop and read</span>
+        <b>Cancelled · refer to desk</b>
+        <p>This booking was cancelled. The person and their seat were both real once, so this is a desk conversation, never a "you're not on the list".</p>
+        <p class="sound">Two falling beeps · one long buzz</p>
+      </div>
+
+      <div class="result red">
+        <span class="flag">Stop and read</span>
+        <b>Invalid ticket</b>
+        <p>Nothing on your phone matches that code. Try the Search tab by name first — a wrong show downloaded, or a very late addition, both look like this.</p>
+        <p class="sound">Two falling beeps · one long buzz</p>
+      </div>
+    </div>
+
+    <div class="note good">
+      <span class="note-label">Amber and red never block you</span>
+      <p>
+        Every one of them offers <kbd>Admit anyway</kbd>. Press it when you believe
+        the person in front of you. It is recorded with a note so the desk can look
+        at it later.
+      </p>
+      <p>
+        <strong>Turning away a genuine guest at a free concert is worse than an
+        extra row in a log.</strong> When you are unsure and there is a queue: let
+        them in and tell the desk.
+      </p>
+    </div>
+
+    <p>
+      The speaker icon at the top mutes and unmutes the sounds, and the phone
+      remembers your choice. Foyers are loud — sound helps, but the colour is
+      always the real signal.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="parties">
+    <h2 class="sec">Families and groups</h2>
+    <p class="sec-sub">The single most useful button on the screen</p>
+
+    <p class="lead">
+      A family of four received four tickets in one email. In practice the person
+      at the front shows the first one and the other three walk in behind them.
+    </p>
+
+    <p>
+      When you scan a ticket that belongs to a party, the green screen tells you so:
+    </p>
+
+    <div class="results">
+      <div class="result green">
+        <span class="flag">Admitted</span>
+        <b>ALICE TAN</b>
+        <p><strong>Party of 4 · 1 in, 3 remaining</strong></p>
+        <p class="sound">→ tap "Admit remaining 3"</p>
+      </div>
+    </div>
+
+    <p>
+      <strong>One tap admits the other three.</strong> You don't have to ask a
+      family to queue past you one at a time.
+    </p>
+
+    <div class="note warn">
+      <span class="note-label">Please use it</span>
+      <p>
+        If you scan one and wave the rest through without tapping, three people are
+        inside and unrecorded — and the arrivals count is wrong for the rest of the
+        night. That is the number the desk uses to decide when to stop holding
+        seats.
+      </p>
+    </div>
+
+    <p>
+      A party that genuinely splits up — one arrives early, three arrive late —
+      just scans individually. Nothing is forced. And a single guest never sees this
+      button at all.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="offline">
+    <h2 class="sec">When there's no signal</h2>
+    <p class="sec-sub">Venue wifi is unreliable. This is designed for that.</p>
+
+    <p class="lead">
+      <strong>Keep scanning.</strong> Everything works: the camera, the colours, the
+      search, the party admissions. Your phone checks tickets against the list it
+      downloaded, not against the internet.
+    </p>
+
+    <p>
+      A small badge appears at the top showing <strong>Offline</strong> or how many
+      scans are <strong>queued</strong>. Both are normal. The moment signal returns,
+      the queue sends itself — with the original times, so the arrivals graph stays
+      honest.
+    </p>
+
+    <div class="note danger">
+      <span class="note-label">The one banner you must not ignore</span>
+      <p>
+        If you see <strong>"This device will not save your queue"</strong>, the phone
+        is almost certainly in private / incognito browsing. Scanning still works,
+        but <strong>do not close that tab</strong> until everything has synced — the
+        queue is not saved anywhere.
+      </p>
+      <p>
+        The fix is to reopen <span class="path">/scan</span> in a normal window and
+        sign in again.
+      </p>
+    </div>
+
+    <div class="note">
+      <span class="note-label">Two phones, one family</span>
+      <p>
+        If two ushers scan the same person while both are offline, neither phone can
+        know. The server accepts both when they sync and flags it for the desk.
+        Nothing is lost and nobody is turned away.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="trouble">
+    <h2 class="sec">If something goes wrong</h2>
+    <p class="sec-sub">Most of it, you can fix standing where you are</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th scope="col">What's happening</th><th scope="col">Do this</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Sign-in won't accept your details</th>
+            <td>Check the display name letter for letter — it is the usual cause. If the code is definitely right, ask the desk to issue a new one.</td>
+          </tr>
+          <tr>
+            <th scope="row">"No shows assigned yet"</th>
+            <td>The admin hasn't ticked your show. One message to the desk fixes it; you don't need to sign in again.</td>
+          </tr>
+          <tr>
+            <th scope="row">The camera won't start</th>
+            <td>Press <kbd>Start scanning</kbd> first. If it still won't, allow camera access in your phone's browser settings. Meanwhile, work off the Search tab.</td>
+          </tr>
+          <tr>
+            <th scope="row">No sound at all</th>
+            <td>Check the speaker icon at the top, then your phone's silent switch. On iPhone the switch can mute it. Colour still tells you everything.</td>
+          </tr>
+          <tr>
+            <th scope="row">QR won't read</th>
+            <td>More light, less glare, hold steadier, move a little further back. Off a phone screen, ask them to turn their brightness up. Then fall back to Search by name.</td>
+          </tr>
+          <tr>
+            <th scope="row">Everyone is scanning "Wrong show"</th>
+            <td><strong>Stop.</strong> Look at the pill at the top — you are on the wrong show. Tap it to switch, or ask the desk to assign you.</td>
+          </tr>
+          <tr>
+            <th scope="row">Someone is genuinely not on the list</th>
+            <td>Desk. They have the full registration system and can add a person in under a minute.</td>
+          </tr>
+          <tr>
+            <th scope="row">You admitted the wrong person</th>
+            <td>Tell the desk. They can revert a single scan from the dashboard. Don't try to fix it on the phone.</td>
+          </tr>
+          <tr>
+            <th scope="row">Your phone dies</th>
+            <td>Anything already synced is safe. Anything queued on that phone is lost. Carry a battery pack; you are running a camera for an hour.</td>
+          </tr>
+          <tr>
+            <th scope="row">Signed out mid-shift</th>
+            <td>Sign in again with the same name and code. If it refuses, your account was deactivated — desk.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="rules">
+    <h2 class="sec">What you can and can't do</h2>
+    <p class="sec-sub">Worth knowing so you don't go looking</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th scope="col">You can</th><th scope="col">You can't</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              Scan and admit people<br>
+              Search the guest list for your show<br>
+              Admit a whole party in one tap<br>
+              Admit someone over an amber or red warning<br>
+              See how many you have let in
+            </td>
+            <td>
+              See a show you weren't assigned<br>
+              Edit anybody's details<br>
+              See email addresses or phone numbers<br>
+              Export anything<br>
+              Undo a scan — the desk does that
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      That list is short on purpose. You are holding the full guest list for one
+      show on a phone in a public foyer, so it carries names and ticket status and
+      nothing else.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section" id="checklist">
+    <h2 class="sec">Door checklist</h2>
+    <p class="sec-sub">Run through this as you take your position</p>
+
+    <ul class="checklist">
+      <li>Signed in, and signed in on <em>this</em> phone
+        <span>Do it at home, on wifi.</span></li>
+      <li>Correct show showing in the pill at the top
+        <span>The single most damaging mistake, and the easiest to check.</span></li>
+      <li>Guest list downloaded while you had signal
+        <span>Open the show once online. Then signal stops mattering.</span></li>
+      <li>Pressed <kbd>Start scanning</kbd>
+        <span>Turns on the camera and the sounds together.</span></li>
+      <li>Scanned one real ticket as a test
+        <span>Ideally a printed one, so you know paper works in this light.</span></li>
+      <li>Battery pack in your pocket
+        <span>An hour of camera empties a phone faster than you expect.</span></li>
+      <li>You know where the desk is
+        <span>Every red result ends there.</span></li>
+    </ul>
+  </section>
+
+  <p class="colophon">
+    Door Scanner Handbook · companion to the Concert Admin Handbook.<br>
+    When in doubt at the door: <strong>let the person in and tell the desk.</strong>
+  </p>
+
+</div>

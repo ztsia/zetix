@@ -39,6 +39,34 @@ describe('merge fields', () => {
     expect(unknown).toEqual([]);
   });
 
+  /**
+   * The other door onto the same failure: the token is spelled right and the
+   * value behind it is missing. A show with no `starts_at` is legal, so nothing
+   * upstream refuses it, and `**When:** {{ show.starts_at }}` mails out as
+   * "When:" and nothing at all.
+   */
+  it('reports a known token that resolved to nothing', () => {
+    const { text, unknown, empty } = renderTemplate(
+      '**When:** {{ show.starts_at }} (doors {{ show.doors_open_at }})',
+      { ...context, 'show.starts_at': '', 'show.doors_open_at': '' },
+    );
+    expect(text).toBe('**When:**  (doors )');
+    expect(unknown).toEqual([]);
+    expect(empty).toEqual(['show.starts_at', 'show.doors_open_at']);
+  });
+
+  it('reports nothing empty when every token has a value', () => {
+    const { empty } = renderTemplate('{{ concert.name }} — {{ attendee_count }}', context);
+    expect(empty).toEqual([]);
+  });
+
+  it('reports a token missing from the context at all, not only one set to ""', () => {
+    // `registration.round_label` is absent from `context` above. A preview built
+    // from a query that forgot the column looks exactly like this.
+    const { empty } = renderTemplate('Round: {{ registration.round_label }}', context);
+    expect(empty).toEqual(['registration.round_label']);
+  });
+
   it('documents every token it can resolve', () => {
     // The editor's help text reads from this list, so an undocumented token is
     // one an admin cannot discover.

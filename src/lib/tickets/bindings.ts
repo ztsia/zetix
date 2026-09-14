@@ -1,6 +1,7 @@
 import { TZDate } from '@date-fns/tz';
 import { format as formatDate } from 'date-fns';
 import { BINDINGS, type Binding, type Layout, bindingsUsed } from './layout';
+import { toNameCase } from '../names';
 import { qrUrl } from './identifiers';
 
 /**
@@ -69,15 +70,19 @@ export function resolveBinding(
     case 'attendee.full_name':
       // Never blank: an unnamed seat carries the generated placeholder
       // "Guest of {contact_name}" (decision 32, spec/v2.md §8.2.1).
-      return data.attendee.fullName;
+      //
+      // Cased for print, not in the database: the stored row stays as the guest
+      // typed it so the sheet and the admin screens still agree, and a later
+      // correction to the rules reaches every ticket not yet rendered.
+      return toNameCase(data.attendee.fullName);
     case 'attendee.ticket_code':
       return data.attendee.ticketCode ?? '';
     case 'attendee.qr_url':
       return data.attendee.qrToken ? qrUrl(data.attendee.qrToken, data.appUrl) : '';
     case 'registration.contact_name':
-      return data.registration.contactName ?? '';
+      return toNameCase(data.registration.contactName ?? '');
     case 'player.full_name':
-      return data.player?.fullName ?? '';
+      return toNameCase(data.player?.fullName ?? '');
     case 'player.instrument':
       return data.player?.instrument ?? '';
     case 'show.name':

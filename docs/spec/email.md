@@ -144,6 +144,13 @@ labels come from the same `array_agg(... order by a.id)` as the tokens and are z
 filtered — filtering one alone slides every later link onto the wrong person's name, and a ticket
 labelled with someone else's name is worse than an unlabelled one.
 
+**Every name in a message is cased for display** — `registration.contact_name`, `attendee_names`,
+the labels on `ticket_links`, and the `To:` header — through the same rules the ticket renderer uses
+(`tickets.md` §10.4, `lib/names.ts`). They have to agree: a guest who typed their name in capitals
+would otherwise read "Dear LOH KAI XIN" above a PDF printed "Loh Kai Xin", which is two answers to
+the same question, and the email is the half they read first. The stored rows keep what the guest
+typed, so the sheet and the admin screens are unaffected.
+
 **The HTML half is sent inside a document, not as a bare fragment.** Table layout (Outlook supports
 neither flex nor grid), styles both inlined and declared in `<head>` (a client that strips the block
 still renders something readable), explicit colours with `color-scheme: light` (a client left to guess
@@ -163,7 +170,7 @@ Registration arrives in rounds. Round 1 closes, tickets go out; leftover seats r
 round 2 closes, and a second blast must reach **only the new people**. Someone who already has their
 ticket must not receive it twice, and nobody must be silently skipped.
 
-Three mechanisms, all required:
+The mechanisms, all required:
 
 1. **`attendees.ticket_sent_at` is the dedup key.** Set only on confirmed delivery — a successful send,
    or an admin marking it delivered by hand (§11.5) — never on queueing. Any attendee with a non-null
@@ -183,12 +190,36 @@ Three mechanisms, all required:
              and a.status = 'CONFIRMED'
              and a.ticket_sent_at is null
              and a.deleted_at is null)
+      -- ticket-bearing templates only (see below)
+      and not exists (
+          select 1 from attendees a
+           where a.registration_id = r.id
+             and a.status = 'CONFIRMED'
+             and a.deleted_at is null
+             and (a.qr_token is null or a.ticket_template_id is null))
    on conflict do nothing;
    ```
 3. **The partial unique index** on `(registration_id, template_key) where status in
    ('DRAFT','QUEUED','SENDING')` (`domain.md` §5.1) makes the `on conflict do nothing` meaningful. Without it,
    clicking Send twice queues everything twice.
-4. **A successful send stamps every attendee it carried.** In the same transaction that marks the
+4. **A party with a ticket still to be issued is not queued at all.** The message carries every
+   ticket the party holds (decision 22), and `buildPartyAttachments()` refuses the whole party if any
+   one seat has no pinned template — so a half-issued party could never be *sent*. Drafting it anyway
+   only moves the discovery to dispatch, after the admin has reviewed and confirmed a message that was
+   never going to leave.
+
+   The reason it must be decided **at queue time** is that `body_md` is rendered when the draft is
+   prepared and sent verbatim (decision 23). A party queued before the issue step keeps a
+   `{{ ticket_links }}` value rendered against tickets that did not exist yet, and issuing them
+   afterwards does not go back and update it — the re-render on a template edit replays the draft's
+   *stored* context, so it cannot repair it either. The only repair is to discard the draft and
+   prepare again, which is worth saying out loud because the obvious remedy does not work.
+
+   **This applies only to the three ticket-bearing templates** (§11.3). A reminder, a decline or a
+   cancellation attaches nothing, and holding those back until tickets exist would block exactly the
+   messages an admin sends *because* someone has no ticket.
+
+5. **A successful send stamps every attendee it carried.** In the same transaction that marks the
    outbox row `SENT`, set `ticket_sent_at = now()` and `ticket_sent_source = 'EMAIL'` on exactly the
    attendees whose PDFs were attached. Partial delivery does not exist: either the message sent and all
    its tickets are delivered, or it failed and none are.
@@ -203,7 +234,9 @@ would queue every player confirmation twice.
 **The added-guest case works correctly.** If an admin adds a fourth guest to a party whose first three
 tickets are already sent, that attendee's `ticket_sent_at` is null, the `exists` clause selects the
 registration again, and the next blast re-sends the party's message with all four PDFs. That is the
-right outcome: the party gets one email containing everything they hold.
+right outcome: the party gets one email containing everything they hold. **The fourth ticket has to be
+issued first** — until it is, item 4 holds the whole party back, because the message carries every
+ticket the party holds and one PDF short is the failure that rule exists to prevent.
 
 Together these make the blast **idempotent**: pressing it repeatedly is harmless. This matters because
 an admin who is unsure whether the first click registered will click again.
@@ -214,9 +247,13 @@ an admin who is unsure whether the first click registered will click again.
 Player invited · Round 2
    84 confirmed attendees
    62 already sent          (excluded)
-   22 pending               ← this blast
+   18 pending               ← this blast
+    4 awaiting tickets      (excluded, 2 parties)
     0 failed, retryable
 ```
+
+The **awaiting tickets** line is not decoration. Without it the blast silently prepares fewer messages
+than the segment has parties, which reads as a broken blast rather than as a step not yet done.
 
 Nothing is queued until the admin confirms against those numbers.
 

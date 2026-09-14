@@ -50,19 +50,33 @@ export type RenderedTemplate = {
    * real recipient for the same reason.
    */
   unknown: string[];
+  /**
+   * Tokens that *are* in {@link TOKENS} but resolved to an empty string for
+   * this context.
+   *
+   * The same failure as `unknown` arriving by the other door: the template is
+   * right and the **data** is missing, so `**When:** {{ show.starts_at }}`
+   * renders as `When:` and nothing. A show with no `starts_at` is legal
+   * (spec/domain.md §5.1 — every operational value is nullable), which is
+   * exactly why nothing else catches this before the blast.
+   */
+  empty: string[];
 };
 
 export function renderTemplate(template: string, context: MergeContext): RenderedTemplate {
   const unknown: string[] = [];
+  const empty: string[] = [];
   const text = template.replace(PLACEHOLDER, (_match, rawToken: string) => {
     const token = rawToken.toLowerCase();
     if (!TOKEN_NAMES.has(token)) {
       if (!unknown.includes(rawToken)) unknown.push(rawToken);
       return '';
     }
-    return context[token] ?? '';
+    const value = context[token] ?? '';
+    if (value === '' && !empty.includes(token)) empty.push(token);
+    return value;
   });
-  return { text, unknown };
+  return { text, unknown, empty };
 }
 
 /**

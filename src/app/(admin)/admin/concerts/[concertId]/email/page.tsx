@@ -221,6 +221,27 @@ export default async function EmailPage({
             ticket that party holds.
           </p>
 
+          {/*
+            The excluded parties, named rather than left as a gap between two
+            numbers. A message is rendered when it is prepared and sent verbatim
+            (decision 23), so a party queued before its tickets exist cannot be
+            repaired by issuing them afterwards — the draft has to be discarded
+            and prepared again. Holding them back is the fix; saying so is what
+            stops it reading as a broken blast.
+          */}
+          {split.unissuedAttendees > 0 ? (
+            <Alert>
+              <AlertTitle>
+                {split.unissuedRegistrations} part{split.unissuedRegistrations === 1 ? 'y is' : 'ies are'} waiting
+                for tickets — {split.unissuedAttendees} seat(s) not yet issued
+              </AlertTitle>
+              <AlertDescription>
+                They are excluded from this blast. Issue their tickets, then prepare again — a message
+                prepared now would go out without their links.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           {!carriesTickets(templateKey) ? (
             <Alert>
               <AlertTitle>This template carries no tickets</AlertTitle>

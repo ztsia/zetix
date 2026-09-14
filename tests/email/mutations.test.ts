@@ -5,6 +5,7 @@ import {
   createRegistration,
   createSegment,
   createShow,
+  issueTickets,
   seedAttendees,
 } from '../helpers/fixtures';
 import { queueBlast } from '@/lib/email/queue';
@@ -39,6 +40,9 @@ async function seedBatch(parties: number) {
     await seedAttendees({ registrationId, showId, segmentId, count: 2, allocationType: 'BASE' });
     registrationIds.push(registrationId);
   }
+  // A ticket-bearing blast refuses a party with a seat still to issue (§11.4),
+  // so an unissued fixture would queue nothing and prove nothing here.
+  await issueTickets(concertId, showId);
   await queueBlast({ segmentId, templateKey: TEMPLATE });
   return { concertId, showId, segmentId, registrationIds };
 }

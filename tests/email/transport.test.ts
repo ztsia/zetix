@@ -169,6 +169,40 @@ describe('the local sink path', () => {
   });
 });
 
+/**
+ * The local part of an address survives composition byte for byte.
+ *
+ * A bounce came back for `_zxample@yahoo.com` against a stored
+ * `may_zxample@yahoo.com`, which reads exactly like something in the send path
+ * eating the text before an underscore. Nothing here does — proved rather than
+ * argued, because "it must be the mailer" is the cheapest wrong answer
+ * available and it would have sent the investigation into this file instead of
+ * at the stored data.
+ */
+describe('an address is composed verbatim', () => {
+  const cases: [string, string | null][] = [
+    ['may_zxample@yahoo.com', 'May Zxample'],
+    ['may_zxample@yahoo.com', null],
+    ['may_zxample@yahoo.com', 'May_Zxample'],
+    ['MAY_ZXAMPLE@yahoo.com', 'May Zxample'],
+    ['first.last+tag@example.com', 'First Last'],
+  ];
+
+  for (const [to, toName] of cases) {
+    it(`keeps ${to} intact with name ${toName ?? '(none)'}`, async () => {
+      transport = createStreamTransport('Lakeside Community Orchestra', 'tickets@example.org');
+      const result = await transport.send({ ...message, to, toName });
+
+      const raw = result.raw?.toString('utf8') ?? '';
+      // Matched rather than split, so the assertion carries no escape of its own.
+      const header = raw.match(/^To:.*/m)?.[0] ?? '';
+
+      expect(header).toContain(to);
+      expect(result.accepted).toEqual([to]);
+    });
+  }
+});
+
 describe('the normalized result', () => {
   /**
    * `accepted` / `rejected` / `response` exist **only** on the real SMTP

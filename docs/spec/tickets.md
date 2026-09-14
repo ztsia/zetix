@@ -196,6 +196,28 @@ Render on demand rather than storing, to stay inside free storage limits; cache 
 **Fonts must be self-hosted and embedded** — serverless runtimes have almost no system fonts, and the
 render must match the editor.
 
+**A character with no glyph is drawn, not dropped.** Inter and JetBrains Mono carry no CJK, so a
+Chinese name printed as a row of `|x|` boxes: a PDF reader draws `.notdef` rather than failing, and
+nothing in the render path noticed. A fallback face (Noto Sans SC) is vendored for exactly this, and
+it is **never embedded** — the renderer takes the outline of each missing character and draws it as a
+vector path.
+
+The reason it draws rather than embeds is size. `subset: false` is not negotiable in this renderer
+(pdf-lib's subsetter blanks glyph outlines, §10.4's `glyphs.test.ts`), so an embedded CJK face is
+10MB *per ticket* and a party of four no longer fits in an email. A 2MB subset trades that for a
+coverage cliff exactly where rare characters live, which is personal names. Drawing costs about 4KB
+for a three-character name and covers every character the face has.
+
+The cost, which is real: text drawn this way is artwork. It prints, scans and photographs
+identically, but cannot be selected or searched inside a PDF reader. Admission matches on `qr_token`,
+never on anything printed (§10.1), so nothing operational depends on it.
+
+**Names are cased for print.** A form is typed by whoever filled it in, so the same run carries
+`LOH KAI XIN`, `loh kai xin` and `Loh Kai Xin`. The renderer title-cases person-name bindings on
+the way to the page; the stored row keeps what the guest typed, so the sheet and the admin screens
+still agree, and a later correction to the rules reaches every ticket not yet rendered. A name
+already carrying mixed case is left alone — `McDonald` was a decision, and a decision beats a rule.
+
 **QR contrast is a rendering constraint, not a design preference.** Artwork with a busy or dark region
 behind the QR will not scan. The renderer always draws an opaque light backing plate under the QR with
 a quiet zone of at least `margin_modules`, regardless of what the template background looks like. The

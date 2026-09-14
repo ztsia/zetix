@@ -160,16 +160,23 @@ describe('ticketWhere', () => {
   });
 
   describe('ticket state', () => {
-    it('counts a half-issued row as not issued', async () => {
-      // A token with no pinned template cannot be rendered, so it must not
-      // count as issued (§10.5).
+    it('counts a half-issued row as not issued, in either direction', async () => {
+      // Renderable means a token *and* a pinned template (§10.5); half of the
+      // pair renders nothing. Only the template version moves here — a token is
+      // immutable for the life of an attendee and the database enforces it, so
+      // the seat that lacks one is the one used for the other direction.
       await sql`
-        update attendees
-           set qr_token = 'half-issued', ticket_template_version = null
-         where id = ${publicSeats[1]}
+        update attendees set ticket_template_version = null where id = ${publicSeats[1]}
       `;
-      expect(await matching({ ticketState: 'not_issued' })).toContain(publicSeats[1]);
+      await sql`
+        update attendees set ticket_template_version = 1 where id = ${publicSeats[0]}
+      `;
+
+      const notIssued = await matching({ ticketState: 'not_issued' });
+      expect(notIssued).toContain(publicSeats[1]); // token, no template
+      expect(notIssued).toContain(publicSeats[0]); // template, no token
       expect(await matching({ ticketState: 'issued' })).not.toContain(publicSeats[1]);
+      expect(await matching({ ticketState: 'issued' })).not.toContain(publicSeats[0]);
     });
 
     it('separates not issued, issued-not-sent and sent', async () => {

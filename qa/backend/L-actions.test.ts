@@ -15,6 +15,13 @@ import {
   createShow,
   withDirectAttendeeWrites,
 } from '../../tests/helpers/fixtures';
+import {
+  blockOfType,
+  blockWithId,
+  fieldsOf,
+  fieldWithKey,
+  type LooseSchema,
+} from '../support/loose-schema';
 
 class RedirectSignal extends Error {
   constructor(readonly to: string) {
@@ -149,7 +156,7 @@ describe('authorization matrix', () => {
       }
     }
 
-    // eslint-disable-next-line no-console
+     
     console.log('AUTHZ MATRIX', JSON.stringify(results, null, 2));
 
     for (const [name] of calls) {
@@ -172,7 +179,7 @@ describe('input hardening', () => {
     await createFormAction(concertId, NO_STATE, form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register', slug: 'same-slug' }));
     const result = await createFormAction(concertId, NO_STATE, form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Again', slug: 'same-slug' }));
 
-    // eslint-disable-next-line no-console
+     
     console.log('DUPLICATE SLUG ->', JSON.stringify(result));
     expect(result.error).toBeTruthy();
     expect(result.error).not.toMatch(/duplicate key|violates|at Object|\bstack\b/i);
@@ -199,7 +206,7 @@ describe('input hardening', () => {
       if (result.error === null) stored.push(String((await readForm(Number(result.message))).slug));
       else stored.push(`REFUSED: ${result.error}`);
     }
-    // eslint-disable-next-line no-console
+     
     console.log('SLUGS ->', JSON.stringify(stored, null, 2));
     for (const value of stored) {
       if (value.startsWith('REFUSED')) continue;
@@ -228,7 +235,7 @@ describe('input hardening', () => {
     for (const [name, data] of Object.entries(cases)) {
       results[name] = await outcome(() => createFormAction(concertId, NO_STATE, data));
     }
-    // eslint-disable-next-line no-console
+     
     console.log('INPUT CASES ->', JSON.stringify(results, null, 2));
 
     for (const [name, value] of Object.entries(results)) {
@@ -255,7 +262,7 @@ describe('input hardening', () => {
         closesAt: '2026-10-01T09:00',
       }),
     );
-    // eslint-disable-next-line no-console
+     
     console.log('BAD WINDOW ->', JSON.stringify(result));
     expect(result.error).toBeTruthy();
     const row = await readForm(formId);
@@ -293,8 +300,8 @@ describe('crafted schema saves', () => {
     return { concertId, formId: Number(created.message) };
   }
 
-  const craft = (mutate: (schema: any) => void, kind: 'PUBLIC' | 'PLAYER' = 'PUBLIC') => {
-    const schema: any = blankFormSchema(kind);
+  const craft = (mutate: (schema: LooseSchema) => void, kind: 'PUBLIC' | 'PLAYER' = 'PUBLIC') => {
+    const schema = blankFormSchema(kind) as unknown as LooseSchema;
     mutate(schema);
     return JSON.stringify(schema);
   };
@@ -306,37 +313,37 @@ describe('crafted schema saves', () => {
 
     const attacks: Record<string, string> = {
       deleteRegistrantBlock: craft((s) => {
-        s.blocks = s.blocks.filter((b: any) => b.type !== 'REGISTRANT');
+        s.blocks = s.blocks.filter((b) => b.type !== 'REGISTRANT');
       }),
       deletePartyBlock: craft((s) => {
-        s.blocks = s.blocks.filter((b: any) => b.type !== 'GUESTS_PARTY');
+        s.blocks = s.blocks.filter((b) => b.type !== 'GUESTS_PARTY');
       }),
       deleteContactEmail: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields = r.fields.filter((f: any) => f.key !== 'contact_email');
+        const r = blockOfType(s, 'REGISTRANT');
+        r.fields = r.fields?.filter((f) => f.key !== 'contact_email');
       }),
       retypeContactEmail: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields.find((f: any) => f.key === 'contact_email').type = 'text';
+        const r = blockOfType(s, 'REGISTRANT');
+        fieldWithKey(r.fields, 'contact_email').type = 'text';
       }),
       unrequireContactEmail: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields.find((f: any) => f.key === 'contact_email').required = false;
+        const r = blockOfType(s, 'REGISTRANT');
+        fieldWithKey(r.fields, 'contact_email').required = false;
       }),
       renameContactEmailKey: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields.find((f: any) => f.key === 'contact_email').key = 'email_addr';
+        const r = blockOfType(s, 'REGISTRANT');
+        fieldWithKey(r.fields, 'contact_email').key = 'email_addr';
       }),
       deleteSeatName: craft((s) => {
-        const p = s.blocks.find((b: any) => b.type === 'GUESTS_PARTY');
-        p.guest_fields = p.guest_fields.filter((f: any) => f.key !== 'full_name');
+        const p = blockOfType(s, 'GUESTS_PARTY');
+        p.guest_fields = p.guest_fields?.filter((f) => f.key !== 'full_name');
       }),
       unsystemContactEmail: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields.find((f: any) => f.key === 'contact_email').system = false;
+        const r = blockOfType(s, 'REGISTRANT');
+        fieldWithKey(r.fields, 'contact_email').system = false;
       }),
       addSecondRegistrantBlock: craft((s) => {
-        s.blocks.push(JSON.parse(JSON.stringify(s.blocks.find((b: any) => b.type === 'REGISTRANT'))));
+        s.blocks.push(JSON.parse(JSON.stringify(s.blocks.find((b) => b.type === 'REGISTRANT'))));
       }),
       conditionReadsSystemField: craft((s) => {
         s.blocks.push({
@@ -356,8 +363,8 @@ describe('crafted schema saves', () => {
         });
       }),
       conditionTargetsSystemField: craft((s) => {
-        const r = s.blocks.find((b: any) => b.type === 'REGISTRANT');
-        r.fields.find((f: any) => f.key === 'contact_phone').condition = {
+        const r = blockOfType(s, 'REGISTRANT');
+        fieldWithKey(r.fields, 'contact_phone').condition = {
           field: 'contact_name',
           op: 'answered',
         };
@@ -387,8 +394,8 @@ describe('crafted schema saves', () => {
           title: 'Extras',
           fields: [{ key: 'flat_q', label: 'Flat', type: 'text', system: false, required: false }],
         });
-        const p = s.blocks.find((b: any) => b.type === 'GUESTS_PARTY');
-        p.guest_fields.push({
+        const p = blockOfType(s, 'GUESTS_PARTY');
+        fieldsOf(p).push({
           key: 'seat_note',
           label: 'Note',
           type: 'text',
@@ -409,7 +416,7 @@ describe('crafted schema saves', () => {
         saveFormSchemaAction(concertId, formId, NO_STATE, form({ schema })),
       );
     }
-    // eslint-disable-next-line no-console
+     
     console.log('CRAFTED SAVES ->', JSON.stringify(results, null, 2));
 
     for (const [name, value] of Object.entries(results)) {
@@ -428,7 +435,7 @@ describe('crafted schema saves', () => {
   it('accepts a legal custom field and a custom→custom condition, and bumps the version', async () => {
     await signIn('ADMIN');
     const { concertId, formId } = await aForm();
-    const schema: any = blankFormSchema('PUBLIC');
+    const schema = blankFormSchema('PUBLIC') as unknown as LooseSchema;
     schema.blocks.push({
       id: 'extras',
       type: 'CUSTOM',
@@ -446,7 +453,7 @@ describe('crafted schema saves', () => {
       ],
     });
     const result = await saveFormSchemaAction(concertId, formId, NO_STATE, form({ schema: JSON.stringify(schema) }));
-    // eslint-disable-next-line no-console
+     
     console.log('LEGAL CUSTOM SAVE ->', JSON.stringify(result));
     expect(result.error).toBeNull();
     expect((await readForm(formId)).schema_version).toBe(2);
@@ -463,7 +470,7 @@ describe('schema pinning', () => {
     const created = await createFormAction(concertId, NO_STATE, form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register' }));
     const formId = Number(created.message);
 
-    const pinned: any = blankFormSchema('PUBLIC');
+    const pinned = blankFormSchema('PUBLIC') as unknown as LooseSchema;
     pinned.blocks.push({
       id: 'extras',
       type: 'CUSTOM',
@@ -481,8 +488,8 @@ describe('schema pinning', () => {
     `;
 
     // Rename the question and save.
-    const edited: any = JSON.parse(JSON.stringify(pinned));
-    edited.blocks.find((b: any) => b.id === 'extras').fields[0].label = 'Allergies';
+    const edited = JSON.parse(JSON.stringify(pinned)) as LooseSchema;
+    fieldsOf(blockWithId(edited, 'extras'))[0].label = 'Allergies';
     const save = await saveFormSchemaAction(concertId, formId, NO_STATE, form({ schema: JSON.stringify(edited) }));
     expect(save.error).toBeNull();
 
@@ -539,7 +546,7 @@ describe('cross-concert access', () => {
       newRound: await outcome(() => startNewRoundAction(mine.concertId, formId, NO_STATE, form({ roundLabel: 'R2' }))),
       export: await outcome(() => buildFormExportAction(mine.concertId, formId)),
     };
-    // eslint-disable-next-line no-console
+     
     console.log('CROSS-CONCERT ->', JSON.stringify(results, null, 2));
     for (const [name, value] of Object.entries(results)) {
       expect(value, name).toMatch(/^refused:/);
@@ -559,7 +566,7 @@ describe('exports', () => {
   }
 
   function schemaV(label: string) {
-    const schema: any = blankFormSchema('PUBLIC');
+    const schema = blankFormSchema('PUBLIC') as unknown as LooseSchema;
     schema.blocks.push({
       id: 'extras',
       type: 'CUSTOM',
@@ -576,7 +583,7 @@ describe('exports', () => {
     await signIn('ADMIN');
     const { concertId, formId } = await seedForm();
     const result = await buildFormExportAction(concertId, formId);
-    // eslint-disable-next-line no-console
+     
     console.log('EMPTY EXPORT ->', JSON.stringify(result, null, 2));
     expect(result.error).toBeNull();
     expect(result.data?.rows).toEqual([]);
@@ -598,9 +605,9 @@ describe('exports', () => {
     `;
 
     const result = await buildFormExportAction(concertId, formId);
-    // eslint-disable-next-line no-console
+     
     console.log('EXPORT HEADERS ->', JSON.stringify(result.data?.headers));
-    // eslint-disable-next-line no-console
+     
     console.log('EXPORT ROWS ->', JSON.stringify(result.data?.rows));
     expect(result.error).toBeNull();
     const headers = result.data!.headers;
@@ -615,8 +622,8 @@ describe('exports', () => {
     await signIn('ADMIN');
     const { concertId, formId } = await seedForm();
     const v1 = schemaV('Dietary needs');
-    const v2: any = JSON.parse(JSON.stringify(v1));
-    v2.blocks.find((b: any) => b.id === 'extras').fields[0].label = 'Allergies';
+    const v2 = JSON.parse(JSON.stringify(v1)) as LooseSchema;
+    fieldsOf(blockWithId(v2, 'extras'))[0].label = 'Allergies';
 
     const rawFor = (name: string) => ({
       registrant: { kind: 'flat', values: { contact_name: name, contact_email: `${name}@example.test` } },
@@ -636,9 +643,9 @@ describe('exports', () => {
     const result = await buildFormExportAction(concertId, formId);
     const headers = result.data!.headers;
     const rows = result.data!.rows;
-    // eslint-disable-next-line no-console
+     
     console.log('MIXED VERSION HEADERS ->', JSON.stringify(headers));
-    // eslint-disable-next-line no-console
+     
     console.log('MIXED VERSION ROWS ->', JSON.stringify(rows));
 
     // Both answers must be present somewhere in the sheet — neither dropped.
@@ -653,7 +660,7 @@ describe('exports', () => {
     const { concertId, formId } = await seedForm();
     await sql`update concerts set timezone = null where id = ${concertId}`;
     const result = await buildFormExportAction(concertId, formId);
-    // eslint-disable-next-line no-console
+     
     console.log('NO TIMEZONE EXPORT ->', JSON.stringify(result));
     expect(result.error).toBeTruthy();
     expect(result.data).toBeNull();
@@ -674,7 +681,7 @@ describe('feedback export', () => {
     );
     const formId = Number(created.message);
 
-    const [{ schema }] = await sql<{ schema: any }[]>`
+    const [{ schema }] = await sql<{ schema: LooseSchema }[]>`
       select schema from registration_forms where id = ${formId}
     `;
     const pinned = JSON.parse(JSON.stringify(schema));
@@ -711,9 +718,9 @@ describe('feedback export', () => {
     }
 
     const result = await buildFormExportAction(concertId, formId);
-    // eslint-disable-next-line no-console
+     
     console.log('FEEDBACK HEADERS ->', JSON.stringify(result.data?.headers));
-    // eslint-disable-next-line no-console
+     
     console.log('FEEDBACK ROWS ->', JSON.stringify(result.data?.rows));
     expect(result.error).toBeNull();
     expect(result.data!.rows).toHaveLength(2);
@@ -742,7 +749,7 @@ describe('kind and audience must agree', () => {
       NO_STATE,
       form({ kind: 'PLAYER', parentId: String(publicSegment), title: 'Wrong 2' }),
     );
-    // eslint-disable-next-line no-console
+     
     console.log('KIND MISMATCH ->', JSON.stringify({ publicOnPlayer, playerOnPublic }, null, 2));
     expect(publicOnPlayer.error).toBeTruthy();
     expect(playerOnPublic.error).toBeTruthy();

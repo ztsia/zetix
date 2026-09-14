@@ -166,7 +166,6 @@ await d2.getByLabel('Title').fill('Players: claim your seats');
 await d2.getByRole('button', { name: /Create form/i }).click();
 await page.waitForURL(/\/forms\/\d+$/, { timeout: 30_000 });
 await page.waitForLoadState('networkidle');
-const playerFormId = Number(page.url().match(/\/forms\/(\d+)$/)[1]);
 await shot('builder-player');
 
 // The badge, not any text saying "base seats" — the token help lists one too.

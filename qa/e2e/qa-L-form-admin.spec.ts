@@ -10,6 +10,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import postgres from 'postgres';
+import { blockOfType, type LooseSchema } from '../support/loose-schema';
 
 const QA_URL = process.env.QA_DATABASE_URL ?? 'postgresql://postgres@localhost:55432/zetix_qa';
 const sql = postgres(QA_URL, { prepare: false, max: 3 });
@@ -106,11 +107,11 @@ test.describe('FLOW-1 build a public form and open it', () => {
     await expect(page.getByText(/Saved as version 2/)).toBeVisible();
     await shot(page, 'FLOW-1-step-4-saved');
 
-    const [after] = await sql<{ schema_version: number; schema: any }[]>`
+    const [after] = await sql<{ schema_version: number; schema: LooseSchema }[]>`
       select schema_version, schema from registration_forms where id = ${formId}
     `;
     expect(after.schema_version).toBe(2);
-    expect(after.schema.blocks.some((b: any) => b.type === 'CUSTOM')).toBe(true);
+    expect(after.schema.blocks.some((b) => b.type === 'CUSTOM')).toBe(true);
 
     // DRAFT -> OPEN
     await page.getByRole('button', { name: /open the form/i }).click();
@@ -144,9 +145,9 @@ test.describe('FLOW-2 the locked system field cannot be deleted', () => {
     await expect(page.getByRole('button', { name: /^Delete .*[Pp]hone/i })).toHaveCount(1);
     await shot(page, 'FLOW-2-step-1-no-delete-on-locked');
 
-    const [row] = await sql<{ schema: any }[]>`select schema from registration_forms where id = ${formId}`;
-    const registrant = row.schema.blocks.find((b: any) => b.type === 'REGISTRANT');
-    expect(registrant.fields.map((f: any) => f.key)).toContain('contact_email');
+    const [row] = await sql<{ schema: LooseSchema }[]>`select schema from registration_forms where id = ${formId}`;
+    const registrant = blockOfType(row.schema, 'REGISTRANT');
+    expect((registrant.fields ?? []).map((f) => f.key)).toContain('contact_email');
   });
 });
 
@@ -170,7 +171,7 @@ test.describe('FLOW-3 conditions are custom-to-custom', () => {
     const sourceSelect = page.getByLabel('Show this only when').first();
     await expect(sourceSelect).toBeVisible();
     const sources = await sourceSelect.locator('option').allTextContents();
-    // eslint-disable-next-line no-console
+     
     console.log('CONDITION SOURCES OFFERED ->', JSON.stringify(sources));
     // Only "Always show it" plus the one earlier custom question.
     expect(sources.length).toBe(2);
@@ -213,7 +214,7 @@ test.describe('FLOW-4 interpolated copy and the resolved cascade', () => {
     // cap 4 on the segment, registrant is seat #1, so the copy resolves to 3 (decision 36).
     await expect(previewPane.getByText('You may bring up to 3 guests.')).toBeVisible();
     await expect(previewPane.getByText(/\{\{max_additional_guests\}\}/)).toHaveCount(0);
-    // eslint-disable-next-line no-console
+     
     console.log('PREVIEW COPY ->', (await previewPane.innerText()).replace(/\s+/g, ' ').slice(0, 300));
     await shot(page, 'FLOW-4-step-2-preview-interpolated');
 
@@ -257,9 +258,9 @@ test.describe('FLOW-5 a second round is a new form', () => {
     await dialog.getByLabel('Link').fill(`qa-rounds-r2-${RUN}`);
     // The dialog's "close this round" switch is on by default; it is left alone
     // so that what it actually submits is what gets tested.
-    // eslint-disable-next-line no-console
+     
     console.log('FLOW-5 SWITCH ->', await dialog.getByRole('switch').getAttribute('aria-checked'));
-    // eslint-disable-next-line no-console
+     
     console.log('FLOW-5 FORMDATA ->', JSON.stringify(await dialog.locator('form').evaluate((f) => [...new FormData(f as HTMLFormElement).entries()].map(([k, v]) => [k, String(v)]))));
     await dialog.getByRole('button', { name: /create the round/i }).click();
     await expect
@@ -286,7 +287,7 @@ test.describe('FLOW-5 a second round is a new form', () => {
       select id, round_label, status, segment_id, schema_version, slug
       from registration_forms where slug in (${'qa-rounds-r1-' + RUN}, ${'qa-rounds-r2-' + RUN}) order by id
     `;
-    // eslint-disable-next-line no-console
+     
     console.log('ROUNDS ->', JSON.stringify(rows));
     expect(rows).toHaveLength(2);
     expect(rows[0].status).toBe('CLOSED');
@@ -339,7 +340,7 @@ test.describe('FLOW-6 wrong kind for the segment, and a duplicate link', () => {
     const alert = page.getByRole('alert').first();
     await expect(alert).toBeVisible();
     const text = (await alert.textContent()) ?? '';
-    // eslint-disable-next-line no-console
+     
     console.log('DUPLICATE SLUG, AS THE ADMIN SEES IT ->', text.trim());
     await shot(page, 'FLOW-6-step-3-duplicate-link-message');
 
@@ -360,7 +361,7 @@ test.describe('FLOW-7 responses and export', () => {
       slug: 'qa-responses',
     });
 
-    const [{ schema }] = await sql<{ schema: any }[]>`select schema from registration_forms where id = ${formId}`;
+    const [{ schema }] = await sql<{ schema: LooseSchema }[]>`select schema from registration_forms where id = ${formId}`;
     const pinned = JSON.parse(JSON.stringify(schema));
     pinned.blocks.push({
       id: 'extras',
@@ -385,9 +386,9 @@ test.describe('FLOW-7 responses and export', () => {
     const response = await page.goto(`/admin/concerts/${SEED.concertId}/forms/${formId}/responses`);
     // Evidence first: whatever this page does, it is captured before the assertion.
     await shot(page, 'FLOW-7-step-1-responses-table');
-    // eslint-disable-next-line no-console
+     
     console.log('RESPONSES PAGE STATUS ->', response?.status());
-    // eslint-disable-next-line no-console
+     
     console.log('RESPONSES PAGE TEXT ->', (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600));
     await expect(page.getByRole('heading', { name: 'Responses' })).toBeVisible();
     await expect(page.getByText('ada@example.test').first()).toBeVisible();
@@ -397,7 +398,7 @@ test.describe('FLOW-7 responses and export', () => {
     const file = await download;
     const path = `qa-artifacts/L-form-admin/${file.suggestedFilename()}`;
     await file.saveAs(path);
-    // eslint-disable-next-line no-console
+     
     console.log('DOWNLOADED ->', file.suggestedFilename());
     await shot(page, 'FLOW-7-step-2-export-downloaded');
     expect(file.suggestedFilename()).toMatch(/\.xlsx$/);
@@ -424,7 +425,7 @@ test.describe('FLOW-9 empty states', () => {
     const exportButton = page.getByRole('button', { name: /export|xlsx|spreadsheet/i }).first();
     await expect(exportButton).toBeVisible();
     const disabled = await exportButton.isDisabled();
-    // eslint-disable-next-line no-console
+     
     console.log('EMPTY EXPORT BUTTON DISABLED ->', disabled);
     await shot(page, 'FLOW-9-step-2-empty-export-control');
     expect(disabled).toBe(true);
@@ -445,7 +446,7 @@ test.describe('FLOW-10 anonymous', () => {
       const body = await page.content();
       expect(body).not.toMatch(/Registration and feedback forms/);
       expect(body).not.toMatch(/ada@example\.test/);
-      // eslint-disable-next-line no-console
+       
       console.log(`ANON ${url} -> ${response?.status()} ${page.url()}`);
       await shot(page, `FLOW-10-step-${i + 1}-anon-refused`);
     }
@@ -462,12 +463,12 @@ test.describe('FLOW-13 feedback form authoring', () => {
       slug: 'qa-feedback',
     });
 
-    const [row] = await sql<{ segment_id: number | null; show_id: number | null; schema: any }[]>`
+    const [row] = await sql<{ segment_id: number | null; show_id: number | null; schema: LooseSchema }[]>`
       select segment_id, show_id, schema from registration_forms where id = ${formId}
     `;
     expect(row.segment_id).toBeNull();
     expect(Number(row.show_id)).toBe(SEED.showId);
-    expect(row.schema.blocks.some((b: any) => /GUESTS/.test(b.type))).toBe(false);
+    expect(row.schema.blocks.some((b) => /GUESTS/.test(b.type))).toBe(false);
     await expect(page.getByText(/full_name · text/)).toHaveCount(0);
     await shot(page, 'FLOW-13-step-1-feedback-builder');
 
@@ -492,7 +493,7 @@ test.describe('FLOW-14 cross-concert URL tampering', () => {
       values ('Other Concert', ${'other-' + Date.now()}, 'ACTIVE', 'Asia/Singapore') returning id
     `;
     const response = await page.goto(`/admin/concerts/${other.id}/forms/${formId}`);
-    // eslint-disable-next-line no-console
+     
     console.log('CROSS-CONCERT PAGE ->', response?.status(), page.url());
     expect(await page.content()).not.toMatch(/QA Tamper/);
     await shot(page, 'FLOW-14-step-1-cross-concert-refused');
@@ -537,7 +538,7 @@ test.describe('FLOW-15 settings, limits and the concert clock', () => {
       select opens_at, closes_at, max_responses, one_response_per_identity, auto_close_on_capacity
       from registration_forms where id = ${formId}
     `;
-    // eslint-disable-next-line no-console
+     
     console.log('SETTINGS ROW ->', JSON.stringify(row));
     // 09:00 Asia/Singapore is 01:00 UTC — the venue's clock, not the reader's.
     expect(row.opens_at.toISOString()).toBe('2026-10-01T01:00:00.000Z');
@@ -549,7 +550,7 @@ test.describe('FLOW-15 settings, limits and the concert clock', () => {
     await page.getByLabel('Closes').fill('2026-09-30T09:00');
     await page.getByRole('button', { name: /save settings|save/i }).last().click();
     await expect(page.getByRole('alert').first()).toBeVisible();
-    // eslint-disable-next-line no-console
+     
     console.log('BAD WINDOW, AS SHOWN ->', (await page.getByRole('alert').first().innerText()).trim());
     await shot(page, 'FLOW-15-step-3-window-refused');
     const [unchanged] = await sql<{ closes_at: Date }[]>`select closes_at from registration_forms where id = ${formId}`;
@@ -586,9 +587,9 @@ test.describe('FLOW-12 a reader in another timezone', () => {
     await shot(pageNY, 'FLOW-12-step-2-new-york');
 
     const windowOf = (text: string) => text.match(/QA Timezone[\s\S]{0,200}/)?.[0] ?? '';
-    // eslint-disable-next-line no-console
+     
     console.log('SG  ->', windowOf(sgText));
-    // eslint-disable-next-line no-console
+     
     console.log('NY  ->', windowOf(nyText));
     expect(windowOf(nyText)).toBe(windowOf(sgText));
     await sg.close();
@@ -619,7 +620,7 @@ test.describe('FLOW-16 the boolean switches on this module’s screens', () => {
     const [row] = await sql<{ one_response_per_identity: boolean | null }[]>`
       select one_response_per_identity from registration_forms where id = ${formId}
     `;
-    // eslint-disable-next-line no-console
+     
     console.log('ONE RESPONSE PER IDENTITY IN DB ->', JSON.stringify(row));
     expect(row.one_response_per_identity).toBe(true);
   });
@@ -644,9 +645,9 @@ test.describe('FLOW-17 the "close this round" switch', () => {
     await page.getByRole('button', { name: /new round/i }).click();
     const dialog = page.getByRole('dialog');
     const closeSwitch = dialog.getByRole('switch');
-    // eslint-disable-next-line no-console
+     
     console.log('SWITCH aria-checked ->', await closeSwitch.getAttribute('aria-checked'));
-    // eslint-disable-next-line no-console
+     
     console.log('HIDDEN INPUTS ->', await dialog.locator('input[name="closeCurrent"]').count(),
       JSON.stringify(await dialog.locator('input[name="closeCurrent"]').evaluateAll((els) =>
         els.map((el) => ({ type: (el as HTMLInputElement).type, value: (el as HTMLInputElement).value, checked: (el as HTMLInputElement).checked })))));
@@ -655,7 +656,7 @@ test.describe('FLOW-17 the "close this round" switch', () => {
     await dialog.locator('input[name="roundLabel"]').fill('Round 2');
     await dialog.locator('input[name="slug"]').fill(`qa-close-switch-r2-${RUN}`);
     // What the browser would actually submit from this dialog.
-    // eslint-disable-next-line no-console
+     
     console.log('FORMDATA ->', JSON.stringify(await dialog.locator('form').evaluate((f) => [...new FormData(f as HTMLFormElement).entries()].map(([k, v]) => [k, String(v)]))));
     await dialog.getByRole('button', { name: /create the round/i }).click();
     await page.waitForURL(/\/forms\/\d+$/);
@@ -668,7 +669,7 @@ test.describe('FLOW-17 the "close this round" switch', () => {
       )
       .toBe('CLOSED');
     const [before] = await sql<{ status: string }[]>`select status from registration_forms where id = ${firstId}`;
-    // eslint-disable-next-line no-console
+     
     console.log('ROUND 1 AFTER, SWITCH LEFT ON ->', before.status);
     await shot(page, 'FLOW-17-step-2-round-1-status');
     expect(before.status).toBe('CLOSED');
@@ -694,7 +695,7 @@ test.describe('FLOW-18 the custom field type picker', () => {
     const values = await typeSelect.locator('option').evaluateAll((els) =>
       els.map((el) => (el as HTMLOptionElement).value),
     );
-    // eslint-disable-next-line no-console
+     
     console.log('FIELD TYPES OFFERED ->', JSON.stringify(values));
     expect(values).toEqual([
       'text', 'textarea', 'email', 'tel', 'number',

@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { and, asc, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { attendees, registrations } from '@/db/schema/registrations';
 import { concerts } from '@/db/schema/concerts';
-import { shows } from '@/db/schema/shows';
+import { showSegments, shows } from '@/db/schema/shows';
 import { requireAdmin } from '@/lib/auth/guards';
+import { parseTicketFilters, ticketWhere, type TicketQuery } from './filters';
 import { TicketsTable, type TicketRow } from './tickets-table';
 
 export const metadata: Metadata = { title: 'Tickets' };
@@ -31,13 +32,11 @@ const SORTABLE = {
   ticketSentAt: attendees.ticketSentAt,
 } as const;
 
-type Search = {
+type Search = TicketQuery & {
   page?: string;
   size?: string;
   sort?: string;
   dir?: string;
-  q?: string;
-  show?: string;
 };
 
 export default async function TicketsPage({
@@ -59,8 +58,7 @@ export default async function TicketsPage({
   const pageSize = PAGE_SIZES.includes(requestedSize) ? requestedSize : 25;
   const sortKey = (query.sort ?? '') in SORTABLE ? (query.sort as keyof typeof SORTABLE) : null;
   const descending = query.dir === 'desc';
-  const search = (query.q ?? '').trim();
-  const showFilter = Number(query.show ?? 0) || null;
+  const filters = parseTicketFilters(query);
 
   const db = getDb();
 
@@ -77,23 +75,25 @@ export default async function TicketsPage({
     .where(and(eq(shows.concertId, concertId), isNull(shows.deletedAt)))
     .orderBy(asc(shows.startsAt), asc(shows.name));
 
-  const filters: SQL[] = [
-    eq(shows.concertId, concertId),
-    isNull(attendees.deletedAt),
-    isNull(registrations.deletedAt),
-  ];
-  if (showFilter) filters.push(eq(attendees.showId, showFilter));
-  if (search) {
-    const like = `%${search}%`;
-    filters.push(
-      or(
-        ilike(attendees.fullName, like),
-        ilike(attendees.ticketCode, like),
-        ilike(registrations.contactName, like),
-      )!,
-    );
-  }
-  const where = and(...filters);
+  /**
+   * Segments carry the show's name too: one concert can hold "Public" twice
+   * over two nights, and a bare segment name in a dropdown would be a coin
+   * toss. Segments, not shows, own audience mode (CLAUDE.md), so this is the
+   * filter that matches how the concert is actually divided.
+   */
+  const concertSegments = await db
+    .select({
+      id: showSegments.id,
+      name: showSegments.name,
+      showId: showSegments.showId,
+      showName: shows.name,
+    })
+    .from(showSegments)
+    .innerJoin(shows, eq(shows.id, showSegments.showId))
+    .where(and(eq(shows.concertId, concertId), isNull(shows.deletedAt)))
+    .orderBy(asc(shows.startsAt), asc(shows.name), asc(showSegments.id));
+
+  const where = ticketWhere(concertId, filters);
 
   const orderBy = sortKey
     ? [descending ? desc(SORTABLE[sortKey]) : asc(SORTABLE[sortKey]), asc(attendees.id)]
@@ -106,6 +106,8 @@ export default async function TicketsPage({
         fullName: attendees.fullName,
         showId: attendees.showId,
         showName: shows.name,
+        segmentId: attendees.segmentId,
+        segmentName: showSegments.name,
         status: attendees.status,
         ticketCode: attendees.ticketCode,
         qrToken: attendees.qrToken,
@@ -118,6 +120,7 @@ export default async function TicketsPage({
       .from(attendees)
       .innerJoin(registrations, eq(registrations.id, attendees.registrationId))
       .innerJoin(shows, eq(shows.id, attendees.showId))
+      .innerJoin(showSegments, eq(showSegments.id, attendees.segmentId))
       .where(where)
       .orderBy(...orderBy)
       .limit(pageSize)
@@ -127,6 +130,7 @@ export default async function TicketsPage({
       .from(attendees)
       .innerJoin(registrations, eq(registrations.id, attendees.registrationId))
       .innerJoin(shows, eq(shows.id, attendees.showId))
+      .innerJoin(showSegments, eq(showSegments.id, attendees.segmentId))
       .where(where),
     // §10.6's "N tickets need reissuing" count — over the whole concert, not
     // the current page, since it is a call to action rather than a column.
@@ -148,6 +152,8 @@ export default async function TicketsPage({
     fullName: row.fullName,
     showId: row.showId,
     showName: row.showName,
+    segmentId: row.segmentId,
+    segmentName: row.segmentName,
     status: row.status,
     ticketCode: row.ticketCode,
     issued: row.qrToken !== null && row.templateVersion !== null,
@@ -166,14 +172,14 @@ export default async function TicketsPage({
       // (CLAUDE.md). UTC only where a concert has none set yet.
       timeZone={concert.timezone ?? 'UTC'}
       shows={concertShows}
-      showFilter={showFilter}
+      segments={concertSegments}
+      filters={filters}
       rows={data}
       rowCount={tally?.n ?? 0}
       needsReissueCount={pending?.n ?? 0}
       pageIndex={pageIndex}
       pageSize={pageSize}
       sorting={sortKey ? [{ id: sortKey, desc: descending }] : []}
-      search={search}
     />
   );
 }

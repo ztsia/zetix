@@ -94,6 +94,32 @@ export type SegmentPool = {
  * confirmation and the `audit_log` row; this flag only tells the engine the
  * decision was made.
  */
+/**
+ * Take the hall lock **before** inserting anything that references the show.
+ *
+ * `claim_seats()` locks the show row `for update` to serialise claims per hall
+ * (`allocation.md` §7.8). A caller that inserts its `registrations` row first
+ * defeats that and deadlocks instead: the insert's foreign key takes
+ * `FOR KEY SHARE` on the same `shows` tuple, two concurrent submits both get
+ * that shared lock, and then both ask to upgrade to `FOR UPDATE` — which
+ * neither can have while the other holds the share. Postgres breaks the tie
+ * with `40P01` and one registrant sees a failure for no reason of their own.
+ *
+ * Acquiring the exclusive lock up front makes the two transactions queue rather
+ * than collide, which is what §7.8 asks for in the first place: *"serialise per
+ * hall"*. It costs nothing — `claim_seats()` re-taking a lock this transaction
+ * already holds is free — and contention at this scale is irrelevant while
+ * correctness is not.
+ *
+ * **Call it as the first statement in any transaction that inserts a
+ * registration and then claims seats.** Found by a QA pass driving two
+ * connections at once; a single-connection test pool (`max: 1`) serialises the
+ * callers and can never reach it.
+ */
+export async function lockShowForClaim(showId: number, executor: Executor): Promise<void> {
+  await executor.execute(sql`select 1 from shows where id = ${showId}::bigint for update`);
+}
+
 export async function claimSeats(
   segmentId: number,
   registrationId: number,

@@ -291,9 +291,11 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       {
         key: 'form.seat_indicator_exact_below',
         min: 0,
-        label: 'Show exact seats below',
+        label: 'Show exact seats above',
         kind: 'number',
-        description: 'Under this many seats left, the form shows a number instead of a band.',
+        description:
+          'Once fewer than this many seats remain, the form stops naming the figure and says ' +
+          '“only a few seats left”. It exists to avoid a stampede, so scarcity is what goes vague.',
         operational: false,
         level: 'system',
       },

@@ -32,6 +32,16 @@ export const TOKENS: { token: string; description: string }[] = [
     token: 'ticket_links',
     description: 'A bulleted list — one /t/{token} link per ticket, labelled with the guest it belongs to',
   },
+  {
+    token: 'verify_url',
+    /**
+     * Resolved only for `public_verify` (spec/v2.md §8.1.4), which is the one
+     * message that carries it — every other template would render it empty, and
+     * the `missing` half of {@link RenderedTemplate} is what says so rather than
+     * letting a blank land mid-sentence.
+     */
+    description: 'The double opt-in link. Only resolves on the "Verify your registration" message',
+  },
 ];
 
 const TOKEN_NAMES = new Set(TOKENS.map((t) => t.token));

@@ -49,7 +49,10 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '',
       'Please confirm your email address to complete your registration for **{{ show.name }}**.',
       '',
-      'Your tickets will follow once your registration is confirmed.',
+      '[Confirm my email address]({{ verify_url }})',
+      '',
+      'Your tickets will follow once your registration is confirmed. Your seats are already held —',
+      'confirming only tells us we can reach you.',
     ].join('\n'),
   },
   public_ticket: {

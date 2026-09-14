@@ -15,6 +15,7 @@ import {
   UserCog,
   Users,
   UsersRound,
+  MailWarning,
 } from 'lucide-react';
 
 /**
@@ -94,6 +95,14 @@ export const CONCERT_NAV: NavGroup[] = [
         icon: ClipboardList,
         description: 'Searchable table and full manual CRUD.',
         module: 'B',
+      },
+      {
+        slug: 'registrations/unverified',
+        label: 'Unverified',
+        icon: MailWarning,
+        description:
+          'Public registrants who have not clicked their verification link. They hold their seats; their tickets are held back.',
+        module: 'V2',
       },
       {
         slug: 'extras-review',

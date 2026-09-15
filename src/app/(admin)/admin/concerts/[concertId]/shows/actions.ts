@@ -92,6 +92,17 @@ function toInstant(local: string | null, timeZone: string): Date | null {
 const showSchema = z.object({
   name: z.string().trim().min(1, 'A show needs a name.').max(200),
   startsAt: localDateTime,
+  /**
+   * What "the show is over" is measured from (spec/v2.md §13.2.1, decision 41).
+   *
+   * **Optional, and inert when blank.** With no end time there is no post-show
+   * phase and no auto-completion, and an admin marks the show `COMPLETED` by
+   * hand as before. Nothing is inferred from `startsAt`: a concert with an
+   * interval runs well past its nominal length, and a portal that flipped to
+   * "how was your evening?" mid-performance would be worse than one that waited
+   * for a human.
+   */
+  endsAt: localDateTime,
   doorsOpenAt: localDateTime,
   venueName: optionalText,
   venueAddress: optionalText,
@@ -104,6 +115,7 @@ function readShowForm(formData: FormData) {
   return showSchema.safeParse({
     name: formData.get('name') ?? '',
     startsAt: formData.get('startsAt') ?? '',
+    endsAt: formData.get('endsAt') ?? '',
     doorsOpenAt: formData.get('doorsOpenAt') ?? '',
     venueName: formData.get('venueName') ?? '',
     venueAddress: formData.get('venueAddress') ?? '',
@@ -139,7 +151,9 @@ export async function createShowAction(
   }
 
   const zone = await concertZone(concertId);
-  if (!zone && (parsed.data.startsAt || parsed.data.doorsOpenAt)) return { error: NO_ZONE };
+  if (!zone && (parsed.data.startsAt || parsed.data.endsAt || parsed.data.doorsOpenAt)) {
+    return { error: NO_ZONE };
+  }
 
   try {
     const [created] = await getDb()
@@ -148,6 +162,7 @@ export async function createShowAction(
         concertId,
         name: parsed.data.name,
         startsAt: toInstant(parsed.data.startsAt, zone ?? 'UTC'),
+        endsAt: toInstant(parsed.data.endsAt, zone ?? 'UTC'),
         doorsOpenAt: toInstant(parsed.data.doorsOpenAt, zone ?? 'UTC'),
         venueName: parsed.data.venueName,
         venueAddress: parsed.data.venueAddress,
@@ -185,7 +200,9 @@ export async function updateShowAction(
   }
 
   const zone = await concertZone(concertId);
-  if (!zone && (parsed.data.startsAt || parsed.data.doorsOpenAt)) return { error: NO_ZONE };
+  if (!zone && (parsed.data.startsAt || parsed.data.endsAt || parsed.data.doorsOpenAt)) {
+    return { error: NO_ZONE };
+  }
 
   try {
     const db = getDb();
@@ -200,6 +217,7 @@ export async function updateShowAction(
       .set({
         name: parsed.data.name,
         startsAt: toInstant(parsed.data.startsAt, zone ?? 'UTC'),
+        endsAt: toInstant(parsed.data.endsAt, zone ?? 'UTC'),
         doorsOpenAt: toInstant(parsed.data.doorsOpenAt, zone ?? 'UTC'),
         venueName: parsed.data.venueName,
         venueAddress: parsed.data.venueAddress,

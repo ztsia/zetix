@@ -160,8 +160,12 @@ export const CONCERT_NAV: NavGroup[] = [
         slug: 'portal',
         label: 'Portal',
         icon: Smartphone,
-        description: 'Booklet upload, practical info, unlock mode.',
-        module: 'V2',
+        /**
+         * Unlock mode is deliberately not on this screen: it is a per-show value
+         * and the Shows screen edits it with a cascade hint beside it.
+         */
+        description: 'Booklet upload and practical info.',
+        module: 'N',
       },
       {
         slug: 'notes',

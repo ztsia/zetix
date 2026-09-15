@@ -3,9 +3,11 @@ import type { Metadata } from 'next';
 import { CalendarDaysIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
+import { BookletSection } from '@/components/portal/booklet-section';
 import { PracticalSection } from '@/components/portal/practical-section';
 import { TicketSection, TicketStub } from '@/components/portal/ticket-section';
 import { countdownTo, formatDate, formatDateTime, formatTime, venueMapUrl } from '@/lib/portal/format';
+import { publishedBookletForShow } from '@/lib/portal/booklet';
 import { qrSvg } from '@/lib/portal/qr';
 import {
   portalIsUnlocked,
@@ -161,6 +163,16 @@ export default async function TicketStatusPage({
   const ticketHref = `/api/portal/${status.qrToken}/ticket`;
 
   /**
+   * Looked up only when the section could actually be drawn. A concert with the
+   * portal off, or a guest who has not unlocked it, should not cost a query for
+   * a booklet nobody is going to be shown.
+   */
+  const booklet =
+    sectionsVisible && status.portal.bookletEnabled
+      ? await publishedBookletForShow({ showId: show.id, concertId: status.concertId })
+      : null;
+
+  /**
    * Counted to the doors, not to the downbeat — the doors time is the one a
    * guest acts on. Falls back to the start time when no doors time is set, and
    * disappears entirely when neither is: half the show columns are nullable and
@@ -205,7 +217,13 @@ export default async function TicketStatusPage({
         downloadHref={ticketHref}
       />
     ),
-    booklet: null,
+    booklet: booklet ? (
+      <BookletSection
+        key="booklet"
+        title={booklet.title}
+        href={`/api/portal/${status.qrToken}/booklet`}
+      />
+    ) : null,
     notes: null,
     wall: null,
     practical:

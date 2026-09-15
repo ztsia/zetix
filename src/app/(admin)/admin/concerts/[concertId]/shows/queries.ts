@@ -69,6 +69,7 @@ export type ShowView = {
   concertId: number;
   name: string;
   startsAt: Date | null;
+  endsAt: Date | null;
   doorsOpenAt: Date | null;
   venueName: string | null;
   venueAddress: string | null;
@@ -129,6 +130,7 @@ export async function getShowsForConcert(concertId: number): Promise<ShowView[]>
       concertId: shows.concertId,
       name: shows.name,
       startsAt: shows.startsAt,
+      endsAt: shows.endsAt,
       doorsOpenAt: shows.doorsOpenAt,
       venueName: shows.venueName,
       venueAddress: shows.venueAddress,
@@ -220,6 +222,7 @@ export async function getShowsForConcert(concertId: number): Promise<ShowView[]>
       concertId: show.concertId,
       name: show.name,
       startsAt: show.startsAt,
+      endsAt: show.endsAt,
       doorsOpenAt: show.doorsOpenAt,
       venueName: show.venueName,
       venueAddress: show.venueAddress,

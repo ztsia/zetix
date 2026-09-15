@@ -323,7 +323,16 @@ const HAS_UNCOVERED_ADMITTED = sql`
           where o.registration_id = r.id
             and o.template_key = ${FEEDBACK_TEMPLATE_KEY}
             and o.status = 'SENT'
-            and o.context -> 'covered_attendee_ids' @> to_jsonb(a.id)
+            and (
+              -- A row written before this branch recorded coverage has no key
+              -- at all, and under the rule it was written by one message
+              -- covered the whole party. Reading it as covering nobody would
+              -- mail every one of those parties a second time on the first run
+              -- after an upgrade -- a silent duplicate blast, which is the one
+              -- thing the idempotency rules exist to prevent.
+              o.context -> 'covered_attendee_ids' is null
+              or o.context -> 'covered_attendee_ids' @> to_jsonb(a.id)
+            )
        )
   )
 `;
@@ -455,7 +464,16 @@ async function loadFeedbackRecipients(
                 where o.registration_id = r.id
                   and o.template_key = ${FEEDBACK_TEMPLATE_KEY}
                   and o.status = 'SENT'
-                  and o.context -> 'covered_attendee_ids' @> to_jsonb(a.id)
+                  and (
+              -- A row written before this branch recorded coverage has no key
+              -- at all, and under the rule it was written by one message
+              -- covered the whole party. Reading it as covering nobody would
+              -- mail every one of those parties a second time on the first run
+              -- after an upgrade -- a silent duplicate blast, which is the one
+              -- thing the idempotency rules exist to prevent.
+              o.context -> 'covered_attendee_ids' is null
+              or o.context -> 'covered_attendee_ids' @> to_jsonb(a.id)
+            )
              )
            )
       ) admitted on true

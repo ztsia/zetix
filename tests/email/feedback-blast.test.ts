@@ -370,6 +370,67 @@ describe('pressing it twice is harmless', () => {
     expect(await outbox()).toHaveLength(1);
   });
 
+  it('treats a sent row with no recorded coverage as having covered the party', async () => {
+    /**
+     * A row written before coverage was recorded per attendee. Under the rule
+     * it was written by, one message covered the whole registration — so
+     * reading its missing key as "covered nobody" would mail every such party a
+     * second time on the first run after an upgrade. A silent duplicate blast
+     * is the one thing these rules exist to prevent.
+     */
+    const seats = await party(2, 'Legacy Row');
+    await issueTickets(concertId, showId);
+    await admit(seats[0]);
+    await admit(seats[1]);
+
+    await queueFeedbackBlast({ showId });
+    await sql`
+      update email_outbox
+         set status = 'SENT', context = context - 'covered_attendee_ids'
+       where template_key = ${TEMPLATE}
+    `;
+
+    const again = await queueFeedbackBlast({ showId });
+    expect(again.queued).toBe(0);
+    expect(again.requeued).toBe(0);
+    expect(await outbox()).toHaveLength(1);
+  });
+
+  it('never rewrites a row the dispatcher has already claimed', async () => {
+    /**
+     * The rewrite path reaches inside a row that has not gone yet. `SENDING`
+     * means the dispatcher owns it and somebody's inbox is a second away, so a
+     * rewrite there would change a message mid-flight — or race the send and
+     * lose.
+     *
+     * **Two independent guards stop it, and this test only goes red when both
+     * are broken.** `pendingRows()` does not select a `SENDING` row, and the
+     * `update` re-checks the status anyway rather than trusting the read that
+     * chose the row. Widening either one alone leaves the other holding, which
+     * is the point of having both: the second is what covers the race the first
+     * cannot see, where the dispatcher claims the row *between* that read and
+     * this write. That race is unreachable from this suite — `src/db/client.ts`
+     * is `max: 1`, so two callers never run at once — so the `update`'s own
+     * check is defence a single-connection test can never exercise, exactly as
+     * `queueBlast`'s second `exists` is.
+     */
+    const seats = await party(3, 'In Flight');
+    await issueTickets(concertId, showId);
+    await admit(seats[0]);
+    await queueFeedbackBlast({ showId });
+
+    const [before] = await outbox();
+    await sql`update email_outbox set status = 'SENDING' where template_key = ${TEMPLATE}`;
+
+    await admit(seats[1]);
+    const again = await queueFeedbackBlast({ showId });
+    expect(again.requeued).toBe(0);
+
+    const [after] = await outbox();
+    expect(after.body_md).toBe(before.body_md);
+    expect(after.status).toBe('SENDING');
+  });
+
   it('re-queues a FAILED row, which was never delivered', async () => {
     const seats = await party(1, 'Failed');
     await issueTickets(concertId, showId);

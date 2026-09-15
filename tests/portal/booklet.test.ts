@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, sql } from '../helpers/db';
-import {
-  createConcert,
-  createRegistration,
-  createSegment,
-  createShow,
-  seedAttendees,
-} from '../helpers/fixtures';
+import { createConcert, createShow } from '../helpers/fixtures';
 import { publishedBookletFile, publishedBookletForShow } from '@/lib/portal/booklet';
 
 /**

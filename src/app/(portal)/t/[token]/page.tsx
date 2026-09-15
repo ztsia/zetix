@@ -4,17 +4,21 @@ import { CalendarDaysIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'l
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { BookletSection } from '@/components/portal/booklet-section';
+import { FeedbackClosed, FeedbackSection } from '@/components/portal/feedback-section';
 import { PracticalSection } from '@/components/portal/practical-section';
 import { TicketSection, TicketStub } from '@/components/portal/ticket-section';
 import { countdownTo, formatDate, formatDateTime, formatTime, venueMapUrl } from '@/lib/portal/format';
 import { publishedBookletForShow } from '@/lib/portal/booklet';
+import { loadPortalFeedback, type PortalFeedbackResult } from '@/lib/portal/feedback';
 import { qrSvg } from '@/lib/portal/qr';
 import {
   portalIsUnlocked,
   sectionOrder,
   type PortalSectionId,
 } from '@/lib/portal/sections';
-import { ticketStatus } from '@/lib/portal/status';
+import { attendeeIdForToken, ticketStatus } from '@/lib/portal/status';
+import type { FormAnswers } from '@/lib/forms/answers';
+import { submitFeedbackAction } from './feedback-actions';
 import { TicketNotFound } from '../../ticket-not-found';
 import { Countdown } from './countdown';
 
@@ -173,6 +177,28 @@ export default async function TicketStatusPage({
       : null;
 
   /**
+   * **Loaded only once the evening is over**, because §13.2's second row is
+   * explicit that an admitted guest whose show is still running gets no feedback
+   * form: the question has no answer yet. `portal.feedback_enabled` is the
+   * separate question of whether this show runs one at all.
+   *
+   * The attendee id is resolved here rather than carried on the page payload —
+   * it is needed to find this guest's own existing answer and nothing renders
+   * it.
+   */
+  const attendeeId =
+    postShow && status.portal.feedbackEnabled ? await attendeeIdForToken(token) : null;
+  const feedback =
+    attendeeId === null
+      ? null
+      : await loadPortalFeedback({
+          showId: show.id,
+          concertId: status.concertId,
+          attendeeId,
+          closeAt: status.portal.feedbackCloseAt,
+        });
+
+  /**
    * Counted to the doors, not to the downbeat — the doors time is the one a
    * guest acts on. Falls back to the start time when no doors time is set, and
    * disappears entirely when neither is: half the show columns are nullable and
@@ -230,7 +256,7 @@ export default async function TicketStatusPage({
       sectionsVisible && status.portal.practicalInfoMd ? (
         <PracticalSection key="practical" markdown={status.portal.practicalInfoMd} />
       ) : null,
-    feedback: null,
+    feedback: feedbackNode(token, feedback),
   };
 
   return (
@@ -335,3 +361,37 @@ export default async function TicketStatusPage({
 }
 
 const DOORS_OPEN = 'Doors are open';
+
+/**
+ * The feedback slot's three outcomes, kept out of the section map so each one is
+ * readable.
+ *
+ * - **Nothing at all** — this show runs no feedback form, or the phase has not
+ *   arrived. An absent section, not an empty one.
+ * - **Closed** — `portal.feedback_close_at` has passed. Still rendered: the
+ *   guest followed a link from an email we sent them, and silence where the form
+ *   was is not an answer.
+ * - **The form**, prefilled with their own previous answer when they have left
+ *   one.
+ */
+function feedbackNode(token: string, feedback: PortalFeedbackResult | null): ReactNode {
+  if (feedback === null) return null;
+
+  if ('state' in feedback) {
+    return feedback.state === 'CLOSED' ? <FeedbackClosed key="feedback" /> : null;
+  }
+
+  return (
+    <FeedbackSection
+      key="feedback"
+      token={token}
+      formId={feedback.id}
+      schema={feedback.schema}
+      title={feedback.title}
+      descriptionMd={feedback.descriptionMd}
+      copy={feedback.copy}
+      existing={(feedback.existing?.answers as FormAnswers | undefined) ?? null}
+      submit={submitFeedbackAction}
+    />
+  );
+}

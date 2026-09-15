@@ -101,8 +101,23 @@ describe('a ticket that has been issued', () => {
     expect(serialised).not.toContain('segment');
     expect(serialised).not.toContain('Guest 2');
     expect(Object.keys(status!).sort()).toEqual([
-      'admittedAt', 'attendeeName', 'concertName', 'qrToken', 'show', 'state',
-      'ticketCode', 'timeZone',
+      'admittedAt', 'attendeeName', 'concertId', 'concertName', 'portal', 'qrToken',
+      'show', 'showIsOver', 'state', 'ticketCode', 'timeZone',
+    ]);
+
+    /**
+     * The V2 portal context is configuration and ids, not other people. Pinned
+     * key-by-key for the same reason the outer list is: this object is built
+     * from a query that joins shows and concerts, and the next person to add a
+     * column to either must be made to decide whether it belongs on a page a
+     * stranger can open with a guessed token.
+     */
+    expect(Object.keys(status!.portal).sort()).toEqual([
+      'bookletEnabled', 'enabled', 'feedbackCloseAt', 'feedbackEnabled',
+      'practicalInfoMd', 'unlockMode',
+    ]);
+    expect(Object.keys(status!.show).sort()).toEqual([
+      'doorsOpenAt', 'id', 'name', 'startsAt', 'venueAddress', 'venueName',
     ]);
   });
 

@@ -326,6 +326,28 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         level: 'concert',
       },
       {
+        key: 'portal.enabled',
+        label: 'Portal enabled',
+        kind: 'boolean',
+        /**
+         * V2. The master switch for §13.3's sections — booklet, notes, wall,
+         * practical info, feedback.
+         *
+         * **It does not gate the ticket status page**, which is served to every
+         * real token regardless: a printed QR cannot be recalled when a flag is
+         * flipped, so turning the portal off must never turn a ticket into a
+         * dead link (`spec/v2.md` §13.2).
+         *
+         * Listed here because `concerts.portal_enabled` is written by no form —
+         * without this entry the value resolves to null at every level, every
+         * section is off, and there is no way to turn the portal on at all.
+         */
+        description:
+          'V2. Whether the portal’s sections appear at all. The ticket status page is always served, flag or no flag.',
+        operational: true,
+        level: 'concert',
+      },
+      {
         key: 'portal.unlock_mode',
         label: 'Portal unlock',
         kind: 'text',

@@ -20,6 +20,16 @@ export const TEMPLATE_KEYS = [
   'registration_cancelled',
   'reminder',
   'player_notes_digest',
+  /**
+   * V2. Sent after the show to everyone who was actually admitted, carrying one
+   * portal link per admitted seat (spec/v2.md §13.5.2).
+   *
+   * **Not ticket-bearing**, which decides three things at once: it attaches no
+   * PDF, it never stamps `ticket_sent_at`, and it does not wait on double opt-in
+   * verification — the gate is about not sending *tickets* to an address we are
+   * unsure of, and this goes to somebody who already came.
+   */
+  'feedback_request',
 ] as const;
 
 export type TemplateKey = (typeof TEMPLATE_KEYS)[number];

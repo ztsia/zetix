@@ -4,7 +4,7 @@ import { useId, type ReactNode } from 'react';
 import { ActionDialog } from '../../action-dialog';
 import { CascadeHint } from '../../cascade-hint';
 import { toLocalInput } from '../../local-time';
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import type { FormState } from '../../form-state';
@@ -87,6 +87,30 @@ export function ShowFormDialog({
               disabled={!timeZone}
               defaultValue={toLocalInput(show?.doorsOpenAt, timeZone)}
             />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-ends`}>Ends</FieldLabel>
+            <Input
+              id={`${id}-ends`}
+              name="endsAt"
+              type="datetime-local"
+              disabled={!timeZone}
+              defaultValue={toLocalInput(show?.endsAt, timeZone)}
+            />
+            {/*
+              * The one field on this form that drives behaviour after the
+              * night is over: the portal's post-show phase and auto-completion
+              * both measure from it (spec/v2.md §13.2.1). Left blank, neither
+              * happens and the show is completed by hand — which is a real
+              * configuration, not an oversight, so this does not nag.
+              */}
+            <FieldDescription>
+              Optional. The portal shows its post-show page, and the show
+              auto-completes, once this has passed by
+              {' '}
+              <code>show.auto_complete_after_hours</code>. Leave it blank to do
+              both by hand.
+            </FieldDescription>
           </Field>
         </div>
 

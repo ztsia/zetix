@@ -1,7 +1,7 @@
 import type { TemplateKey } from './templates';
 
 /**
- * Seeded default wording for the eight §11.3 message types, so the system can
+ * Seeded default wording for the nine §11.3 message types, so the system can
  * send before anyone opens the editor — the same argument decision 10 makes for
  * ticket templates.
  *
@@ -129,6 +129,21 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       'Dear {{ registration.contact_name }},',
       '',
       'Members of the audience left these notes for you after **{{ show.name }}**.',
+    ].join('\n'),
+  },
+  feedback_request: {
+    name: 'How was your evening?',
+    subject: 'How was {{ show.name }}?',
+    bodyMd: [
+      'Dear {{ registration.contact_name }},',
+      '',
+      'Thank you for coming to **{{ show.name }}**. We would love to know how you found it —',
+      'it takes a minute, and the orchestra reads every one.',
+      '',
+      '{{ feedback_links }}',
+      '',
+      'With thanks,',
+      'The {{ concert.name }} team',
     ].join('\n'),
   },
 };

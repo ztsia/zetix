@@ -27,10 +27,16 @@ vi.mock('@/lib/email/dispatch', async (importOriginal) => ({
   dispatchBatch: () => dispatchBatch(),
 }));
 
-const { POST } = await import('@/app/api/outbox/dispatch/route');
+const autoCompleteShows = vi.fn();
+vi.mock('@/lib/shows/complete', () => ({ autoCompleteShows: () => autoCompleteShows() }));
+
+const { GET, POST } = await import('@/app/api/outbox/dispatch/route');
 
 const post = (headers: Record<string, string> = {}) =>
   POST(new Request('https://zetix.vercel.app/api/outbox/dispatch', { method: 'POST', headers }));
+
+const get = (headers: Record<string, string> = {}) =>
+  GET(new Request('https://zetix.vercel.app/api/outbox/dispatch', { method: 'GET', headers }));
 
 const admin = { id: randomUUID(), role: 'ADMIN' as const, email: 'a@example.test', displayName: 'Admin' };
 const operator = { ...admin, id: randomUUID(), role: 'OPERATOR' as const };
@@ -40,6 +46,87 @@ beforeEach(() => {
   delete process.env.CRON_SECRET;
   dispatchBatch.mockResolvedValue({
     sent: 1, failed: 0, remaining: 0, dailyCapReached: false, warnings: [],
+  });
+  autoCompleteShows.mockResolvedValue([]);
+});
+
+/**
+ * **Vercel Cron issues a `GET`.** Until module `N` hung show auto-completion off
+ * this route, it exported only `POST` — so the daily safety net in `vercel.json`
+ * answered `405` every day, silently, because nothing reads a cron's response.
+ *
+ * These are the tests that keep the hook real. Without the first one, the sweep
+ * and the outbox safety net are both dead and nothing says so until somebody
+ * asks where the tickets went.
+ */
+describe('the verb the daily cron actually sends', () => {
+  it('answers a GET, because that is what Vercel Cron issues', async () => {
+    process.env.CRON_SECRET = 'top-secret';
+    sessionUser.mockResolvedValue(null);
+
+    const response = await get({ authorization: 'Bearer top-secret' });
+
+    expect(response.status).toBe(200);
+    expect(dispatchBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('guards the GET exactly as it guards the POST', async () => {
+    sessionUser.mockResolvedValue(null);
+    expect((await get()).status).toBe(401);
+    expect(dispatchBatch).not.toHaveBeenCalled();
+    expect(autoCompleteShows).not.toHaveBeenCalled();
+  });
+
+  it('points vercel.json at this path, so the cron and the handler agree', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const vercel = JSON.parse(await readFile('vercel.json', 'utf8')) as {
+      crons: { path: string }[];
+    };
+    expect(vercel.crons.map((c) => c.path)).toContain('/api/outbox/dispatch');
+  });
+});
+
+describe('the show sweep rides the cron, not the Send button', () => {
+  it('sweeps on the cron GET', async () => {
+    process.env.CRON_SECRET = 'top-secret';
+    sessionUser.mockResolvedValue(null);
+    autoCompleteShows.mockResolvedValue([
+      { showId: 1, showName: 'Evening', queued: 3 },
+    ]);
+
+    const response = await get({ authorization: 'Bearer top-secret' });
+
+    expect(autoCompleteShows).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toMatchObject({
+      completions: [{ showId: 1, queued: 3 }],
+    });
+  });
+
+  it('does not sweep when an admin presses Send', async () => {
+    /**
+     * Send drains a queue. Completing a show is a status change, and §13.5.3's
+     * manual twin for it is the show's status dialog — which is where an admin
+     * would look for it, and where they can see what they are doing.
+     */
+    sessionUser.mockResolvedValue(admin);
+    await post();
+    expect(autoCompleteShows).not.toHaveBeenCalled();
+  });
+
+  it('still drains the queue when the sweep throws', async () => {
+    /**
+     * The outbox safety net is what this cron exists for (spec/email.md §11.2
+     * step 4). Tickets nobody received matter more than a flag nobody looks at.
+     */
+    process.env.CRON_SECRET = 'top-secret';
+    sessionUser.mockResolvedValue(null);
+    autoCompleteShows.mockRejectedValue(new Error('shows table is on fire'));
+
+    const response = await get({ authorization: 'Bearer top-secret' });
+
+    expect(response.status).toBe(200);
+    expect(dispatchBatch).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toMatchObject({ sweepError: 'shows table is on fire' });
   });
 });
 

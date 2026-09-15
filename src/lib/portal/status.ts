@@ -275,3 +275,33 @@ function settingAsDate(value: unknown): Date | null {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
+
+/**
+ * The attendee id behind a token, for the routes that serve this holder their
+ * own files (§13.3 item 1, item 2).
+ *
+ * **Deliberately not a field on {@link TicketStatus}.** The page renders on the
+ * server and needs no id; putting one in the payload would ship an internal
+ * primary key to a surface a stranger can open with a guessed token, for the
+ * benefit of nothing. The routes that do need it resolve it here instead.
+ *
+ * The filters are {@link ticketStatus}'s own — shaped token, live row — so a
+ * ticket the page refuses to describe is one no route will serve a file for.
+ * A cancelled attendee still resolves: cancellation is a state the holder is
+ * told about, and the caller decides whether a cancelled party may still
+ * download what they were sent.
+ */
+export async function attendeeIdForToken(token: string): Promise<number | null> {
+  if (!isTokenShaped(token)) return null;
+
+  const rows = await getDb().execute<{ id: string | number }>(sql`
+    select a.id
+      from attendees a
+     where a.qr_token = ${token}
+       and a.deleted_at is null
+     limit 1
+  `);
+
+  const id = rows[0]?.id;
+  return id === undefined ? null : Number(id);
+}

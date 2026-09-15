@@ -3,6 +3,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { dispatchBatch } from '@/lib/email/dispatch';
 import { MailNotConfiguredError } from '@/lib/email/config';
 import { MissingSettingError } from '@/db/settings';
+import { autoCompleteShows, type CompletionOutcome } from '@/lib/shows/complete';
 
 /**
  * `POST /api/outbox/dispatch` — send one batch (spec/email.md §11.2).
@@ -44,14 +45,64 @@ async function authorize(request: Request): Promise<boolean> {
   return user?.role === 'ADMIN';
 }
 
+/**
+ * **Vercel Cron issues a `GET`.** It does not send `POST`, and a cron pointing
+ * at a route with only a `POST` handler gets a `405` every day — silently, since
+ * nothing reads the cron's response. That was the state of this route until
+ * module `N` hung auto-completion off it and had to check the hook actually
+ * fires. The blast screen keeps posting; the daily safety net gets the verb it
+ * actually uses.
+ *
+ * `GET` also runs the show sweep, which `POST` deliberately does not: see
+ * {@link runDispatch}.
+ */
+export async function GET(request: Request) {
+  return runDispatch(request, { sweepShows: true });
+}
+
 export async function POST(request: Request) {
+  /**
+   * **The admin's own Send button does not complete shows.** It is pressed to
+   * drain a queue, and a status change is not a thing an admin asks for by
+   * pressing Send — §13.5.3's manual twin for completion is the show's status
+   * dialog, which is where an admin would look for it.
+   */
+  return runDispatch(request, { sweepShows: false });
+}
+
+async function runDispatch(
+  request: Request,
+  options: { sweepShows: boolean },
+): Promise<NextResponse> {
   if (!(await authorize(request))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  /**
+   * **Shows are swept before the queue is drained**, so a show that became over
+   * since the last run has its feedback rows in the outbox before this same call
+   * looks for due rows. They will not usually go out in this batch — they are
+   * scheduled for `portal.feedback_send_hour` — but the ordering costs nothing
+   * and means a show completed at 11pm with a send hour already past today is
+   * not waiting an extra day.
+   *
+   * **A sweep failure never stops the dispatch.** Draining the queue is the
+   * safety net this cron exists for (spec/email.md §11.2 step 4); tickets
+   * nobody received matter more than a flag nobody looks at.
+   */
+  let completions: CompletionOutcome[] = [];
+  let sweepError: string | null = null;
+  if (options.sweepShows) {
+    try {
+      completions = await autoCompleteShows();
+    } catch (error) {
+      sweepError = error instanceof Error ? error.message : 'Show sweep failed.';
+    }
+  }
+
   try {
     const result = await dispatchBatch();
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, completions, sweepError });
   } catch (error) {
     /**
      * Configuration failures are the admin's to fix and are reported as such,
@@ -60,10 +111,14 @@ export async function POST(request: Request) {
      * otherwise — nothing sends, and nothing says why.
      */
     if (error instanceof MailNotConfiguredError || error instanceof MissingSettingError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
+      return NextResponse.json({ error: error.message, completions, sweepError }, { status: 503 });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'dispatch failed' },
+      {
+        error: error instanceof Error ? error.message : 'dispatch failed',
+        completions,
+        sweepError,
+      },
       { status: 500 },
     );
   }

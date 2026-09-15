@@ -33,6 +33,29 @@ export const TOKENS: { token: string; description: string }[] = [
     description: 'A bulleted list — one /t/{token} link per ticket, labelled with the guest it belongs to',
   },
   {
+    token: 'admitted_count',
+    /**
+     * Resolved only for `feedback_request` (spec/v2.md §13.5.2) — how many of
+     * the party actually came, which is not `attendee_count` and is the number
+     * that message is about.
+     */
+    description: 'How many of the party were admitted. Only resolves on the feedback message',
+  },
+  {
+    token: 'feedback_links',
+    /**
+     * The feedback email's own link list: one `/t/{token}` per **admitted**
+     * seat, so a party of four where three came gets three (decision 22).
+     *
+     * A separate token from `ticket_links` rather than a reuse of it, because
+     * the two answer different questions — every seat, versus the seats that
+     * were used — and a template that said `ticket_links` in a feedback message
+     * would quietly mail the no-show a link too.
+     */
+    description:
+      'A bulleted list — one portal link per person who was admitted. Only resolves on the feedback message',
+  },
+  {
     token: 'verify_url',
     /**
      * Resolved only for `public_verify` (spec/v2.md §8.1.4), which is the one

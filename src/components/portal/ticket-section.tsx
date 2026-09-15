@@ -95,6 +95,14 @@ export function TicketSection({
           variant="outline"
           size="lg"
           className="w-full"
+          /**
+           * `nativeButton={false}` because this renders an `<a>`. Without it Base
+           * UI keeps native button semantics on an element that is not a button,
+           * which it warns about at runtime — the anchor is the point here, so
+           * the semantics should follow it (`components/ui/pagination.tsx` does
+           * the same).
+           */
+          nativeButton={false}
           render={<a href={downloadHref} target="_blank" rel="noreferrer noopener" />}
         >
           <DownloadIcon data-icon="inline-start" />

@@ -30,7 +30,16 @@ export type FeedbackSubmitState = {
   errors: AnswerErrors;
 };
 
-export const NO_FEEDBACK_STATE: FeedbackSubmitState = { ok: false, errors: {} };
+/**
+ * **Nothing but async functions may be exported from this file.** A `'use server'`
+ * module that exports a constant fails at *request* time with "A 'use server'
+ * file can only export async functions, found object" — `tsc` and ESLint both
+ * pass, and the first sign of it is every page importing this route segment
+ * answering 500. `src/app/(admin)/admin/concerts/form-state.ts` exists for
+ * exactly this reason; a `FeedbackSubmitState` seed belongs beside the component
+ * that needs one, not here. (`export type` is erased before the check and is
+ * fine.)
+ */
 
 /** The one message every refusal that is not a field error shares. */
 const REFUSED: FeedbackSubmitState = {

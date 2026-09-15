@@ -61,6 +61,8 @@ export function BookletSection({
           variant="outline"
           size="lg"
           className="w-full"
+          /** Renders an `<a>`, so the button semantics go with it — see `TicketSection`. */
+          nativeButton={false}
           render={<a href={`${href}?download=1`} target="_blank" rel="noreferrer noopener" />}
         >
           <DownloadIcon data-icon="inline-start" />

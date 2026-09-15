@@ -16,6 +16,9 @@
  * - a concert-wide booklet and a show-specific one, to show which wins
  */
 import postgres from 'postgres';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const url = process.env.QA_DATABASE_URL ?? 'postgresql://postgres@localhost:55432/zetix_qa';
 const sql = postgres(url, { prepare: false, max: 1 });
@@ -38,13 +41,24 @@ const settings = {
   // Seeded in production by scripts/seed-settings.ts.
   'show.auto_complete_after_hours': 2,
   'portal.feedback_send_hour': 12,
+  'email.transport': 'gmail_smtp',
   'email.max_per_dispatch': 20,
+  'email.max_per_day': 450,
   'email.inter_message_delay_ms': 0,
   'email.max_attempts': 3,
-  'email.daily_cap': 400,
+  'email.merge_attachments_above': 8,
+  'email.max_attachment_mb': 20,
 };
 for (const [k, v] of Object.entries(settings)) {
-  await sql`insert into system_settings (key, value) values (${k}, ${JSON.stringify(v)}::jsonb)`;
+  // `::text::jsonb`, not `::jsonb`. With a bare cast postgres.js infers the
+  // parameter type from the cast and JSON-encodes the string we already
+  // serialised, so every value lands one level too deep -- `2` becomes the
+  // jsonb *string* "2". Nothing errors, and `show.auto_complete_after_hours`
+  // then fails `jsonb_typeof(...) = 'number'` in SHOW_IS_OVER, so no show is
+  // ever over and the post-show portal simply never appears.
+  // `scripts/seed-settings.ts` carries the same warning; this seed learned it
+  // the slow way.
+  await sql`insert into system_settings (key, value) values (${k}, ${JSON.stringify(v)}::text::jsonb)`;
 }
 
 await sql`
@@ -131,6 +145,27 @@ const openEnded = await party(noEnd, 'Open Ended', [
   { name: 'No End Time', token: 'NoEndTimeHHHHHHHHHH8' + 'xx' },
 ]);
 
+/**
+ * Pin a template onto every confirmed seat, as `tickets/issue.ts` does.
+ *
+ * **Writing a `qr_token` is not issuing a ticket.** `loadTicket()` needs the
+ * *pinned* template version (§10.5), so without this the portal's "Download your
+ * ticket" button 404s for everyone — which looks like a broken route rather than
+ * an unfinished seed. `seed-i.mjs` got away with it because module `I` never
+ * rendered a PDF; this branch does.
+ */
+const [template] = await sql`insert into ticket_templates
+  (concert_id, name, version, background_kind, page_width_pt, page_height_pt, layout, is_default)
+  values (${c.id}, 'QA N', 1, 'NONE', 595, 280,
+          ${JSON.stringify({ canvas: { width_pt: 595, height_pt: 280, dpi: 300 }, elements: [] })}::text::jsonb,
+          false)
+  returning id`;
+await sql`update attendees
+     set ticket_template_id = ${Number(template.id)},
+         ticket_template_version = 1,
+         ticket_issued_at = now()
+   where status = 'CONFIRMED' and deleted_at is null`;
+
 const scan = (attendeeId, showId, revertedAt = null) =>
   sql`insert into check_ins (attendee_id, show_id, device_id, scanned_at, synced_at, source, reverted_at)
       values (${attendeeId}, ${showId}, 'qa-phone', now() - interval '4 hours', now(), 'ONLINE', ${revertedAt})`;
@@ -149,6 +184,31 @@ await sql`update registrations set status = 'CANCELLED' where id = ${cancelled.r
 // Two booklets: the concert-wide one is published, the show-specific one is not,
 // so the portal must show the concert-wide one -- and publishing the other must
 // visibly take over.
+//
+// **Real bytes, written to the local asset backend.** `booklets.pdf_path` is an
+// opaque key into the same store ticket artwork uses, and the portal's viewer
+// streams from it -- so a row pointing at nothing renders an iframe that 404s,
+// which looks exactly like a broken route rather than an unseeded file.
+const assetDir = process.env.TICKET_ASSET_DIR ?? '/tmp/zetix-qa-assets';
+// Built with pdf-lib rather than by hand: a PDF without a cross-reference table
+// is served happily by the route and rendered as a blank grey box by the
+// browser's viewer, which reads as a broken booklet section rather than an
+// unconvincing fixture.
+async function writePdf(relPath, title) {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  for (const [i, heading] of [title, 'Programme notes', 'The orchestra'].entries()) {
+    const page = doc.addPage([595, 842]);
+    page.drawText(heading, { x: 60, y: 760, size: 24, font });
+    page.drawText(`Page ${i + 1}`, { x: 60, y: 60, size: 10, font });
+  }
+  const file = join(assetDir, relPath);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, await doc.save());
+}
+await writePdf('qa/concert-programme.pdf', 'QA Concert N — Programme');
+await writePdf('qa/evening.pdf', 'QA Concert N — Evening Programme');
+
 await sql`insert into booklets (concert_id, show_id, title, pdf_path, published)
   values (${c.id}, null, 'Concert Programme', 'qa/concert-programme.pdf', true)`;
 await sql`insert into booklets (concert_id, show_id, title, pdf_path, published)
@@ -156,7 +216,7 @@ await sql`insert into booklets (concert_id, show_id, title, pdf_path, published)
 
 await sql`insert into registration_forms
   (show_id, kind, slug, title, description_md, status, schema, schema_version)
-  values (${finished.showId}, 'FEEDBACK', 'qa-feedback', 'How was your evening?',
+  values (${finished.showId}, 'FEEDBACK', 'qa-feedback', 'Tell us how it went',
           'It takes a minute, and the orchestra reads every one.', 'OPEN',
           ${JSON.stringify({
             kind: 'FEEDBACK',
@@ -166,8 +226,17 @@ await sql`insert into registration_forms
                 type: 'CUSTOM',
                 title: 'How was your evening?',
                 fields: [
+                  // Options are `{ value, label }` objects, never bare strings —
+                  // the zod contract refuses the shorthand, and a FEEDBACK form
+                  // whose schema does not parse is treated as no form at all,
+                  // so the section simply never appears.
                   { key: 'rating', type: 'select', label: 'Overall', required: true,
-                    options: ['Wonderful', 'Good', 'Fine', 'Disappointing'] },
+                    options: [
+                      { value: 'wonderful', label: 'Wonderful' },
+                      { value: 'good', label: 'Good' },
+                      { value: 'fine', label: 'Fine' },
+                      { value: 'disappointing', label: 'Disappointing' },
+                    ] },
                   { key: 'highlight', type: 'textarea', label: 'What stayed with you?', required: true },
                   { key: 'again', type: 'checkbox', label: 'I would come again' },
                 ],

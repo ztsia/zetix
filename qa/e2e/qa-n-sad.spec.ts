@@ -15,7 +15,7 @@ test('FLOW-11 an incomplete form is refused inline, and writes nothing', async (
   const before = (await sql`select count(*)::int as n from feedback_responses`)[0].n;
   await page.goto(`/t/${SECOND}`);
   await page.getByRole('button', { name: /send feedback/i }).click();
-  await expect(page.getByText(/required|choose|answer/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('This is required.').first()).toBeVisible({ timeout: 10_000 });
   await page.screenshot({ path: `${SHOTS}/FLOW-11-step-1-validation-error.png`, fullPage: true });
   const after = (await sql`select count(*)::int as n from feedback_responses`)[0].n;
   expect(after).toBe(before);
@@ -78,13 +78,11 @@ test('FLOW-14 marking a show COMPLETED by hand queues its feedback email', async
   expect(before).toBe(0);
 
   const card = page.locator('[data-slot="card"]').filter({ hasText: 'Matinee' }).first();
-  await card.getByRole('button', { name: /edit|status|matinee/i }).first().click();
+  await card.getByRole('button', { name: 'Edit show' }).first().click();
   await page.waitForTimeout(1000);
   await page.screenshot({ path: `${SHOTS}/FLOW-14-step-2-dialog.png`, fullPage: true });
-  await page.selectOption('select#status', 'COMPLETED').catch(async () => {
-    await page.getByLabel(/status/i).selectOption('COMPLETED');
-  });
-  await page.getByRole('button', { name: /save/i }).first().click();
+  await page.getByLabel('Status').selectOption('COMPLETED');
+  await page.getByRole('button', { name: /save|update/i }).last().click();
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${SHOTS}/FLOW-14-step-3-completed.png`, fullPage: true });
 

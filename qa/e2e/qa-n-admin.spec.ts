@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import postgres from 'postgres';
 
 const sql = postgres(
@@ -7,14 +7,14 @@ const sql = postgres(
 );
 const SHOTS = 'qa-artifacts/claude-N-portal/screens';
 
-async function loginAdmin(page) {
+async function loginAdmin(page: Page) {
   await page.goto('/login');
   await page.fill('#code', 'qa-admin-code');
   await page.getByRole('button', { name: /sign in/i }).click();
   await page.waitForURL(/\/admin/);
 }
 
-async function loginOperator(page) {
+async function loginOperator(page: Page) {
   await page.goto('/scan/login');
   await page.fill('input[name="displayName"]', 'Usher');
   await page.fill('input[name="code"]', 'qa-op-code');

@@ -150,6 +150,66 @@ describe('admitted only', () => {
     expect((await queueFeedbackBlast({ showId })).queued).toBe(0);
   });
 
+  it('reaches a late-drained seat inside a party that was already queued', async () => {
+    /**
+     * **The case an earlier version of this file got wrong**, and the one
+     * §13.5.1 actually describes: not a party where nobody was scanned, but a
+     * party where *some* were. Two of three scanned live, the third sitting on
+     * an usher's phone that drains the next morning — before the send hour, so
+     * the message has not gone.
+     *
+     * A registration-level "already emailed?" check passes every test that uses
+     * two separate parties and fails this one silently, which is why it is
+     * here. The pending row is rewritten so the party gets **one** message
+     * naming all three.
+     */
+    const seats = await party(3, 'Mixed Drain');
+    await issueTickets(concertId, showId);
+    await admit(seats[0]);
+    await admit(seats[1]);
+
+    expect((await queueFeedbackBlast({ showId })).queued).toBe(1);
+
+    await admit(seats[2]);
+    const second = await queueFeedbackBlast({ showId });
+    expect(second.queued).toBe(0);
+    expect(second.requeued).toBe(1);
+
+    const tokens = await sql<{ qr_token: string }[]>`
+      select qr_token from attendees where id = any(${seats}) order by id
+    `;
+    const rows = await outbox();
+    expect(rows).toHaveLength(1);
+    for (const t of tokens) expect(rows[0].body_md).toContain(t.qr_token);
+  });
+
+  it('reaches a late-drained seat after the party s message has gone', async () => {
+    /**
+     * The same drain, arriving after the send hour. The first message cannot be
+     * unsent, so the missed person gets their own — carrying **only** their
+     * link, not a duplicate of what the others already received.
+     */
+    const seats = await party(3, 'Late After Send');
+    await issueTickets(concertId, showId);
+    await admit(seats[0]);
+    await admit(seats[1]);
+    await queueFeedbackBlast({ showId });
+    await sql`update email_outbox set status = 'SENT' where template_key = ${TEMPLATE}`;
+
+    await admit(seats[2]);
+    expect((await queueFeedbackBlast({ showId })).queued).toBe(1);
+
+    const tokens = await sql<{ qr_token: string }[]>`
+      select qr_token from attendees where id = any(${seats}) order by id
+    `;
+    const rows = await outbox();
+    expect(rows).toHaveLength(2);
+    const fresh = rows[1];
+    expect(fresh.body_md).toContain(tokens[2].qr_token);
+    expect(fresh.body_md).not.toContain(tokens[0].qr_token);
+    expect(fresh.body_md).not.toContain(tokens[1].qr_token);
+  });
+
   it('picks up a late-draining phone on a second run', async () => {
     /**
      * §13.5.1's whole argument for computing the list at send time: the usher's

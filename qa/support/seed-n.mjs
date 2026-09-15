@@ -31,9 +31,11 @@ await sql`truncate table audit_log, check_ins, portal_notes, feedback_responses,
 const settings = {
   'auth.admin_max_attempts': 50,
   'auth.admin_lockout_window_min': 1,
-  // The portal's own switches. None of these is seeded in production -- they are
+  // The portal's own switches. None is seeded in production -- they are
   // operational values an admin enters (spec/README.md §2.1) -- so a QA run has
-  // to set them or the portal is correctly invisible.
+  // to set them or the portal is correctly invisible: the ticket status page
+  // renders and every §13.3 section is absent, with nothing saying why.
+  // `portal.enabled` in particular is the master switch; see local.md §11.2.
   'portal.enabled': true,
   'portal.unlock_mode': 'ON_ADMISSION',
   'portal.booklet_enabled': true,

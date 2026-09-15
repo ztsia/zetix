@@ -725,23 +725,57 @@ export async function generateFeedbackEmailsAction(
   await requireAdmin();
 
   try {
-    const { queued, alreadySent } = await queueFeedbackBlast({ showId });
+    const { queued, requeued, alreadySent } = await queueFeedbackBlast({ showId });
 
     revalidatePath(`/admin/concerts/${concertId}/shows`);
 
-    if (queued === 0) {
+    const parts: string[] = [];
+    if (queued > 0) {
+      parts.push(`${queued} feedback email${queued === 1 ? '' : 's'} queued`);
+    }
+    /**
+     * **Reported separately from `queued`, because it is the run that fixed the
+     * late drain.** A party whose message was already waiting gets it rewritten
+     * to name the seat that has only just been scanned in (§13.5.1); folding
+     * that into the queued count would say "0 queued" on exactly the press that
+     * did the thing this button exists for.
+     */
+    if (requeued > 0) {
+      parts.push(
+        `${requeued} already waiting updated to include ${requeued === 1 ? 'a guest' : 'guests'} admitted since`,
+      );
+    }
+
+    if (parts.length > 0) {
       return {
         error: null,
-        message:
-          alreadySent > 0
-            ? `Nothing new to queue — ${alreadySent} ${alreadySent === 1 ? 'party has' : 'parties have'} already been emailed.`
-            : 'Nothing to queue — nobody has been admitted to this show yet.',
+        message: `${parts.join(', ')}. They send at the feedback send hour, or press Send now.`,
+      };
+    }
+
+    /**
+     * Three different nothings, and they are not interchangeable — saying
+     * "nobody has been admitted" to an admin whose emails are sitting in the
+     * outbox sends them looking for a door problem that does not exist.
+     */
+    if (alreadySent > 0) {
+      return {
+        error: null,
+        message: `Nothing new to queue — ${alreadySent} ${alreadySent === 1 ? 'party has' : 'parties have'} already been emailed.`,
+      };
+    }
+
+    const waiting = await pendingFeedbackCount(showId);
+    if (waiting > 0) {
+      return {
+        error: null,
+        message: `Nothing new to queue — ${waiting} feedback email${waiting === 1 ? ' is' : 's are'} already waiting to send.`,
       };
     }
 
     return {
       error: null,
-      message: `${queued} feedback email${queued === 1 ? '' : 's'} queued. They send at the feedback send hour, or press Send now on the blast screen.`,
+      message: 'Nothing to queue — nobody has been admitted to this show yet.',
     };
   } catch (error) {
     return { error: dbErrorMessage(error) };
@@ -807,4 +841,17 @@ export async function sendFeedbackNowAction(
   } catch (error) {
     return { error: dbErrorMessage(error) };
   }
+}
+
+/** How many feedback messages for this show are queued and have not gone yet. */
+async function pendingFeedbackCount(showId: number): Promise<number> {
+  const rows = await getDb().execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from email_outbox o
+      join registrations r on r.id = o.registration_id
+     where r.show_id = ${showId}
+       and o.template_key = ${FEEDBACK_TEMPLATE_KEY}
+       and o.status in ('DRAFT', 'QUEUED', 'SENDING')
+  `);
+  return rows[0]?.n ?? 0;
 }

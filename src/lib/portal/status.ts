@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { QR_TOKEN_LENGTH } from '@/lib/checkin/token';
 import { SHOW_IS_OVER } from './phase';
 import { isUnlockMode, type PortalUnlockMode } from './sections';
+import { isWallVisibility, type PublicWallVisibility } from './wall-visibility';
 
 /**
  * What `/t/{qr_token}` is allowed to say about one ticket
@@ -61,6 +62,35 @@ export type PortalContext = {
   feedbackEnabled: boolean;
   /** `portal.feedback_close_at`. Null means the form has no closing date, not that it is shut. */
   feedbackCloseAt: Date | null;
+  /** `portal.notes_enabled` — whether attendees may leave a note at all (§13.4). */
+  notesEnabled: boolean;
+  /**
+   * `portal.notes_close_at`. Null means notes have no closing date, not that
+   * they are shut — the same reading {@link settingAsDate} gives every deadline
+   * on this page, and for the same reason.
+   */
+  notesCloseAt: Date | null;
+  /**
+   * `portal.note_max_length` — the cap the form enforces and the writer is told
+   * about before they hit it.
+   *
+   * **Null when unset, and the caller decides.** It is catalogued `operational:
+   * false` and seeded, unlike the flags around it, so in practice a number
+   * arrives; but this file does not invent one, because a code default here
+   * would be an operational value in a `.ts` file (`CLAUDE.md`).
+   */
+  noteMaxLength: number | null;
+  /**
+   * `portal.public_wall_enabled` and `portal.public_wall_visibility`, the two
+   * halves of "may this guest read the wall".
+   *
+   * They are separate because they answer different questions and an admin sets
+   * them at different times: the first is whether a wall exists for this
+   * concert, the second is whether anyone but an admin may see it. Per-player
+   * grouping is admin-only whatever either says (decision 6).
+   */
+  publicWallEnabled: boolean;
+  publicWallVisibility: PublicWallVisibility | null;
   /** Per-concert Markdown: parking, latecomers, the interval (§13.3 item 5). */
   practicalInfoMd: string | null;
 };
@@ -156,6 +186,11 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
     booklet_enabled: unknown;
     feedback_enabled: unknown;
     feedback_close_at: unknown;
+    notes_enabled: unknown;
+    notes_close_at: unknown;
+    note_max_length: unknown;
+    public_wall_enabled: unknown;
+    public_wall_visibility: unknown;
     practical_info_md: string | null;
   }>(sql`
     select
@@ -186,7 +221,12 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
       resolve_setting('portal.enabled',         null, s.id, c.id) as portal_enabled,
       resolve_setting('portal.booklet_enabled', null, s.id, c.id) as booklet_enabled,
       resolve_setting('portal.feedback_enabled', null, s.id, c.id) as feedback_enabled,
-      resolve_setting('portal.feedback_close_at', null, s.id, c.id) as feedback_close_at
+      resolve_setting('portal.feedback_close_at', null, s.id, c.id) as feedback_close_at,
+      resolve_setting('portal.notes_enabled',     null, s.id, c.id) as notes_enabled,
+      resolve_setting('portal.notes_close_at',    null, s.id, c.id) as notes_close_at,
+      resolve_setting('portal.note_max_length',   null, s.id, c.id) as note_max_length,
+      resolve_setting('portal.public_wall_enabled',    null, s.id, c.id) as public_wall_enabled,
+      resolve_setting('portal.public_wall_visibility', null, s.id, c.id) as public_wall_visibility
     from attendees a
     join shows s    on s.id = a.show_id
     join concerts c on c.id = s.concert_id
@@ -242,6 +282,13 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
       bookletEnabled: settingIsTrue(row.booklet_enabled),
       feedbackEnabled: settingIsTrue(row.feedback_enabled),
       feedbackCloseAt: settingAsDate(row.feedback_close_at),
+      notesEnabled: settingIsTrue(row.notes_enabled),
+      notesCloseAt: settingAsDate(row.notes_close_at),
+      noteMaxLength: settingAsPositiveInt(row.note_max_length),
+      publicWallEnabled: settingIsTrue(row.public_wall_enabled),
+      publicWallVisibility: isWallVisibility(row.public_wall_visibility)
+        ? row.public_wall_visibility
+        : null,
       practicalInfoMd: row.practical_info_md,
     },
   };
@@ -274,6 +321,21 @@ function settingAsDate(value: unknown): Date | null {
   if (typeof value !== 'string') return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * A cascading positive integer, read strictly.
+ *
+ * `resolve_setting` returns `jsonb`, so a value written through the settings
+ * screen arrives as a real number. Anything else — a string from a hand-edit, a
+ * zero, a negative, a fraction — reads as **unset** rather than as a cap,
+ * because the alternative is a note form that refuses every note with no
+ * explanation an admin could act on. A missing cap is visible in the settings
+ * screen; a cap of zero looks like a broken form.
+ */
+function settingAsPositiveInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return null;
+  return value;
 }
 
 /**

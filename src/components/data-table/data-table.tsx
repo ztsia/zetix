@@ -116,6 +116,31 @@ export type DataTableProps<TData extends RowData> = {
    */
   onSelectionChange?: (rows: TData[]) => void;
 
+  /**
+   * Gmail's "select all N that match", for a server-paged table.
+   *
+   * The header checkbox can only ever mean *this page* — it is the only page
+   * the table holds. Without this, narrowing to 244 tickets and acting on them
+   * is 10 pages of manual ticking, and the operator has no way to tell whether
+   * the button that follows the selection is about to touch 25 rows or 244.
+   *
+   * The wider selection lives with the caller, not here: only the caller can
+   * resolve "everything that matches" into something its mutation accepts, and
+   * only the caller knows when a filter change should drop it again.
+   */
+  selectAllMatching?: {
+    /** True once the whole filtered set — not just the page — is selected. */
+    selected: boolean;
+    /** How many rows the current filters match, across every page. */
+    total: number;
+    onSelect: () => void;
+    onClear: () => void;
+    /** Plural noun for the banner copy. Defaults to "rows". */
+    noun?: string;
+    /** Resolving the wider selection; disables both buttons. */
+    busy?: boolean;
+  };
+
   export?: DataTableExport<TData>;
 
   isLoading?: boolean;
@@ -155,6 +180,7 @@ export function DataTable<TData extends RowData>({
   enableSelection = false,
   onRowClick,
   onSelectionChange,
+  selectAllMatching,
   export: exportConfig,
   isLoading = false,
   emptyTitle = 'Nothing here yet',
@@ -316,6 +342,14 @@ export function DataTable<TData extends RowData>({
         </div>
       </div>
 
+      {selectAllMatching && enableSelection && (
+        <SelectAllBanner
+          config={selectAllMatching}
+          pageCount={rows.length}
+          allPageSelected={table.getIsAllPageRowsSelected()}
+        />
+      )}
+
       <div className="overflow-hidden rounded-lg border">
         <div className="overflow-x-auto">
           <Table>
@@ -398,6 +432,63 @@ export function DataTable<TData extends RowData>({
         selectable={enableSelection}
         totalCount={server?.rowCount}
       />
+    </div>
+  );
+}
+
+/**
+ * Only shown when it has something to offer: every row on the page is ticked,
+ * and there are rows behind it that are not. Ticking a page that *is* the whole
+ * result set says nothing worth saying.
+ */
+function SelectAllBanner({
+  config,
+  pageCount,
+  allPageSelected,
+}: {
+  config: NonNullable<DataTableProps<RowData>['selectAllMatching']>;
+  pageCount: number;
+  allPageSelected: boolean;
+}) {
+  const { selected, total, onSelect, onClear, noun = 'rows', busy = false } = config;
+  if (!selected && (!allPageSelected || total <= pageCount)) return null;
+
+  return (
+    <div
+      role="status"
+      className="bg-muted/50 text-muted-foreground flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 rounded-md border px-3 py-2 text-center text-sm"
+    >
+      {selected ? (
+        <>
+          <span>
+            All <span className="text-foreground font-medium">{total}</span> {noun} matching
+            these filters are selected.
+          </span>
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={busy}
+            className="text-primary font-medium underline-offset-4 hover:underline disabled:opacity-50"
+          >
+            Clear selection
+          </button>
+        </>
+      ) : (
+        <>
+          <span>
+            All <span className="text-foreground font-medium">{pageCount}</span> {noun} on this
+            page are selected.
+          </span>
+          <button
+            type="button"
+            onClick={onSelect}
+            disabled={busy}
+            className="text-primary font-medium underline-offset-4 hover:underline disabled:opacity-50"
+          >
+            {busy ? 'Selecting…' : `Select all ${total} that match these filters`}
+          </button>
+        </>
+      )}
     </div>
   );
 }

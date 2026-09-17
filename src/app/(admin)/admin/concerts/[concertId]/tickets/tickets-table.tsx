@@ -17,14 +17,24 @@ import { formatInZone, type ExportColumn } from '@/lib/export';
 import {
   dismissReissueAction,
   issueTicketsAction,
+  matchingTicketIdsAction,
   reissueTicketsAction,
 } from './actions';
+import {
+  BOOKING_STATUSES,
+  TICKET_STATES,
+  TICKET_STATE_LABELS,
+  ticketSearchParams,
+  type TicketFilters,
+} from './filters';
 
 export type TicketRow = {
   id: number;
   fullName: string;
   showId: number;
   showName: string;
+  segmentId: number;
+  segmentName: string;
   status: 'CONFIRMED' | 'PENDING_REVIEW' | 'WAITLIST' | 'CANCELLED';
   ticketCode: string | null;
   /** Has both a token and a pinned template — i.e. renderable. */
@@ -62,6 +72,17 @@ function columnsFor(timeZone: string): DataTableColumn<TicketRow>[] {
       accessorKey: 'showName',
       meta: { label: 'Show' },
       header: ({ column }) => <DataTableColumnHeader column={column} title="Show" />,
+    },
+    {
+      accessorKey: 'segmentName',
+      meta: { label: 'Segment' },
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Segment" />,
+      cell: ({ row }) => (
+        // Segments, not shows, own audience mode (CLAUDE.md), so this is the
+        // column that says which block a seat came out of — and one show here
+        // genuinely holds both a public and a player-invited segment.
+        <span className="text-xs">{row.original.segmentName}</span>
+      ),
     },
     {
       accessorKey: 'ticketCode',
@@ -166,6 +187,7 @@ function columnsFor(timeZone: string): DataTableColumn<TicketRow>[] {
 const exportColumns: ExportColumn<TicketRow>[] = [
   { header: 'Attendee', value: (row) => row.fullName, width: 28 },
   { header: 'Show', value: (row) => row.showName, width: 24 },
+  { header: 'Segment', value: (row) => row.segmentName, width: 18 },
   { header: 'Booked by', value: (row) => row.contactName },
   { header: 'Status', value: (row) => row.status },
   { header: 'Ticket code', value: (row) => row.ticketCode },
@@ -180,32 +202,66 @@ export function TicketsTable({
   concertName,
   timeZone,
   shows,
-  showFilter,
+  segments,
+  filters,
   rows,
   rowCount,
   needsReissueCount,
   pageIndex,
   pageSize,
   sorting,
-  search,
 }: {
   concertId: number;
   concertName: string;
   timeZone: string;
   shows: { id: number; name: string }[];
-  showFilter: number | null;
+  segments: { id: number; name: string; showId: number; showName: string }[];
+  filters: TicketFilters;
   rows: TicketRow[];
   rowCount: number;
   needsReissueCount: number;
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
-  search: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [selected, setSelected] = useState<TicketRow[]>([]);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  /**
+   * The wider selection, resolved on the server (§10.5).
+   *
+   * Held as ids rather than as a flag, so both mutations keep taking the one
+   * `attendeeIds` scope they already take — "all that match" and "these four I
+   * ticked" reach `issueTickets()` as the same shape, and there is no second
+   * code path where a filter could be applied differently.
+   */
+  const [allMatching, setAllMatching] = useState<number[] | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  function go(
+    next: Partial<TicketFilters>,
+    page: { pageIndex: number; pageSize: number; sorting: SortingState } = {
+      pageIndex: 0,
+      pageSize,
+      sorting,
+    },
+  ) {
+    const merged = { ...filters, ...next };
+    const params = ticketSearchParams(merged, {
+      page: page.pageIndex,
+      size: page.pageSize,
+      sort: page.sorting[0]?.id,
+      dir: page.sorting[0]?.desc ? 'desc' : undefined,
+    });
+    const query = params.toString();
+    // A different result set is a different "all that match", so the wider
+    // selection cannot survive a filter change.
+    setAllMatching(null);
+    startTransition(() =>
+      router.replace(`/admin/concerts/${concertId}/tickets${query ? `?${query}` : ''}`),
+    );
+  }
 
   function apply(next: {
     pageIndex: number;
@@ -213,22 +269,38 @@ export function TicketsTable({
     sorting: SortingState;
     search: string;
   }) {
-    const params = new URLSearchParams();
-    if (next.pageIndex > 0) params.set('page', String(next.pageIndex));
-    if (next.pageSize !== 25) params.set('size', String(next.pageSize));
-    if (next.sorting[0]) {
-      params.set('sort', next.sorting[0].id);
-      if (next.sorting[0].desc) params.set('dir', 'desc');
-    }
-    if (next.search) params.set('q', next.search);
-    if (showFilter) params.set('show', String(showFilter));
-    const query = params.toString();
-    startTransition(() =>
-      router.replace(
-        `/admin/concerts/${concertId}/tickets${query ? `?${query}` : ''}`,
-      ),
-    );
+    go({ search: next.search }, next);
   }
+
+  /**
+   * Anything other than a fully ticked page drops the wider selection: the
+   * operator has started curating, and silently acting on 244 rows when 243 are
+   * ticked is the failure this banner exists to prevent.
+   */
+  function onSelectionChange(next: TicketRow[]) {
+    setSelected(next);
+    if (next.length !== rows.length || rows.length === 0) setAllMatching(null);
+  }
+
+  function selectAllMatching() {
+    setResolving(true);
+    startTransition(async () => {
+      const result = await matchingTicketIdsAction({ concertId, ...filters });
+      setResolving(false);
+      if (!result.ok) {
+        setNotice({ ok: false, text: result.error });
+        return;
+      }
+      setAllMatching(result.ids);
+    });
+  }
+
+  /** What the buttons will actually touch, for the label and the confirm. */
+  const targetCount = allMatching?.length ?? selected.length;
+
+  const visibleSegments = filters.showId
+    ? segments.filter((segment) => segment.showId === filters.showId)
+    : segments;
 
   /**
    * Both mutations follow the selection when there is one, and the show filter
@@ -237,8 +309,10 @@ export function TicketsTable({
    * chose rather than something the page defaulted to.
    */
   function scope() {
+    if (allMatching) return { concertId, attendeeIds: allMatching };
     if (selected.length > 0) return { concertId, attendeeIds: selected.map((r) => r.id) };
-    if (showFilter) return { concertId, showId: showFilter };
+    if (filters.segmentId) return { concertId, segmentId: filters.segmentId };
+    if (filters.showId) return { concertId, showId: filters.showId };
     return null;
   }
 
@@ -251,7 +325,7 @@ export function TicketsTable({
     if (!target) {
       setNotice({
         ok: false,
-        text: `Choose a show, or tick the attendees you want to ${verb}.`,
+        text: `Choose a show or segment, or tick the attendees you want to ${verb}.`,
       });
       return;
     }
@@ -267,6 +341,9 @@ export function TicketsTable({
       setNotice(
         result.ok ? { ok: true, text: result.message } : { ok: false, text: result.error },
       );
+      // The rows it just changed may no longer match the filters, so a list
+      // captured before the mutation is not a selection any more.
+      if (result.ok) setAllMatching(null);
       router.refresh();
     });
   }
@@ -294,29 +371,11 @@ export function TicketsTable({
             <Palette />
             Templates
           </Button>
-          <select
-            className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-            value={showFilter ?? ''}
-            aria-label="Filter by show"
-            onChange={(event) => {
-              const value = event.target.value;
-              startTransition(() =>
-                router.replace(
-                  `/admin/concerts/${concertId}/tickets${value ? `?show=${value}` : ''}`,
-                ),
-              );
-            }}
-          >
-            <option value="">All shows</option>
-            {shows.map((show) => (
-              <option key={show.id} value={show.id}>
-                {show.name}
-              </option>
-            ))}
-          </select>
           <Button onClick={() => run(issueTicketsAction, 'issue')} disabled={isPending}>
             <Ticket className="size-4" aria-hidden />
-            Issue tickets
+            {targetCount > 0
+              ? `Issue ${targetCount} ticket${targetCount === 1 ? '' : 's'}`
+              : 'Issue tickets'}
           </Button>
           <Button
             variant="outline"
@@ -325,7 +384,7 @@ export function TicketsTable({
                 reissueTicketsAction,
                 'reissue',
                 `Reissue ${
-                  selected.length > 0 ? `${selected.length} selected ticket(s)` : 'this show'
+                  targetCount > 0 ? `${targetCount} selected ticket(s)` : 'this show'
                 } against the current template?\n\nEvery ticket this touches will be ` +
                   're-rendered and queued to be emailed again.',
               )
@@ -393,8 +452,75 @@ export function TicketsTable({
         getRowId={(row) => String(row.id)}
         searchPlaceholder="Search name or ticket code…"
         enableSelection
-        onSelectionChange={setSelected}
-        server={{ rowCount, pageIndex, pageSize, sorting, search, onChange: apply }}
+        onSelectionChange={onSelectionChange}
+        toolbar={
+          <>
+            <FilterSelect
+              label="Show"
+              value={filters.showId ?? ''}
+              onChange={(value) =>
+                // A segment belongs to exactly one show, so a segment chosen
+                // under a different show would filter to nothing.
+                go({ showId: value ? Number(value) : null, segmentId: null })
+              }
+              options={shows.map((show) => ({ value: show.id, label: show.name }))}
+              allLabel="All shows"
+            />
+            <FilterSelect
+              label="Segment"
+              value={filters.segmentId ?? ''}
+              onChange={(value) => go({ segmentId: value ? Number(value) : null })}
+              options={visibleSegments.map((segment) => ({
+                value: segment.id,
+                // Qualified only when the show filter is not already doing it.
+                label: filters.showId
+                  ? segment.name
+                  : `${segment.name} · ${segment.showName}`,
+              }))}
+              allLabel="All segments"
+            />
+            <FilterSelect
+              label="Status"
+              value={filters.status ?? ''}
+              onChange={(value) =>
+                go({ status: (value || null) as TicketFilters['status'] })
+              }
+              options={BOOKING_STATUSES.map((status) => ({
+                value: status,
+                label: status.toLowerCase().replace('_', ' '),
+              }))}
+              allLabel="Any status"
+            />
+            <FilterSelect
+              label="Ticket"
+              value={filters.ticketState ?? ''}
+              onChange={(value) =>
+                go({ ticketState: (value || null) as TicketFilters['ticketState'] })
+              }
+              options={TICKET_STATES.map((state) => ({
+                value: state,
+                label: TICKET_STATE_LABELS[state],
+              }))}
+              allLabel="Any ticket state"
+            />
+          </>
+        }
+        selectAllMatching={{
+          selected: allMatching !== null,
+          total: rowCount,
+          onSelect: selectAllMatching,
+          onClear: () => setAllMatching(null),
+          noun: 'tickets',
+          busy: resolving,
+        }}
+        server={{
+          rowCount,
+          pageIndex,
+          pageSize,
+          sorting,
+          search: filters.search,
+          onChange: apply,
+        }}
         isLoading={isPending}
         export={{
           filename: 'tickets',
@@ -406,5 +532,41 @@ export function TicketsTable({
         emptyDescription="Attendees arrive from the spreadsheet import (module C) or manual registration (module B)."
       />
     </div>
+  );
+}
+
+/**
+ * A plain native `<select>`, matching the one this screen already used for
+ * shows. Four of them sit in the table toolbar rather than the page header, so
+ * they read as "what narrows this table" alongside the search box, and so the
+ * header keeps only the buttons that change something.
+ */
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+  allLabel,
+}: {
+  label: string;
+  value: string | number;
+  onChange: (value: string) => void;
+  options: { value: string | number; label: string }[];
+  allLabel: string;
+}) {
+  return (
+    <select
+      className="border-input bg-background h-8 rounded-md border px-2 text-sm capitalize"
+      value={value}
+      aria-label={`Filter by ${label.toLowerCase()}`}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="">{allLabel}</option>
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }

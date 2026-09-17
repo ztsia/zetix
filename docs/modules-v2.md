@@ -517,6 +517,14 @@ the shared `AlertDialogAction` fix (25 call sites across 7 files leave a modal s
 shell — `docs/handoff/archive/blast-queue-banner-outgoing.md`), and the stale `qa/e2e/f-blast.spec.ts`
 FLOW-10 assertion. Both predate `v2` and both should land on `main` and flow in.
 
+**The reserved-slug check in `L`'s form editor is a small fix, not a module.** `/f/verify` is a
+static route, and Next resolves a static segment ahead of `/f/[slug]`, so a form created with the
+slug `verify` is permanently unreachable — with no error at creation, no error at request, and
+nothing in the editor to suggest why. Nothing enforces it today. The fix is a reserved-slug list in
+the form editor, which owns slug validation; `verify` is the only entry the routes need right now,
+and any future static segment under `/f/` has to be added with it. `M` asked for this and `O`
+carried it forward unclaimed; it is recorded here so it stops travelling in handoffs.
+
 **The `registrations_no_duplicate_import` index is not V2 either**, but `J` is the natural place to
 carry it — it was written out and deliberately deferred only because a migration before 19 Sep meant a
 manual deployment step (`docs/handoff/archive/import-reimport-dedup.md`). That reason expires with the

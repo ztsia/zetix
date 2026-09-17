@@ -2,9 +2,19 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { asc, eq } from 'drizzle-orm';
+import { getDb } from '@/db/client';
+import { attendees, registrations } from '@/db/schema/registrations';
+import { showSegments, shows } from '@/db/schema/shows';
 import { requireAdmin } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
 import { dismissReissue, issueTickets, reissueTickets } from '@/lib/tickets/issue';
+import {
+  BOOKING_STATUSES,
+  TICKET_STATES,
+  ticketWhere,
+  type TicketFilters,
+} from './filters';
 
 /**
  * The two ticket mutations (spec/tickets.md §10.5).
@@ -94,6 +104,76 @@ export async function reissueTicketsAction(
         `Repinned ${result.repinned} ticket${result.repinned === 1 ? '' : 's'}. ` +
         `${result.requeued} will be resent.`,
     };
+  } catch (error) {
+    return { ok: false, error: messageOf(error) };
+  }
+}
+
+/**
+ * The ceiling on "select everything that matches".
+ *
+ * Not an operational value in the cascade sense (CLAUDE.md) — it caps a payload
+ * of integers, not a capacity, quota or rate. It exists so a mis-clicked filter
+ * on a future festival cannot post tens of thousands of ids through a Server
+ * Action; this concert's largest segment is 244.
+ */
+const MAX_SELECTABLE = 5000;
+
+const filtersSchema = z.object({
+  concertId: z.number().int().positive(),
+  showId: z.number().int().positive().nullable(),
+  segmentId: z.number().int().positive().nullable(),
+  status: z.enum(BOOKING_STATUSES).nullable(),
+  ticketState: z.enum(TICKET_STATES).nullable(),
+  search: z.string().max(200),
+});
+
+export type MatchingIdsResult =
+  | { ok: true; ids: number[] }
+  | { ok: false; error: string };
+
+/**
+ * Every attendee behind the current filters, not just the page on screen.
+ *
+ * The table offers Gmail's "select all N that match" once a whole page is
+ * ticked, and this is what that promise resolves to. **It re-derives the set
+ * server-side from the same `ticketWhere()` the page rendered with**, rather
+ * than trusting a count the browser did the arithmetic for — the ids then flow
+ * through the existing `attendeeIds` scope, so the mutation's blast radius stays
+ * an explicit list the admin can be shown, exactly as it is for a hand-ticked
+ * selection.
+ */
+export async function matchingTicketIdsAction(
+  input: z.infer<typeof filtersSchema>,
+): Promise<MatchingIdsResult> {
+  await requireAdmin();
+
+  const parsed = filtersSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Malformed request.' };
+
+  const { concertId, ...rest } = parsed.data;
+  const filters: TicketFilters = rest;
+
+  try {
+    const rows = await getDb()
+      .select({ id: attendees.id })
+      .from(attendees)
+      .innerJoin(registrations, eq(registrations.id, attendees.registrationId))
+      .innerJoin(shows, eq(shows.id, attendees.showId))
+      .innerJoin(showSegments, eq(showSegments.id, attendees.segmentId))
+      .where(ticketWhere(concertId, filters))
+      .orderBy(asc(attendees.id))
+      .limit(MAX_SELECTABLE + 1);
+
+    if (rows.length > MAX_SELECTABLE) {
+      return {
+        ok: false,
+        error:
+          `More than ${MAX_SELECTABLE} tickets match. Narrow the filters ` +
+          'before selecting them all.',
+      };
+    }
+    return { ok: true, ids: rows.map((row) => row.id) };
   } catch (error) {
     return { ok: false, error: messageOf(error) };
   }

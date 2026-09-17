@@ -5,11 +5,15 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { BookletSection } from '@/components/portal/booklet-section';
 import { FeedbackClosed, FeedbackSection } from '@/components/portal/feedback-section';
+import { NotesSection } from '@/components/portal/notes-section';
 import { PracticalSection } from '@/components/portal/practical-section';
+import { WallSection } from '@/components/portal/wall-section';
 import { TicketSection, TicketStub } from '@/components/portal/ticket-section';
 import { countdownTo, formatDate, formatDateTime, formatTime, venueMapUrl } from '@/lib/portal/format';
 import { publishedBookletForShow } from '@/lib/portal/booklet';
 import { loadPortalFeedback, type PortalFeedbackResult } from '@/lib/portal/feedback';
+import { loadPortalNotes, type NotesResult } from '@/lib/portal/notes';
+import { loadPublicWall } from '@/lib/portal/wall';
 import { qrSvg } from '@/lib/portal/qr';
 import {
   portalIsUnlocked,
@@ -19,6 +23,7 @@ import {
 import { attendeeIdForToken, ticketStatus } from '@/lib/portal/status';
 import type { FormAnswers } from '@/lib/forms/answers';
 import { submitFeedbackAction } from './feedback-actions';
+import { submitNoteAction } from './notes-actions';
 import { TicketNotFound } from '../../ticket-not-found';
 import { Countdown } from './countdown';
 
@@ -186,10 +191,19 @@ export default async function TicketStatusPage({
    * it is needed to find this guest's own existing answer and nothing renders
    * it.
    */
-  const attendeeId =
-    postShow && status.portal.feedbackEnabled ? await attendeeIdForToken(token) : null;
+  /**
+   * **Resolved once, for whichever sections need it.** Feedback needs it after
+   * the show; notes need it whenever they are enabled, which §13.3's ordering
+   * puts *before* the show as well — a guest scanned in at the door may write
+   * during the interval, and `ON_ADMISSION` is what makes that a guest who is
+   * actually in the hall.
+   */
+  const needsFeedback = postShow && status.portal.feedbackEnabled;
+  const needsNotes = sectionsVisible && status.portal.notesEnabled;
+  const attendeeId = needsFeedback || needsNotes ? await attendeeIdForToken(token) : null;
+
   const feedback =
-    attendeeId === null
+    !needsFeedback || attendeeId === null
       ? null
       : await loadPortalFeedback({
           showId: show.id,
@@ -197,6 +211,40 @@ export default async function TicketStatusPage({
           attendeeId,
           closeAt: status.portal.feedbackCloseAt,
         });
+
+  /**
+   * Notes and the wall, each behind its own switch.
+   *
+   * They are two settings rather than one because they are two decisions an
+   * admin makes at different times: collecting notes starts on concert night,
+   * and publishing a wall happens after somebody has read them. A concert
+   * routinely runs the first without ever turning on the second.
+   */
+  const notes =
+    !needsNotes || attendeeId === null
+      ? null
+      : await loadPortalNotes({
+          attendeeId,
+          concertId: status.concertId,
+          enabled: status.portal.notesEnabled,
+          closeAt: status.portal.notesCloseAt,
+          maxLength: status.portal.noteMaxLength,
+        });
+
+  /**
+   * The wall is read for anyone who has unlocked the portal, whether or not
+   * *they* may leave a note — reading and writing are different permissions and
+   * `portal.notes_enabled` closing does not un-publish what is already up.
+   * `loadPublicWall` applies the visibility gate itself and returns nothing
+   * when the wall is not public, so this costs one query and cannot leak.
+   */
+  const wall = sectionsVisible
+    ? await loadPublicWall({
+        concertId: status.concertId,
+        enabled: status.portal.publicWallEnabled,
+        visibility: status.portal.publicWallVisibility,
+      })
+    : [];
 
   /**
    * Counted to the doors, not to the downbeat — the doors time is the one a
@@ -250,8 +298,8 @@ export default async function TicketStatusPage({
         href={`/api/portal/${status.qrToken}/booklet`}
       />
     ) : null,
-    notes: null,
-    wall: null,
+    notes: notesNode(token, notes),
+    wall: <WallSection key="wall" notes={wall} />,
     practical:
       sectionsVisible && status.portal.practicalInfoMd ? (
         <PracticalSection key="practical" markdown={status.portal.practicalInfoMd} />
@@ -392,6 +440,34 @@ function feedbackNode(token: string, feedback: PortalFeedbackResult | null): Rea
       copy={feedback.copy}
       existing={(feedback.existing?.answers as FormAnswers | undefined) ?? null}
       submit={submitFeedbackAction}
+    />
+  );
+}
+
+/**
+ * The notes slot's three outcomes, kept out of the section map for the same
+ * reason {@link feedbackNode} is.
+ *
+ * - **Nothing at all** — `portal.notes_enabled` is off, or the guest has not
+ *   unlocked the portal. An absent section rather than an empty one.
+ * - **Closed** — past `portal.notes_close_at`. The section still draws *if this
+ *   guest left a note*, so they can reread it; the component decides that,
+ *   because the loader is what knows whether a note exists.
+ * - **The form**, prefilled with their own note when they have left one.
+ */
+function notesNode(token: string, notes: NotesResult | null): ReactNode {
+  if (notes === null || notes.state === 'OFF') return null;
+
+  return (
+    <NotesSection
+      key="notes"
+      token={token}
+      state={notes.state}
+      players={notes.players}
+      defaultToPlayerId={notes.defaultToPlayerId}
+      existing={notes.existing}
+      maxLength={notes.maxLength}
+      submit={submitNoteAction}
     />
   );
 }

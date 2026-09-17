@@ -74,6 +74,13 @@ const read = (id: number) => sql<
   { moderation_status: string; wall_status: string; moderated_by: string | null; moderated_at: string | null }[]
 >`select moderation_status, wall_status, moderated_by, moderated_at from portal_notes where id = ${id}`;
 
+const setSetting = async (key: string, value: unknown) => {
+  await sql`
+    insert into system_settings (key, value) values (${key}, ${JSON.stringify(value)}::jsonb)
+    on conflict (key) do update set value = excluded.value
+  `;
+};
+
 beforeEach(async () => {
   await resetDb();
   seat = 0;
@@ -87,6 +94,13 @@ beforeEach(async () => {
     values (${admin.id}, ${admin.email}, ${admin.displayName}, 'ADMIN')
     on conflict (id) do nothing
   `;
+
+  /**
+   * §13.4 permits publishing "only when the concert has the wall enabled", so
+   * every publish test needs this on. `wall-off.test` below is the one that
+   * turns it back off.
+   */
+  await setSetting('portal.public_wall_enabled', true);
 });
 
 describe('approving and hiding', () => {
@@ -251,6 +265,90 @@ describe('a note written to a player is never published', () => {
     const result = await actions.setNotesOnWallAction(concertId, [personal], false);
     expect(result.error).toBeNull();
     expect((await read(personal))[0].wall_status).toBe('NOT_PUBLISHED');
+  });
+});
+
+describe('publishing needs the concert to have a wall', () => {
+  /**
+   * Nothing unsafe reaches a guest without this — `loadPublicWall` gates on
+   * the same setting independently. What it fixes is what the *admin*
+   * believes: a screen that marks forty notes PUBLISHED on a concert with no
+   * wall has said forty times that something happened, and no guest sees any
+   * of it.
+   */
+  it('refuses, and says how to turn it on, when the wall is off', async () => {
+    await setSetting('portal.public_wall_enabled', false);
+    const id = await note({ body: 'Nowhere to go.', moderation: 'APPROVED' });
+
+    const result = await actions.setNotesOnWallAction(concertId, [id], true);
+    expect(result.error).toContain('Public wall enabled');
+    expect((await read(id))[0].wall_status).toBe('NOT_PUBLISHED');
+  });
+
+  /**
+   * `ADMIN_ONLY` is the state for choosing the notes before anyone reads
+   * them, so requiring `enabled` costs the curate-then-reveal workflow
+   * nothing — it asks only that the wall exists.
+   */
+  it('allows publishing while visibility is still ADMIN_ONLY', async () => {
+    await setSetting('portal.public_wall_enabled', true);
+    await setSetting('portal.public_wall_visibility', 'ADMIN_ONLY');
+    const id = await note({ body: 'Chosen early.', moderation: 'APPROVED' });
+
+    expect((await actions.setNotesOnWallAction(concertId, [id], true)).error).toBeNull();
+    expect((await read(id))[0].wall_status).toBe('PUBLISHED');
+    /** Still invisible to a guest, which is the point of ADMIN_ONLY. */
+    expect(await loadPublicWall({ concertId, enabled: true, visibility: 'ADMIN_ONLY' })).toEqual([]);
+  });
+
+  /** Taking notes down is never gated — removing is never the risk. */
+  it('still allows unpublishing when the wall has been turned off', async () => {
+    const id = await note({ body: 'Up already.', moderation: 'APPROVED', wall: 'PUBLISHED' });
+    await setSetting('portal.public_wall_enabled', false);
+
+    expect((await actions.setNotesOnWallAction(concertId, [id], false)).error).toBeNull();
+    expect((await read(id))[0].wall_status).toBe('NOT_PUBLISHED');
+  });
+});
+
+describe('a selection larger than the screen can send', () => {
+  /**
+   * The refusal used to read "Select at least one note." for a selection of
+   * five thousand, which is the opposite of what happened. A concert of
+   * several shows holds one note per seat per show and Select-all is one
+   * click, so this is reachable rather than theoretical.
+   */
+  it('says the limit rather than claiming nothing was selected', async () => {
+    const tooMany = Array.from({ length: 5001 }, (_, i) => i + 1);
+    const result = await actions.moderateNotesAction(concertId, tooMany, 'APPROVED');
+    expect(result.error).toContain('5000');
+    expect(result.error).not.toContain('at least one');
+  });
+
+  it('still says "at least one" for an empty selection', async () => {
+    expect((await actions.moderateNotesAction(concertId, [], 'APPROVED')).error).toBe(
+      'Select at least one note.',
+    );
+  });
+});
+
+describe('a soft-deleted note is out of reach', () => {
+  it('is not moderated, published, or listed', async () => {
+    const id = await note({ body: 'Removed.', moderation: 'PENDING' });
+    await sql`update portal_notes set deleted_at = now() where id = ${id}`;
+
+    expect((await actions.moderateNotesAction(concertId, [id], 'APPROVED')).message).toBe(
+      '0 notes approved',
+    );
+    expect((await read(id))[0].moderation_status).toBe('PENDING');
+
+    await actions.setNotesOnWallAction(concertId, [id], true);
+    expect((await read(id))[0].wall_status).toBe('NOT_PUBLISHED');
+
+    const { loadNotesScreen } = await import(
+      '@/app/(admin)/admin/concerts/[concertId]/notes/queries'
+    );
+    expect((await loadNotesScreen(concertId))!.notes).toEqual([]);
   });
 });
 

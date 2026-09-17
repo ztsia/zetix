@@ -309,6 +309,39 @@ describe('the length cap', () => {
   });
 });
 
+describe('the signature', () => {
+  /**
+   * A sanity bound on an input, not an operational value — the same
+   * distinction `savePracticalInfoAction` draws for its textarea. What it
+   * stops is the name field used as a second note body, rendered at every
+   * other guest on the wall. `portal.note_max_length` is the cap that *is*
+   * operational, and it governs the note.
+   */
+  it('refuses a display name used as a second note body', async () => {
+    const result = await submitNoteAction(token, { ...NOTE, displayName: 'x'.repeat(121) });
+    expect(result.ok).toBe(false);
+    expect(result.errors.displayName).toContain('120');
+    expect(await notes()).toHaveLength(0);
+  });
+
+  it('accepts a name at the bound', async () => {
+    expect((await submitNoteAction(token, { ...NOTE, displayName: 'x'.repeat(120) })).ok).toBe(true);
+  });
+
+  /**
+   * The cap is checked after the default is applied, so an attendee whose own
+   * row carries an implausibly long name is refused rather than writing a row
+   * the wall cannot render. Reachable: `full_name` is `text`, and import
+   * writes it.
+   */
+  it('measures the name that will actually be stored', async () => {
+    await sql`update attendees set full_name = ${'y'.repeat(200)} where id = ${attendeeId}`;
+    const result = await submitNoteAction(token, { ...NOTE, displayName: null });
+    expect(result.ok).toBe(false);
+    expect(result.errors.displayName).toBeTruthy();
+  });
+});
+
 describe('a payload that lies', () => {
   /**
    * The pair `N` left as the template. Neither field exists in the action's

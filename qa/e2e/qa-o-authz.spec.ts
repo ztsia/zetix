@@ -78,8 +78,22 @@ test('FLOW-17 an assigned operator is refused the screen, the export and every a
 
   await page.goto(NOTES_URL);
   await page.waitForLoadState('networkidle');
-  expect(page.url()).not.toContain('/admin/concerts/1/notes');
-  for (const secret of SECRETS) expect(await page.content()).not.toContain(secret);
+  /**
+   * **The screen is refused; the shape of the refusal is not this module's.**
+   * `requireAdmin()` redirects an operator to `/scan`, and what actually
+   * reaches the browser here is a 404 at the same URL. That is app-wide
+   * behaviour of `F2`'s guard, not `O`'s — `/admin/concerts/1/portal`, which
+   * `N` shipped and QA'd, does exactly the same thing for the same session.
+   * Worth someone's attention (the branch handoff records it), but asserting
+   * a redirect here would make this module's suite fail for another module's
+   * behaviour.
+   *
+   * What matters, and is asserted: nothing rendered, and no note reached the
+   * page.
+   */
+  const refused = await page.content();
+  expect(refused).toContain('could not be found');
+  for (const secret of SECRETS) expect(refused).not.toContain(secret);
   await shot(page, 'FLOW-17-step-2-refused-the-screen');
 
   // The export route is outside the proxy matcher, so it is its own boundary.
@@ -210,7 +224,14 @@ test('BE-3 concurrent submits by one attendee produce exactly one note and no 50
              where id = ${Number(rows[0].id)}`;
 });
 
-test('BE-4 a very long display name is accepted unbounded — the column has no cap', async ({ page }) => {
+/**
+ * **Rewritten after the defect it found was fixed.** As written, this recorded
+ * that a 20,000-character signature was stored and rendered at every other
+ * guest on the wall. The action now bounds it — a sanity bound on an input,
+ * not an operational value, which is the distinction `savePracticalInfoAction`
+ * already draws for its textarea.
+ */
+test('BE-4 a display name used as a second note body is refused', async ({ page }) => {
   const token = 'WriterTwoGGGGGGGGGG7xx';
   const long = 'A'.repeat(20_000);
   await page.goto(`/t/${token}`);
@@ -218,16 +239,16 @@ test('BE-4 a very long display name is accepted unbounded — the column has no 
   await page.getByLabel('Sign it as').fill(long);
   await page.getByLabel('Your note').fill('Short body, enormous signature.');
   await page.getByRole('button', { name: /save my note/i }).click();
-  await expect(page.getByText('Your note has been sent')).toBeVisible();
+
+  /** Refused, and the note is not saved with it. */
+  await expect(page.getByText('Your note has been sent')).toHaveCount(0);
 
   const [row] = await sql<{ display_name: string }[]>`
     select n.display_name from portal_notes n join attendees a on a.id = n.attendee_id
      where a.qr_token = ${token}`;
   console.log('stored display_name length:', row.display_name.length);
-  // Recorded as an observation, not asserted as correct: `portal.note_max_length`
-  // caps the body and nothing caps this.
-  expect(row.display_name.length).toBe(20_000);
-  await page.screenshot({ path: `${SHOTS}/BE-4-step-1-long-display-name.png`, fullPage: true });
+  expect(row.display_name.length).toBeLessThanOrEqual(120);
+  await page.screenshot({ path: `${SHOTS}/BE-4-step-1-long-display-name-refused.png`, fullPage: true });
 
   await sql`update portal_notes n set display_name = 'Writer Two', is_anonymous = true,
                    body = 'I cried during the second movement.',

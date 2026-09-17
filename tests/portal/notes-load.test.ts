@@ -198,6 +198,19 @@ describe('the three states', () => {
     expect(result.existing?.body).toBe('Mine.');
   });
 
+  it('does not hand back a soft-deleted note', async () => {
+    const attendeeId = await seatIn(publicSegmentId);
+    await sql`
+      insert into portal_notes
+        (concert_id, show_id, attendee_id, body, moderation_status, wall_status, deleted_at)
+      values (${concertId}, ${showId}, ${attendeeId}, 'Gone.', 'PENDING', 'NOT_PUBLISHED', now())
+    `;
+
+    const result = await loadPortalNotes({ attendeeId, concertId, ...OPEN });
+    if (result.state === 'OFF') throw new Error('unreachable');
+    expect(result.existing).toBeNull();
+  });
+
   it('passes the cap through untouched, including when it is unset', async () => {
     const attendeeId = await seatIn(publicSegmentId);
     const capped = await loadPortalNotes({ attendeeId, concertId, ...OPEN, maxLength: 240 });

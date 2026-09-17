@@ -20,18 +20,33 @@ vi.mock('@/lib/auth/session', () => ({
 
 const actions = await import('@/app/(admin)/admin/concerts/[concertId]/notes/actions');
 
+/**
+ * **Updated after the finding it records was fixed.** As written by the QA
+ * pass this file pinned the defect: a selection of 501 was refused with
+ * "Select at least one note.", which is the opposite of what had happened.
+ *
+ * Both halves of that were wrong. 500 was below what this screen can
+ * legitimately select — a concert of several shows holds one note per seat
+ * per show and Select-all is one click — and the message named the wrong
+ * problem. The cap is now 5000 and the refusal says which limit was hit.
+ */
 describe('the bulk cap', () => {
-  it('reports "Select at least one note." when 501 notes are selected', async () => {
+  it('accepts 501, which the old cap refused', async () => {
     const ids = Array.from({ length: 501 }, (_, i) => i + 1);
     const result = await actions.moderateNotesAction(1, ids, 'APPROVED');
-    // eslint-disable-next-line no-console
-    console.log('501 ids ->', JSON.stringify(result));
-    expect(result.error).toBe('Select at least one note.');
+    expect(result.error).toBeNull();
   });
 
   it('accepts 500', async () => {
     const ids = Array.from({ length: 500 }, (_, i) => i + 1);
     const result = await actions.moderateNotesAction(1, ids, 'APPROVED');
     expect(result.error).toBeNull();
+  });
+
+  it('names the limit when the selection is past it, rather than claiming none', async () => {
+    const ids = Array.from({ length: 5001 }, (_, i) => i + 1);
+    const result = await actions.moderateNotesAction(1, ids, 'APPROVED');
+    expect(result.error).toContain('5000');
+    expect(result.error).not.toContain('at least one');
   });
 });

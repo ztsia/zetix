@@ -24,7 +24,18 @@ test.afterAll(async () => {
   await sql.end();
 });
 
-test('BE-5 the public wall silently truncates at 100 notes', async ({ page }) => {
+/**
+ * **Rewritten after the defect it found was fixed.** As the QA pass wrote it,
+ * this asserted the truncation: 122 published notes, 100 rendered, and the
+ * writer of a cut note still told "On the public wall" by their own page.
+ *
+ * The cap is gone rather than raised — `loadPublicWall` carries no `limit` at
+ * all. The bound is structural: one note per attendee, attendees bounded by
+ * the hall, and every note here passed an explicit admin action to get
+ * published. The seed and the numbers are kept exactly as QA chose them,
+ * because 122 in a 400-seat hall is the point.
+ */
+test('BE-5 the public wall carries every published note, past any round number', async ({ page }) => {
   await sql.begin(async (tx) => {
     await tx`select set_config('zetix.granting', 'on', true)`;
     const [r] = await tx`insert into registrations
@@ -57,16 +68,19 @@ test('BE-5 the public wall silently truncates at 100 notes', async ({ page }) =>
   const rendered = new Set([...html.matchAll(/Bulk note (\d+)/g)].map((m) => m[1]));
   // eslint-disable-next-line no-console
   console.log(`published in db: ${n}; bulk notes rendered: ${rendered.size}`);
-  await page.screenshot({ path: `${SHOTS}/BE-5-step-1-wall-truncated.png`, fullPage: true });
+  expect(rendered.size).toBe(120);
+  await page.screenshot({ path: `${SHOTS}/BE-5-step-1-wall-complete.png`, fullPage: true });
 
   /**
-   * And the writer of a cut note is still told it is up: their own portal shows
-   * the "On the public wall" badge for a note the wall no longer carries.
+   * The seeded note that fell past the old cap is on the page, and its writer
+   * is told the truth. Both halves mattered: the badge said "On the public
+   * wall" for a note the wall did not carry, which is the failure the writer
+   * could see and the orchestra could not.
    */
-  expect(html).not.toContain('The Sibelius was extraordinary tonight.');
+  expect(html).toContain('The Sibelius was extraordinary tonight.');
   await page.goto('/t/WriterOneFFFFFFFFFF6xx');
   await expect(page.getByText('On the public wall')).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/BE-5b-step-1-badge-says-on-the-wall.png`, fullPage: true });
+  await page.screenshot({ path: `${SHOTS}/BE-5b-step-1-badge-is-true.png`, fullPage: true });
 
   // Every published note should be reachable. It is not, and nothing says so.
   expect(rendered.size + 2).toBe(n);

@@ -129,6 +129,7 @@ export async function queueNotesDigest(input: {
      where concert_id = ${input.concertId}
        and moderation_status = 'APPROVED'
        and to_player_id in (${ids})
+       and deleted_at is null
      order by created_at
   `);
 

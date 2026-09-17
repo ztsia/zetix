@@ -99,6 +99,7 @@ export async function loadNotesScreen(concertId: number): Promise<NotesScreen | 
         -- them, and the only ones §14.2 calls natural wall candidates.
         left join players p on p.id = n.to_player_id
        where n.concert_id = ${concertId}
+         and n.deleted_at is null
        order by n.created_at desc
     `),
 

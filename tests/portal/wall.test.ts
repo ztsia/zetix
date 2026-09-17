@@ -146,6 +146,18 @@ describe('what reaches the wall', () => {
     expect(await loadPublicWall({ concertId, ...PUBLIC_WALL })).toEqual([]);
   });
 
+  /**
+   * `portal_notes` carries `deleted_at` like every soft-deletable table here.
+   * Every read path ignored it until a QA pass pointed it out — the wall
+   * first of all, since a note removed by an admin staying visible to the
+   * audience is the failure that matters.
+   */
+  it('never shows a soft-deleted note', async () => {
+    await note({ body: 'Removed since.' });
+    await sql`update portal_notes set deleted_at = now()`;
+    expect(await loadPublicWall({ concertId, ...PUBLIC_WALL })).toEqual([]);
+  });
+
   it('never shows another concert’s notes', async () => {
     const other = await createConcert('Elsewhere');
     await note({ body: 'Different night.', concert: other });
@@ -183,9 +195,23 @@ describe('ordering and bound', () => {
     expect(wall.map((n) => n.body)).toEqual(['Second.', 'First.']);
   });
 
-  it('is bounded, and the bound can be lowered', async () => {
-    for (let i = 0; i < 3; i += 1) await note({ body: `Note ${i}` });
-    expect(await loadPublicWall({ concertId, ...PUBLIC_WALL })).toHaveLength(3);
-    expect(await loadPublicWall({ concertId, ...PUBLIC_WALL, limit: 2 })).toHaveLength(2);
+  /**
+   * **No row cap.** An arbitrary `limit` lived here and was a defect of
+   * exactly the kind `CLAUDE.md` names — a number governing what the audience
+   * sees, in a `.ts` file, that no admin could raise — and it failed in the
+   * worst direction: a writer past the cap was told "On the public wall" by
+   * their own portal page while their note reached nobody.
+   *
+   * 122 rather than a round number, and well past the old cap of 100. A
+   * 400-seat hall makes this an ordinary evening rather than a stress test,
+   * which is the QA pass's point and the reason this test is here.
+   */
+  it('carries every published note, past any round number', async () => {
+    for (let i = 0; i < 122; i += 1) await note({ body: `Note ${i}` });
+
+    const wall = await loadPublicWall({ concertId, ...PUBLIC_WALL });
+    expect(wall).toHaveLength(122);
+    /** The oldest is present, which is the one a cap would have dropped. */
+    expect(wall.map((n) => n.body)).toContain('Note 0');
   });
 });

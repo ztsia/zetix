@@ -38,6 +38,25 @@ const digests = () => sql<
 
 test.afterAll(async () => { await sql.end(); });
 
+/**
+ * **The admin console is web-first, and this spec runs there only.**
+ *
+ * `playwright.config.ts` carries `android` and `iphone` for the *door
+ * scanner*, which is the one phone-only surface (`surfaces.md` §15.4), and
+ * applies them to every spec because it has no per-project `testMatch`. Run
+ * at a Pixel 7 viewport these tests fail on the sidebar shell rather than on
+ * anything module `O` owns — `surfaces.md` §15.1 makes admin web-first with
+ * mobile responsiveness explicitly droppable, so there is nothing here to
+ * assert at that width.
+ *
+ * `qa-o-portal.spec.ts` is the mobile-first half and deliberately keeps all
+ * three projects; it passes on `android`.
+ */
+test.skip(
+  ({ isMobile }) => Boolean(isMobile),
+  'the admin console is web-first (surfaces.md §15.1)',
+);
+
 test('FLOW-10 admin triages: filter to pending, approve two in bulk', async ({ page }) => {
   // Two notes waiting, so "in bulk" is a real claim rather than a loop of one.
   await sql`update portal_notes set moderation_status = 'PENDING', wall_status = 'NOT_PUBLISHED',

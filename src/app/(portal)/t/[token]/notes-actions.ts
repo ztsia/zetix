@@ -48,11 +48,27 @@ const REFUSED: NoteSubmitState = {
  */
 const NotePayload = z.object({
   body: z.string(),
-  /** `null` is "the whole orchestra", which is the same absence the column stores. */
-  toPlayerId: z.number().int().positive().nullable().catch(null),
+  /**
+   * `null` is "the whole orchestra", which is the same absence the column
+   * stores. `safe()` because forty digits is an integral float that `int()`
+   * accepts and Postgres rejects as a bigint.
+   */
+  toPlayerId: z.number().int().safe().positive().nullable().catch(null),
   displayName: z.string().nullable().catch(null),
   isAnonymous: z.boolean().catch(false),
 });
+
+/**
+ * How long a signature may be.
+ *
+ * **A sanity bound on an input, not an operational value** — the same
+ * distinction `savePracticalInfoAction` draws for its textarea cap. Nothing
+ * about the concert depends on it and no admin would ever want to tune it;
+ * what it stops is a name field used as a second note body, rendered at every
+ * other guest on the wall. `portal.note_max_length` is the cap that *is*
+ * operational, and it governs the note.
+ */
+const MAX_DISPLAY_NAME = 120;
 
 export async function submitNoteAction(
   token: string,
@@ -130,6 +146,12 @@ export async function submitNoteAction(
    * note is their words, including their name.
    */
   const displayName = input.displayName?.trim() || status.attendeeName;
+  if (displayName.length > MAX_DISPLAY_NAME) {
+    return {
+      ok: false,
+      errors: { displayName: `Please keep this under ${MAX_DISPLAY_NAME} characters.` },
+    };
+  }
 
   try {
     await getDb().execute(sql`

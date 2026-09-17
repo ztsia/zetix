@@ -202,6 +202,15 @@ describe('who is skipped, and why the admin is told', () => {
     expect(row.body_md).not.toContain('Still pending.');
   });
 
+  it('skips a player whose only notes have been deleted', async () => {
+    await note({ body: 'Removed since.', toPlayerId: playerIds[0], moderation: 'APPROVED' });
+    await sql`update portal_notes set deleted_at = now()`;
+
+    const result = await queueNotesDigest({ concertId, playerIds: [playerIds[0]] });
+    expect(result.queued).toBe(0);
+    expect(result.skipped[0].reason).toBe('NO_APPROVED_NOTES');
+  });
+
   it('skips a player with no email address, and names them', async () => {
     await note({ body: 'For you.', toPlayerId: playerIds[0] });
     await sql`update players set email = null where id = ${playerIds[0]}`;

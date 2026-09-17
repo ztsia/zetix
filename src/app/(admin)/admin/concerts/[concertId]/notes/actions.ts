@@ -22,7 +22,26 @@ import type { FormState } from '../../form-state';
  * says it does.
  */
 
-const ids = z.array(z.number().int().positive()).min(1).max(500);
+/**
+ * The id list a bulk action accepts.
+ *
+ * **`safe()` rather than `int()`**: forty digits is an integral float that
+ * `int()` accepts and Postgres rejects as a bigint. The cap is a request-size
+ * bound and not an operational value — but 500 was below what this screen can
+ * legitimately select, since a concert of several shows holds one note per
+ * seat per show and Select-all is one click. Raised past any hall this system
+ * will see, and the refusal below now says which limit was hit.
+ */
+const MAX_BULK = 5000;
+const ids = z.array(z.number().int().safe().positive()).min(1).max(MAX_BULK);
+
+/** The two refusals `ids` can produce, told apart — "too many" is not "none". */
+function idProblem(count: number, noun: 'note' | 'player'): string {
+  return count > MAX_BULK
+    ? `That is ${count} ${noun}s at once, and ${MAX_BULK} is the most this can take. ` +
+      'Narrow the filters and do it in batches.'
+    : `Select at least one ${noun}.`;
+}
 
 /**
  * Approve or hide, individually or in bulk (§14.2).
@@ -42,7 +61,7 @@ export async function moderateNotesAction(
   const user = await requireAdmin();
 
   const parsed = ids.safeParse(noteIds);
-  if (!parsed.success) return { error: 'Select at least one note.' };
+  if (!parsed.success) return { error: idProblem(noteIds.length, 'note') };
 
   try {
     const list = sql.join(parsed.data.map((id) => sql`${id}`), sql`, `);
@@ -58,6 +77,7 @@ export async function moderateNotesAction(
              updated_at   = now()
        where concert_id = ${concertId}
          and id in (${list})
+         and deleted_at is null
       returning id
     `);
 
@@ -109,13 +129,39 @@ export async function setNotesOnWallAction(
   await requireAdmin();
 
   const parsed = ids.safeParse(noteIds);
-  if (!parsed.success) return { error: 'Select at least one note.' };
+  if (!parsed.success) return { error: idProblem(noteIds.length, 'note') };
 
   try {
     const db = getDb();
     const list = sql.join(parsed.data.map((id) => sql`${id}`), sql`, `);
 
     if (published) {
+      /**
+       * **§13.4 permits publishing "only when the concert has the wall
+       * enabled".** Nothing unsafe reaches a guest without this — the read
+       * gates on `portal.public_wall_enabled` independently — but a screen
+       * that lets an admin mark forty notes PUBLISHED on a concert with no
+       * wall has told them forty times that something happened, and a guest
+       * sees none of it. The failure is in what the admin believes, which is
+       * the half no read-side gate can fix.
+       *
+       * It costs the curate-then-reveal workflow nothing:
+       * `portal.public_wall_visibility = ADMIN_ONLY` is the state for
+       * building the wall before anyone sees it, which is what that value is
+       * for. This asks only that the wall exists.
+       */
+      const [wallSetting] = await db.execute<{ enabled: unknown }>(sql`
+        select resolve_setting('portal.public_wall_enabled', null, null, ${concertId}) as enabled
+      `);
+      if (wallSetting?.enabled !== true) {
+        return {
+          error:
+            'This concert has no public wall yet. Turn on “Public wall enabled” in Settings ' +
+            'first — set visibility to ADMIN_ONLY if you want to choose the notes before ' +
+            'anyone can read them.',
+        };
+      }
+
       const addressed = await db.execute<{ id: string; full_name: string | null }>(sql`
         select n.id, p.full_name
           from portal_notes n
@@ -123,6 +169,7 @@ export async function setNotesOnWallAction(
          where n.concert_id = ${concertId}
            and n.id in (${list})
            and n.to_player_id is not null
+           and n.deleted_at is null
       `);
 
       if (addressed.length > 0) {
@@ -143,6 +190,7 @@ export async function setNotesOnWallAction(
              updated_at  = now()
        where concert_id = ${concertId}
          and id in (${list})
+         and deleted_at is null
          ${published ? sql`and to_player_id is null` : sql``}
       returning id
     `);
@@ -180,7 +228,7 @@ export async function queueDigestAction(
   await requireAdmin();
 
   const parsed = ids.safeParse(playerIds);
-  if (!parsed.success) return { error: 'Select at least one player.' };
+  if (!parsed.success) return { error: idProblem(playerIds.length, 'player') };
 
   try {
     const result = await queueNotesDigest({ concertId, playerIds: parsed.data });

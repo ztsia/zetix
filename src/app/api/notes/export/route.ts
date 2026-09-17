@@ -56,8 +56,15 @@ export async function GET(request: NextRequest) {
   if (user.role !== 'ADMIN') return NextResponse.json({ error: 'Admins only' }, { status: 403 });
 
   const params = request.nextUrl.searchParams;
+  /**
+   * **`isSafeInteger`, not `isInteger`.** Forty digits parses to a finite
+   * float that `Number.isInteger` happily accepts, and Postgres then rejects
+   * `1e+40` as a bigint with a `22P02` that reaches the client as a 500. The
+   * bound is the language's, not this concert's — every id in the schema is a
+   * bigint identity, and nothing above 2^53 was ever going to name a row.
+   */
   const concertId = Number(params.get('concertId'));
-  if (!Number.isInteger(concertId) || concertId <= 0) {
+  if (!Number.isSafeInteger(concertId) || concertId <= 0) {
     return NextResponse.json({ error: 'A concert is required.' }, { status: 400 });
   }
 
@@ -71,7 +78,7 @@ export async function GET(request: NextRequest) {
     (params.get('playerIds') ?? '')
       .split(',')
       .map((part) => Number(part.trim()))
-      .filter((id) => Number.isInteger(id) && id > 0),
+      .filter((id) => Number.isSafeInteger(id) && id > 0),
   );
 
   const screen = await loadNotesScreen(concertId);

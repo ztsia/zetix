@@ -171,6 +171,7 @@ export async function loadPortalNotes(input: {
              moderation_status, wall_status
         from portal_notes
        where attendee_id = ${input.attendeeId}
+         and deleted_at is null
        limit 1
     `),
   ]);

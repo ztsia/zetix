@@ -65,6 +65,34 @@ export const TOKENS: { token: string; description: string }[] = [
      */
     description: 'The double opt-in link. Only resolves on the "Verify your registration" message',
   },
+  {
+    token: 'player.name',
+    /**
+     * **The one message addressed to somebody who has no registration**
+     * (decision 22, `modules-v2.md` §3.1). Every other template greets its
+     * reader through `registration.contact_name`, which resolves to nothing on
+     * a digest — a player is not a registrant and has no contact row.
+     *
+     * This is why the seeded `player_notes_digest` body had to change: it
+     * opened with `registration.contact_name` and would have gone out as
+     * "Dear ,".
+     */
+    description: 'The player the digest is addressed to. Only resolves on the notes digest',
+  },
+  {
+    token: 'notes_list',
+    /**
+     * The digest's whole content: the notes written to this player, rendered as
+     * §14.2 renders them on the admin screen — `"{body}" — from {name}`, or
+     * Anonymous — so that the email and the console say the same thing.
+     */
+    description:
+      'The notes written to this player, as a list. Only resolves on the notes digest',
+  },
+  {
+    token: 'notes_count',
+    description: 'How many notes the digest carries. Only resolves on the notes digest',
+  },
 ];
 
 const TOKEN_NAMES = new Set(TOKENS.map((t) => t.token));

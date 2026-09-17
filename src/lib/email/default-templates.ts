@@ -122,13 +122,27 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       'Have the QR code ready to show the registration crew at the door, one per guest. Seating is unreserved.',
     ].join('\n'),
   },
+  /**
+   * **The one message addressed to a player rather than a registration**
+   * (decision 22). It greets through `{{ player.name }}`, because a player has
+   * no registration and `registration.contact_name` resolves to nothing here —
+   * the pre-V2 seed opened with it and would have sent "Dear ,".
+   *
+   * It names no show for the same kind of reason: a digest gathers every note
+   * written to this player across the concert, which may be more than one
+   * night, so `{{ show.name }}` has no single answer.
+   */
   player_notes_digest: {
     name: 'Notes from the audience',
     subject: 'Notes for you from {{ concert.name }}',
     bodyMd: [
-      'Dear {{ registration.contact_name }},',
+      'Dear {{ player.name }},',
       '',
-      'Members of the audience left these notes for you after **{{ show.name }}**.',
+      'Members of the audience left these notes for you after **{{ concert.name }}**.',
+      '',
+      '{{ notes_list }}',
+      '',
+      'Thank you for playing.',
     ].join('\n'),
   },
   feedback_request: {

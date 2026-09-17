@@ -172,7 +172,7 @@ export const CONCERT_NAV: NavGroup[] = [
         label: 'Notes',
         icon: MessageSquareQuote,
         description: 'The wall, and per-player grouping.',
-        module: 'V2',
+        module: 'O',
       },
       {
         slug: 'exports',

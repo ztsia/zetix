@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, AlertTitle } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,24 @@ import { TOKENS, markdownToEmailHtml, markdownToPlainText, renderTemplate } from
 import { editTemplateAction } from '../actions';
 
 export type PreviewRecipient = { label: string; context: Record<string, string> };
+
+/**
+ * Tokens whose value is computed from *this* recipient's own rows rather than
+ * entered on a record — so a blank one is a fact about the recipient, not a
+ * gap an admin can go and fill.
+ *
+ * Stated here rather than inferred from the name, because the difference
+ * changes the advice the warning gives and getting it wrong once cost a
+ * template its links.
+ */
+const PER_RECIPIENT_TOKENS = new Set([
+  'ticket_links',
+  'feedback_links',
+  'attendee_names',
+  'attendee_count',
+  'admitted_count',
+]);
+
 
 /**
  * The template editor of §11.3 and §11.5 — Markdown, a documented token list,
@@ -175,13 +193,40 @@ export function TemplateEditor({
                 `registration.round_label` is legitimately blank for plenty of
                 rows — but it must be on screen before the blast, not after.
               */}
+              {/*
+                **Two kinds of blank, and only one of them is yours to fix.**
+
+                A show or concert detail — the times, the venue — is blank
+                because nobody has entered it, and entering it is the fix. A
+                per-recipient list is blank because *this* party has no seats,
+                or none that were admitted; the next recipient may be fine, and
+                the data is not something you type in.
+
+                The old wording offered one instruction for both — "fill it in
+                on the show or concert, or drop it from the wording" — which on
+                a feedback message reads as "delete {{ feedback_links }}". That
+                sends a feedback email with no way to give feedback. So the
+                advice now separates the two and refuses the deletion outright.
+              */}
               {empty.length > 0 ? (
                 <Alert>
-                  <AlertTitle>
-                    Blank for this recipient: {empty.join(', ')} — the token resolves, but there is
-                    no value to put in it. Fill it in on the show or concert, or drop it from the
-                    wording.
-                  </AlertTitle>
+                  <AlertTitle>Blank for this recipient: {empty.join(', ')}</AlertTitle>
+                  <AlertDescription>
+                    {empty.some((token) => PER_RECIPIENT_TOKENS.has(token)) ? (
+                      <>
+                        A list like <code>ticket_links</code> or <code>feedback_links</code> is
+                        built per recipient — blank means this party has no ticketed seats, or
+                        none that were admitted. Check another recipient above before changing
+                        anything. <strong>Do not remove a link token to silence this</strong>: the
+                        message is the link.
+                      </>
+                    ) : (
+                      <>
+                        The token resolves, but there is no value behind it — fill it in on the
+                        show or concert, or drop it from the wording.
+                      </>
+                    )}
+                  </AlertDescription>
                 </Alert>
               ) : null}
 

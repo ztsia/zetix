@@ -4,6 +4,13 @@ import { useMemo, useState } from 'react';
 import { PlusIcon, XIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { FieldGroup, FieldLegend, FieldSet } from '@/components/ui/field';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -189,21 +196,47 @@ function FlatBlock({ block, answer, onChange, errors, disabled, flatVisible }: B
   const fields = blockFields(block);
 
   return (
-    <FieldGroup>
+    <FieldGroup className="gap-3">
       {fields
         .filter((field) => flatVisible.has(field.key))
         .map((field) => (
-          <FormFieldControl
-            key={field.key}
-            field={field}
-            path={fieldPathKey(block.id, field.key)}
-            value={values[field.key] ?? null}
-            onChange={(next) => onChange({ kind: 'flat', values: { ...values, [field.key]: next } })}
-            error={errors[fieldPathKey(block.id, field.key)]}
-            disabled={disabled}
-          />
+          <QuestionCard key={field.key}>
+            <FormFieldControl
+              field={field}
+              path={fieldPathKey(block.id, field.key)}
+              value={values[field.key] ?? null}
+              onChange={(next) =>
+                onChange({ kind: 'flat', values: { ...values, [field.key]: next } })
+              }
+              error={errors[fieldPathKey(block.id, field.key)]}
+              disabled={disabled}
+            />
+          </QuestionCard>
         ))}
     </FieldGroup>
+  );
+}
+
+/**
+ * One question, one card (spec/v2.md §8.2).
+ *
+ * **Because a run of questions in one column is a wall of text.** Spacing alone
+ * leaves the reader working out where one question ends and the next begins,
+ * and it gets worse exactly where it matters most — a grid or a scale is
+ * several controls under one legend, which reads as several questions until
+ * something draws the boundary. A card is that boundary, and it is the shape
+ * everyone answering this form has already met on Google Forms.
+ *
+ * **`overflow-visible` is load-bearing.** `Card` clips its content by default,
+ * which is right for an image or a table and wrong for a form: a focus ring sits
+ * just outside the control it belongs to, and a clipped ring is a keyboard user
+ * losing their place.
+ */
+function QuestionCard({ children }: { children: React.ReactNode }) {
+  return (
+    <Card size="sm" className="overflow-visible">
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }
 
@@ -247,22 +280,35 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
 
       {rows.map((row, index) => {
         const visible = visibleFieldKeys(fields, row);
+        /*
+         * A seat is a card too, and now a real one. This was a hand-rolled
+         * `rounded-lg border p-4`, which is `Card` with the theming left out —
+         * it missed `bg-card`, so on a tinted surface the seat had no fill and
+         * the border did all the work.
+         *
+         * `overflow-visible` for the same reason as `QuestionCard`: a focus
+         * ring on the last control in a seat must not be clipped by its own
+         * container.
+         */
         return (
-          <div key={index} className="rounded-lg border border-border p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <span className="text-sm font-medium">Seat {index + 1}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={disabled}
-                onClick={() => setRows(rows.filter((_, i) => i !== index))}
-              >
-                <XIcon aria-hidden />
-                Remove
-              </Button>
-            </div>
-            <FieldGroup>
+          <Card key={index} size="sm" className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Seat {index + 1}</CardTitle>
+              <CardAction>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={() => setRows(rows.filter((_, i) => i !== index))}
+                >
+                  <XIcon aria-hidden />
+                  Remove
+                </Button>
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
               {fields
                 .filter((field) => visible.has(field.key))
                 .map((field) => (
@@ -278,8 +324,9 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
                     disabled={disabled}
                   />
                 ))}
-            </FieldGroup>
-          </div>
+              </FieldGroup>
+            </CardContent>
+          </Card>
         );
       })}
 

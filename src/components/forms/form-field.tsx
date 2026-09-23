@@ -13,13 +13,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Star } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
-import type { FieldValue } from '@/lib/forms/field-types';
+import { isGridValue, type FieldValue, type GridValue } from '@/lib/forms/field-types';
 import type { FormField } from '@/lib/forms/schema';
 import { RichText } from './rich-text';
 
 /**
- * One field, in each of the ten types (spec/v2.md §8.2).
+ * One field, in each of the fifteen types (spec/v2.md §8.2).
  *
  * **Sized for the registration surface**, which is responsive and mostly read on
  * a phone (spec/surfaces.md §15.2). The design system's default control is `h-8`
@@ -71,6 +72,13 @@ export function FormFieldControl(props: FormFieldControlProps) {
   // rather than a label pointing at one input.
   if (field.type === 'radio' || field.type === 'multiselect') {
     return <ChoiceGroupField {...props} />;
+  }
+  // Same again: a row of numbers, a row of stars, and a grid are each several
+  // controls answering one question.
+  if (field.type === 'scale') return <ScaleField {...props} />;
+  if (field.type === 'rating') return <RatingField {...props} />;
+  if (field.type === 'grid_radio' || field.type === 'grid_checkbox') {
+    return <GridField {...props} />;
   }
 
   return (
@@ -164,6 +172,22 @@ function Control({
           {...shared}
           className={CONTROL}
           type="date"
+          value={asText(value)}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      );
+
+    case 'time':
+      /**
+       * Same argument as `date`: the OS time control — a wheel on iOS, a clock
+       * dial on Android — against a popover built for a pointer. It stores and
+       * reads `HH:MM`, which is what §8.2.3 promises the raw payload holds.
+       */
+      return (
+        <Input
+          {...shared}
+          className={CONTROL}
+          type="time"
           value={asText(value)}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -266,6 +290,272 @@ function toggle(field: FormField, value: FieldValue, option: string, on: boolean
   return (field.options ?? [])
     .map((o) => o.value)
     .filter((v) => (v === option ? on : chosen.includes(v)));
+}
+
+/** The numbers a scale offers, inclusive of both ends. */
+function steps(field: FormField): number[] {
+  const scale = field.scale ?? { min: 1, max: 5 };
+  return Array.from({ length: scale.max - scale.min + 1 }, (_, i) => scale.min + i);
+}
+
+/**
+ * `scale` — a row of numbered radios with optional labels under the ends.
+ *
+ * **A real radio group, not a `Slider`.** A slider always shows a value, so an
+ * untouched optional scale would read as answered — the same trap the `select`
+ * branch's explicit empty option exists to avoid — and it is far harder to hit
+ * a precise stop with a thumb than to tap one of five targets.
+ *
+ * The row scrolls rather than wraps: eleven stops at the widest setting will not
+ * fit a narrow phone, and a scale that wrapped onto two lines would read as two
+ * questions.
+ */
+function ScaleField({ field, path, value, onChange, error, disabled }: FormFieldControlProps) {
+  const scale = field.scale ?? { min: 1, max: 5 };
+  const chosen = typeof value === 'number' ? String(value) : asText(value);
+
+  return (
+    <FieldSet data-invalid={error ? true : undefined}>
+      <FieldLegend variant="label">
+        {field.label}
+        <RequiredMark required={field.required} />
+      </FieldLegend>
+      <Help field={field} path={path} />
+      {/*
+        **The scroll lives on a wrapper, not on the group.**
+
+        `overflow-x-auto` on its own is not a one-axis rule: CSS computes
+        `overflow-y` from `visible` to `auto` whenever the other axis is not
+        `visible`, so putting it straight on the radio group made the row a
+        two-axis scroll container and it rendered as a scrollable inner pane
+        with its own vertical bar.
+
+        So both axes are stated: sideways scrolls, vertical is clipped and can
+        never grow a bar of its own. `py-2`/`-mx-1`+`px-1` then give the focus
+        ring more room than it needs inside that box, so clipping the vertical
+        axis costs nothing visible.
+
+        `w-max min-w-full` is what keeps the bar away in the common case: the
+        row is as wide as its content but never narrower than the wrapper, so
+        five stops spread across the width with no scrolling, and eleven on a
+        narrow phone scroll rather than shrinking under a thumb.
+      */}
+      <div className="-mx-1 overflow-x-auto overflow-y-hidden px-1 py-2">
+        <RadioGroup
+          value={chosen}
+          onValueChange={(next) => onChange(next === '' ? null : Number(next))}
+          disabled={disabled}
+          className="flex w-max min-w-full flex-row justify-between gap-2"
+          aria-describedby={field.help_md ? `${path}-help` : undefined}
+        >
+          {steps(field).map((step) => (
+            <FieldLabel
+              key={step}
+              htmlFor={`${path}.${step}`}
+              className="flex min-w-11 shrink-0 flex-col items-center gap-2 font-normal"
+            >
+              <span className="text-sm tabular-nums">{step}</span>
+              <RadioGroupItem id={`${path}.${step}`} value={String(step)} />
+            </FieldLabel>
+          ))}
+        </RadioGroup>
+      </div>
+      {scale.min_label || scale.max_label ? (
+        <div className="flex justify-between gap-4 text-xs text-muted-foreground">
+          <span>{scale.min_label}</span>
+          <span className="text-right">{scale.max_label}</span>
+        </div>
+      ) : null}
+      {error ? <FieldError>{error}</FieldError> : null}
+    </FieldSet>
+  );
+}
+
+/**
+ * `rating` — the same answer as a scale, drawn as stars.
+ *
+ * **Buttons in a radio group's clothing.** Each star is a real radio input so
+ * the whole row is one tab stop and arrow keys move between values; the star is
+ * the label. Hover and selection both fill up to the star under the pointer,
+ * which is the behaviour everyone already expects from this control.
+ *
+ * A chosen rating can be cleared by picking it again — without that, an
+ * optional rating becomes required the instant it is touched by accident.
+ */
+function RatingField({ field, path, value, onChange, error, disabled }: FormFieldControlProps) {
+  const current = typeof value === 'number' ? value : 0;
+
+  return (
+    <FieldSet data-invalid={error ? true : undefined}>
+      <FieldLegend variant="label">
+        {field.label}
+        <RequiredMark required={field.required} />
+      </FieldLegend>
+      <Help field={field} path={path} />
+      <RadioGroup
+        value={current > 0 ? String(current) : ''}
+        onValueChange={(next) => onChange(next === '' ? null : Number(next))}
+        disabled={disabled}
+        className="group/rating flex flex-row gap-1 pt-1"
+        aria-describedby={field.help_md ? `${path}-help` : undefined}
+      >
+        {steps(field).map((step) => (
+          <FieldLabel
+            key={step}
+            htmlFor={`${path}.${step}`}
+            className="cursor-pointer p-1 font-normal"
+            title={`${step}`}
+            onClick={(event) => {
+              // Re-picking the current value clears it. The click has to be
+              // intercepted, because the radio would otherwise re-select what
+              // is already selected and fire no change at all.
+              if (current === step) {
+                event.preventDefault();
+                onChange(null);
+              }
+            }}
+          >
+            <RadioGroupItem id={`${path}.${step}`} value={String(step)} className="sr-only" />
+            <Star
+              aria-hidden
+              className={
+                step <= current
+                  ? 'size-7 fill-amber-400 text-amber-400 transition-colors'
+                  : 'size-7 text-muted-foreground/40 transition-colors'
+              }
+            />
+            <span className="sr-only">
+              {step} of {field.scale?.max ?? 5}
+            </span>
+          </FieldLabel>
+        ))}
+      </RadioGroup>
+      {error ? <FieldError>{error}</FieldError> : null}
+    </FieldSet>
+  );
+}
+
+/**
+ * `grid_radio` and `grid_checkbox` — one question, a control per cell.
+ *
+ * **A real `<table>`**, because that is what it is: screen readers announce the
+ * row and column header for the cell the cursor is in, which is the only way
+ * the control makes sense without sight of the grid. Hand-built `div`s would
+ * lose that, and a grid is precisely the type where losing it matters most.
+ *
+ * **It scrolls sideways on a phone**, with the row label pinned. Four columns
+ * of touch targets do not fit a narrow screen, and the alternative — collapsing
+ * each row into its own stacked question — silently turns one question into
+ * six, which is not what the admin built.
+ */
+function GridField({ field, path, value, onChange, error, disabled }: FormFieldControlProps) {
+  const multiple = field.type === 'grid_checkbox';
+  const rows = field.rows ?? [];
+  const columns = field.options ?? [];
+  const answers: GridValue = isGridValue(value) ? value : {};
+
+  function cell(row: string, column: string, on: boolean) {
+    const next: GridValue = { ...answers };
+    if (multiple) {
+      const chosen = Array.isArray(next[row]) ? (next[row] as string[]) : [];
+      // Rebuilt from the schema's column order, for the same reason
+      // `toggle` does it for a multiselect: two responses stay comparable.
+      const kept = columns
+        .map((option) => option.value)
+        .filter((v) => (v === column ? on : chosen.includes(v)));
+      if (kept.length > 0) next[row] = kept;
+      else delete next[row];
+    } else if (on) {
+      next[row] = column;
+    } else {
+      delete next[row];
+    }
+    onChange(next);
+  }
+
+  return (
+    <FieldSet data-invalid={error ? true : undefined}>
+      <FieldLegend variant="label">
+        {field.label}
+        <RequiredMark required={field.required} />
+      </FieldLegend>
+      <Help field={field} path={path} />
+      {/* Both axes stated, for the same reason as the scale above:
+          `overflow-x-auto` turns the vertical axis on too, and a grid that
+          grew its own vertical scrollbar would read as a broken inner pane. */}
+      <div className="-mx-1 overflow-x-auto overflow-y-hidden px-1 py-2">
+        <table className="w-full min-w-max border-collapse text-sm">
+          <thead>
+            <tr>
+              <td className="sticky left-0 bg-background" />
+              {columns.map((column) => (
+                <th
+                  key={column.value}
+                  scope="col"
+                  className="px-3 pb-2 text-center text-xs font-normal text-muted-foreground"
+                >
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.value} className="border-t">
+                <th
+                  scope="row"
+                  className="sticky left-0 bg-background py-3 pr-4 text-left font-normal"
+                >
+                  {row.label}
+                </th>
+                {columns.map((column) => {
+                  const id = `${path}.${row.value}.${column.value}`;
+                  const on = multiple
+                    ? Array.isArray(answers[row.value]) &&
+                      (answers[row.value] as string[]).includes(column.value)
+                    : answers[row.value] === column.value;
+                  return (
+                    <td key={column.value} className="px-3 py-3 text-center">
+                      {/*
+                        The label is visually hidden rather than absent: the
+                        table headers carry the meaning for a screen reader
+                        following the grid, but a control reached out of that
+                        context still has to say what it is.
+                      */}
+                      <label htmlFor={id} className="inline-flex cursor-pointer p-1">
+                        <span className="sr-only">
+                          {row.label}: {column.label}
+                        </span>
+                        {multiple ? (
+                          <Checkbox
+                            id={id}
+                            checked={on}
+                            disabled={disabled}
+                            onCheckedChange={(next) => cell(row.value, column.value, next === true)}
+                          />
+                        ) : (
+                          <input
+                            id={id}
+                            type="radio"
+                            name={`${path}.${row.value}`}
+                            checked={on}
+                            disabled={disabled}
+                            onChange={() => cell(row.value, column.value, true)}
+                            className="size-4 accent-primary"
+                          />
+                        )}
+                      </label>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {error ? <FieldError>{error}</FieldError> : null}
+    </FieldSet>
+  );
 }
 
 function CheckboxField({ field, path, value, onChange, error, disabled }: FormFieldControlProps) {

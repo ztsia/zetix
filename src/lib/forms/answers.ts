@@ -12,7 +12,7 @@
  */
 
 import { z } from 'zod';
-import { isBlank, type FieldValue } from './field-types';
+import { isBlank, isGridValue, type FieldValue, type GridValue } from './field-types';
 import { visibleFieldKeys } from './conditions';
 import {
   blockFields,
@@ -294,6 +294,57 @@ function coerce(field: FormField, value: unknown): FieldValue {
       if (typeof value === 'string') return value === '' ? [] : [value];
       return null;
     }
+    /**
+     * A scale and a rating are numbers on the wire as well as in the payload.
+     * A form post still arrives as a string, so both shapes are taken — but a
+     * fractional or non-finite one is not a step on the scale and coerces to
+     * `null`, which {@link checkValue} then reports against what was sent.
+     */
+    case 'scale':
+    case 'rating': {
+      const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+      return Number.isInteger(n) ? n : null;
+    }
+    /**
+     * A grid arrives as a row map. Entries are kept per row in the shape that
+     * row's type calls for, and anything else in the object is dropped rather
+     * than carried into `form_responses.raw` — the payload is the reader's
+     * answers, not whatever was posted under the field's name.
+     */
+    case 'grid_radio':
+    case 'grid_checkbox': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+      const multiple = field.type === 'grid_checkbox';
+      const columns = (field.options ?? []).map((option) => option.value);
+      const out: GridValue = {};
+      for (const [row, entry] of Object.entries(value as Record<string, unknown>)) {
+        if (multiple) {
+          const sent = Array.isArray(entry)
+            ? entry.filter((v): v is string => typeof v === 'string')
+            : typeof entry === 'string' && entry !== ''
+              ? [entry]
+              : [];
+          /**
+           * **Rebuilt in the schema's column order**, not the order it arrived.
+           * The stored copy is "the queryable copy of what it meant" (§8.2.3),
+           * and a column that is third in one response and first in the next is
+           * two answers an export cannot line up. `raw` still holds exactly
+           * what was posted.
+           *
+           * A value not in `columns` is not dropped here — {@link checkValue}
+           * has to see it to refuse the submission, and silently discarding it
+           * would turn a wrong answer into a missing one.
+           */
+          const known = columns.filter((column) => sent.includes(column));
+          const unknown = sent.filter((v) => !columns.includes(v));
+          const list = [...known, ...unknown];
+          if (list.length > 0) out[row] = list;
+        } else if (typeof entry === 'string' && entry.trim() !== '') {
+          out[row] = entry;
+        }
+      }
+      return out;
+    }
     default:
       return typeof value === 'string' ? value.trim() : null;
   }
@@ -316,6 +367,8 @@ const MAX_ANSWER_LENGTH = 4000;
 const emailValue = z.email();
 /** `YYYY-MM-DD`, which is what `<input type="date">` posts and what JSON holds. */
 const dateValue = z.iso.date();
+/** `HH:MM`, which is what `<input type="time">` posts. Seconds are allowed but never sent. */
+const timeValue = z.iso.time({ precision: -1 });
 
 /** The message to show against a control, or null when the answer is fine. */
 function checkValue(field: FormField, submitted: unknown, value: FieldValue): string | null {
@@ -354,6 +407,44 @@ function checkValue(field: FormField, submitted: unknown, value: FieldValue): st
     }
     case 'number':
       return typeof value === 'number' ? null : 'Enter a number.';
+    case 'time':
+      return timeValue.safeParse(value).success ? null : 'Enter a valid time.';
+    /**
+     * Held to the field's own bounds, not just to "is a number". A scale of 1–5
+     * that accepted 9 would export a column nobody can chart, and the bound is
+     * the one thing the reader's browser cannot be trusted to have enforced.
+     */
+    case 'scale':
+    case 'rating': {
+      const scale = field.scale;
+      if (typeof value !== 'number') return 'Choose one of the options listed.';
+      if (!scale) return null;
+      return value >= scale.min && value <= scale.max
+        ? null
+        : `Choose a number between ${scale.min} and ${scale.max}.`;
+    }
+    /**
+     * Every row that carries an answer must name a real row, and every value in
+     * it a real column. **A required grid means every row**, which `isBlank`
+     * cannot check because it cannot see the row list.
+     */
+    case 'grid_radio':
+    case 'grid_checkbox': {
+      if (!isGridValue(value)) return 'Choose from the options listed.';
+      const rows = new Set((field.rows ?? []).map((row) => row.value));
+      for (const [row, entry] of Object.entries(value)) {
+        if (!rows.has(row)) return 'Choose from the options listed.';
+        const chosen = Array.isArray(entry) ? entry : [entry];
+        if (!chosen.every((v) => offers(field, v))) return 'Choose from the options listed.';
+      }
+      if (field.required && rows.size > 0) {
+        const answered = Object.keys(value).length;
+        if (answered < rows.size) {
+          return answered === 0 ? 'This is required.' : 'Please answer every row.';
+        }
+      }
+      return null;
+    }
     default:
       return typeof value === 'string' ? null : `Enter a valid ${describe(field.type)}.`;
   }
@@ -373,6 +464,14 @@ function describe(type: FormField['type']): string {
       return 'number';
     case 'date':
       return 'date';
+    case 'time':
+      return 'time';
+    case 'scale':
+    case 'rating':
+      return 'choice';
+    case 'grid_radio':
+    case 'grid_checkbox':
+      return 'set of answers';
     default:
       return 'answer';
   }

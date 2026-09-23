@@ -25,7 +25,12 @@
  * would be a second implementation of the contract.
  */
 
-import { isChoiceType, type FieldType } from '@/lib/forms/field-types';
+import {
+  isGridType,
+  isOptionType,
+  isScaleType,
+  type FieldType,
+} from '@/lib/forms/field-types';
 import { RESERVED_FIELD_KEYS, systemFieldsFor } from '@/lib/forms/system-fields';
 import {
   blockFields,
@@ -323,6 +328,8 @@ export type FieldPatch = {
   type?: FieldType;
   required?: boolean;
   options?: { value: string; label: string }[] | null;
+  rows?: { value: string; label: string }[] | null;
+  scale?: FormField['scale'] | null;
   condition?: FormField['condition'] | null;
 };
 
@@ -397,19 +404,64 @@ export function updateField(
 
     if (patch.type !== undefined && patch.type !== next.type) {
       next.type = patch.type;
-      // Options belong to choice types and to no other. Carrying them across a
-      // retype would leave a list the renderer ignores and the contract
-      // refuses; dropping them is the honest half of the same rule.
-      if (isChoiceType(patch.type)) {
-        next.options = next.options?.length ? next.options : [{ value: 'option_1', label: 'Option 1' }];
+      /**
+       * Each of the three config shapes belongs to its own set of types and to
+       * no other. Carrying one across a retype would leave a list or a range
+       * the renderer ignores and the contract refuses; dropping it is the
+       * honest half of the same rule.
+       *
+       * **Provisioned rather than left empty**, because every one of these is
+       * required by the contract the moment the type is chosen — a grid with no
+       * rows will not save, and making the admin discover that by pressing Save
+       * is a worse introduction to the type than starting them with one row.
+       *
+       * A list already in hand survives the move: retyping a drop-down to a
+       * multiple-choice grid keeps the choices as the grid's columns, which is
+       * what an admin who built the list means by the change.
+       */
+      if (isOptionType(patch.type)) {
+        next.options = next.options?.length
+          ? next.options
+          : [{ value: 'option_1', label: 'Option 1' }];
       } else {
         delete next.options;
+      }
+
+      if (isGridType(patch.type)) {
+        next.rows = next.rows?.length ? next.rows : [{ value: 'row_1', label: 'Row 1' }];
+      } else {
+        delete next.rows;
+      }
+
+      /**
+       * A rating is a scale whose floor is 1, so the bottom is forced rather
+       * than carried: a 0–5 linear scale retyped to stars must not become a
+       * six-star rating whose first star means nothing.
+       */
+      if (isScaleType(patch.type)) {
+        const carried = next.scale;
+        next.scale =
+          patch.type === 'rating'
+            ? { min: 1, max: carried?.max ?? 5 }
+            : (carried ?? { min: 1, max: 5 });
+      } else {
+        delete next.scale;
       }
     }
 
     if (patch.options !== undefined) {
-      if (patch.options && isChoiceType(next.type)) next.options = patch.options;
+      if (patch.options && isOptionType(next.type)) next.options = patch.options;
       else delete next.options;
+    }
+
+    if (patch.rows !== undefined) {
+      if (patch.rows && isGridType(next.type)) next.rows = patch.rows;
+      else delete next.rows;
+    }
+
+    if (patch.scale !== undefined) {
+      if (patch.scale && isScaleType(next.type)) next.scale = patch.scale;
+      else delete next.scale;
     }
 
     if (patch.condition !== undefined) {

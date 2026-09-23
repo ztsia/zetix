@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Braces, Eye, Plus, Save } from 'lucide-react';
+import { Braces, ExternalLink, Eye, Plus, Save } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import { FormRenderer } from '@/components/forms/form-renderer';
 import { emptyAnswers, type FormAnswers } from '@/lib/forms/answers';
 import { COPY_TOKENS, type CopyValues } from '@/lib/forms/copy';
 import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
+import { PREVIEW_DRAFT_KEY, PREVIEW_PATH } from '@/lib/forms/preview-draft';
 import { BlockEditor } from './block-editor';
 import {
   addCustomBlock,
@@ -275,10 +276,55 @@ export function FormBuilder({
           {dirty ? 'Unsaved changes' : 'All changes saved'}
           {message && !dirty && <span className="text-foreground"> · {message}</span>}
         </div>
-        <Button type="button" onClick={save} disabled={isPending || !dirty || !parsed.ok}>
-          {isPending ? <Spinner /> : <Save />}
-          {isPending ? 'Saving…' : 'Save questions'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/*
+            **Opens the questions on screen, not the ones last saved.** The
+            draft is written to storage first and the preview reads it on mount,
+            so an admin can check an unsaved edit against the real surface
+            without committing it — which is the only reason to look before
+            saving.
+
+            A plain anchor with `target`, rather than `window.open`: the middle
+            click, the modifier click and the context menu all keep working, and
+            the browser treats it as the navigation it is. The draft is written
+            on `click`, which fires for every one of those.
+          */}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!parsed.ok}
+            nativeButton={false}
+            render={
+              <a
+                href={PREVIEW_PATH(formId)}
+                target="_blank"
+                rel="noopener"
+                onClick={() => {
+                  if (!parsed.ok) return;
+                  try {
+                    window.localStorage.setItem(
+                      PREVIEW_DRAFT_KEY(formId),
+                      JSON.stringify(parsed.schema),
+                    );
+                  } catch {
+                    // Storage can be full or blocked. The preview falls back to
+                    // the saved schema and says which it is showing, so the tab
+                    // is still useful — losing the draft is not worth losing
+                    // the preview.
+                  }
+                }}
+              />
+            }
+          >
+            <ExternalLink />
+            Open preview
+          </Button>
+
+          <Button type="button" onClick={save} disabled={isPending || !dirty || !parsed.ok}>
+            {isPending ? <Spinner /> : <Save />}
+            {isPending ? 'Saving…' : 'Save questions'}
+          </Button>
+        </div>
       </div>
 
       {error && (

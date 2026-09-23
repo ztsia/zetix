@@ -26,7 +26,15 @@
  */
 
 import { z } from 'zod';
-import { CHOICE_FIELD_TYPES, FIELD_TYPES, isChoiceType } from './field-types';
+import {
+  FIELD_TYPES,
+  GRID_FIELD_TYPES,
+  OPTION_FIELD_TYPES,
+  SCALE_FIELD_TYPES,
+  isGridType,
+  isOptionType,
+  isScaleType,
+} from './field-types';
 import { CONDITION_OPS, PRESENCE_OPS, type Condition } from './conditions';
 import { RESERVED_FIELD_KEYS, systemFieldsFor, type SystemFieldSpec } from './system-fields';
 
@@ -93,7 +101,26 @@ const fieldSchema = z.object({
   required: z.boolean().optional().default(false),
   help_md: z.string().max(2000).optional(),
   placeholder: z.string().max(200).optional(),
+  /** Choices down the page on a choice field; the **columns** on a grid. */
   options: z.array(optionSchema).max(100).optional(),
+  /** A grid's **rows**. Refused on every other type. */
+  rows: z.array(optionSchema).max(50).optional(),
+  /**
+   * The bounds for `scale` and `rating`.
+   *
+   * `min` is 0 or 1 because those are the only floors a linear scale offers
+   * and a rating is always 1; `max` stops at 10 because a row of eleven
+   * radio buttons does not fit a phone, which is the surface this is answered
+   * on (`surfaces.md` §15).
+   */
+  scale: z
+    .object({
+      min: z.number().int().min(0).max(1),
+      max: z.number().int().min(2).max(10),
+      min_label: z.string().max(100).optional(),
+      max_label: z.string().max(100).optional(),
+    })
+    .optional(),
   condition: conditionSchema.optional(),
 });
 
@@ -403,14 +430,19 @@ function checkFieldShape(field: FormField, at: (string | number)[], ctx: Ctx): v
     );
   }
 
-  if (isChoiceType(field.type)) {
+  /**
+   * `options` means "the choices down the page" on a choice field and "the
+   * columns" on a grid, so both require it and everything else refuses it.
+   */
+  if (isOptionType(field.type)) {
+    const what = isGridType(field.type) ? 'column' : 'option';
     if (!field.options || field.options.length === 0) {
-      reject(ctx, [...at, 'options'], `A "${field.type}" field needs at least one option.`);
+      reject(ctx, [...at, 'options'], `A "${field.type}" field needs at least one ${what}.`);
     } else {
       const seen = new Set<string>();
       for (const [i, option] of field.options.entries()) {
         if (seen.has(option.value)) {
-          reject(ctx, [...at, 'options', i, 'value'], `Duplicate option value "${option.value}".`);
+          reject(ctx, [...at, 'options', i, 'value'], `Duplicate ${what} value "${option.value}".`);
         }
         seen.add(option.value);
       }
@@ -419,7 +451,54 @@ function checkFieldShape(field: FormField, at: (string | number)[], ctx: Ctx): v
     reject(
       ctx,
       [...at, 'options'],
-      `Only ${CHOICE_FIELD_TYPES.join(', ')} fields take options; "${field.type}" does not.`,
+      `Only ${OPTION_FIELD_TYPES.join(', ')} fields take options; "${field.type}" does not.`,
+    );
+  }
+
+  /**
+   * `rows` is the grid's other axis. A grid with columns and no rows renders a
+   * header and nothing under it, which is a form that cannot be answered —
+   * refused here rather than discovered by the first guest.
+   */
+  if (isGridType(field.type)) {
+    if (!field.rows || field.rows.length === 0) {
+      reject(ctx, [...at, 'rows'], `A "${field.type}" field needs at least one row.`);
+    } else {
+      const seen = new Set<string>();
+      for (const [i, row] of field.rows.entries()) {
+        if (seen.has(row.value)) {
+          reject(ctx, [...at, 'rows', i, 'value'], `Duplicate row value "${row.value}".`);
+        }
+        seen.add(row.value);
+      }
+    }
+  } else if (field.rows) {
+    reject(
+      ctx,
+      [...at, 'rows'],
+      `Only ${GRID_FIELD_TYPES.join(', ')} fields take rows; "${field.type}" does not.`,
+    );
+  }
+
+  /**
+   * A scale needs its bounds, and they have to be the right way round. The zod
+   * shape already caps each end; what it cannot see is the pair.
+   */
+  if (isScaleType(field.type)) {
+    if (!field.scale) {
+      reject(ctx, [...at, 'scale'], `A "${field.type}" field needs a scale.`);
+    } else if (field.scale.max <= field.scale.min) {
+      reject(
+        ctx,
+        [...at, 'scale', 'max'],
+        `A scale's top (${field.scale.max}) must be above its bottom (${field.scale.min}).`,
+      );
+    }
+  } else if (field.scale) {
+    reject(
+      ctx,
+      [...at, 'scale'],
+      `Only ${SCALE_FIELD_TYPES.join(', ')} fields take a scale; "${field.type}" does not.`,
     );
   }
 }

@@ -240,7 +240,16 @@ export function keysInScope(schema: FormSchema, blockIndex: number): Set<string>
   );
 }
 
-export function addField(schema: FormSchema, blockIndex: number, label = 'New question'): FormSchema {
+/**
+ * Add a question — at the end of the block, or straight after the one the
+ * admin is working on, which is where Google Forms' "Add question" puts it.
+ */
+export function addField(
+  schema: FormSchema,
+  blockIndex: number,
+  label = 'New question',
+  afterIndex?: number,
+): FormSchema {
   const block = schema.blocks[blockIndex];
   if (!block) return schema;
 
@@ -251,7 +260,65 @@ export function addField(schema: FormSchema, blockIndex: number, label = 'New qu
     system: false,
     required: false,
   };
-  return replaceBlock(schema, blockIndex, withFields(block, [...blockFields(block), field]));
+  const fields = [...blockFields(block)];
+  const at =
+    afterIndex === undefined ? fields.length : Math.max(0, Math.min(afterIndex + 1, fields.length));
+  fields.splice(at, 0, field);
+  return replaceBlock(schema, blockIndex, withFields(block, fields));
+}
+
+/**
+ * Google Forms' "Duplicate": a copy of a custom question, straight after it.
+ *
+ * **A system field is never copied.** The copy would either wear the reserved
+ * key — two `contact_email`s, which the contract refuses — or a fresh custom key
+ * under the same label, which is a second "Email" question whose answer reaches
+ * no column. Neither is what the admin meant.
+ *
+ * The copy gets its own key, derived from the label the way any new question's
+ * is. Its condition comes with it, since it reads an earlier question and the
+ * copy sits later still.
+ */
+export function duplicateField(
+  schema: FormSchema,
+  blockIndex: number,
+  fieldIndex: number,
+): FormSchema {
+  const block = schema.blocks[blockIndex];
+  if (!block) return schema;
+
+  const fields = [...blockFields(block)];
+  const field = fields[fieldIndex];
+  if (!field || field.system) return schema;
+
+  const copy: FormField = structuredClone(field);
+  copy.key = keyFromLabel(field.label, keysInScope(schema, blockIndex));
+  fields.splice(fieldIndex + 1, 0, copy);
+  return replaceBlock(schema, blockIndex, withFields(block, fields));
+}
+
+/**
+ * Drag-and-drop's arbitrary move of a question within its block, held to the
+ * same rule as the move buttons: a condition left reading a question that now
+ * sits below it is cleared rather than left permanently false.
+ */
+export function reorderField(
+  schema: FormSchema,
+  blockIndex: number,
+  from: number,
+  to: number,
+): FormSchema {
+  const block = schema.blocks[blockIndex];
+  if (!block) return schema;
+
+  const fields = [...blockFields(block)];
+  const field = fields[from];
+  const clamped = Math.max(0, Math.min(to, fields.length - 1));
+  if (!field || clamped === from) return schema;
+
+  fields.splice(from, 1);
+  fields.splice(clamped, 0, field);
+  return dropOrphanedConditions(replaceBlock(schema, blockIndex, withFields(block, fields)));
 }
 
 /** Put a removed system field back, as the catalogue row it was. */

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { FormCard } from '@/components/forms/form-surface';
 import { getForm, getResponses, isResponseSortKey } from '../../queries';
 import { ResponsesTable } from './responses-table';
 import { responseRow } from './rows';
@@ -57,23 +56,13 @@ export default async function ResponsesPage({
   const zone = form.timeZone ?? 'UTC';
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          nativeButton={false}
-          render={<Link href={`/admin/concerts/${concertId}/forms/${formId}`} />}
-        >
-          <ArrowLeft />
-          {form.title}
-        </Button>
-      </div>
-
+    // One white card on the form canvas, as Google Forms' Responses tab is.
+    <FormCard className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Responses</h1>
+          <h2 className="text-lg">
+            {form.responses === 1 ? '1 response' : `${form.responses} responses`}
+          </h2>
           <p className="text-muted-foreground text-sm">
             What people submitted, as they submitted it. Seats granted are on the{' '}
             <Link
@@ -109,6 +98,6 @@ export default async function ResponsesPage({
         basePath={basePath}
         timeZone={zone}
       />
-    </div>
+    </FormCard>
   );
 }

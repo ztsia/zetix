@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { ClockAlertIcon, TicketCheckIcon } from 'lucide-react';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { loadEditableResponse } from '@/lib/registrations/edit';
+import { FormHeaderCard } from '@/components/forms/form-surface';
 import { FormNotFound } from '../states';
 import { EditResponseForm } from './edit-form';
 
@@ -50,7 +51,7 @@ export default async function EditResponsePage({
    */
   if (response.closedReason === 'TICKETS_SENT') {
     return (
-      <Empty className="border-0">
+      <Empty className="bg-form-card rounded-lg border border-solid border-form-line">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <TicketCheckIcon />
@@ -68,7 +69,7 @@ export default async function EditResponsePage({
 
   if (response.closedReason === 'WINDOW') {
     return (
-      <Empty className="border-0">
+      <Empty className="bg-form-card rounded-lg border border-solid border-form-line">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <ClockAlertIcon />
@@ -84,16 +85,16 @@ export default async function EditResponsePage({
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">
-          Change your registration
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          You can correct names and contact details, or release a seat you no longer need. Released
-          seats go back to the pool straight away.
-        </p>
-      </header>
+    <div className="flex flex-col gap-3">
+      <FormHeaderCard
+        title="Change your registration"
+        description={
+          <p className="text-muted-foreground">
+            You can correct names and contact details, or release a seat you no longer need.
+            Released seats go back to the pool straight away.
+          </p>
+        }
+      />
 
       <EditResponseForm editToken={token} response={response} />
     </div>

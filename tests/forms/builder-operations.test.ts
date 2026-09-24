@@ -7,10 +7,12 @@ import {
   deleteBlock,
   deleteField,
   dropOrphanedConditions,
+  duplicateField,
   keyFromLabel,
   moveBlock,
   moveField,
   reorderBlock,
+  reorderField,
   restorableSystemFields,
   restoreSystemField,
   updateField,
@@ -400,5 +402,64 @@ describe('a draft question’s key follows its label', () => {
     const keys = blockFields(renamed.blocks[index]).map((field) => field.key);
     expect(new Set(keys).size).toBe(keys.length);
     stillValid(renamed, 'after a colliding rename');
+  });
+});
+
+describe('the Google-Forms-shaped edits: insert, duplicate, drag', () => {
+  function questions(): { schema: FormSchema; index: number } {
+    let schema = addCustomBlock(blankFormSchema('FEEDBACK'), 'Questions');
+    const index = schema.blocks.length - 1;
+    schema = addField(schema, index, 'First');
+    schema = addField(schema, index, 'Second');
+    schema = addField(schema, index, 'Third');
+    return { schema, index };
+  }
+
+  const labels = (schema: FormSchema, index: number) =>
+    blockFields(schema.blocks[index]).map((field) => field.label);
+
+  it('adds a question straight after the one being edited', () => {
+    const { schema, index } = questions();
+    const next = addField(schema, index, 'Inserted', 0);
+    expect(labels(next, index)).toEqual(['First', 'Inserted', 'Second', 'Third']);
+    stillValid(next, 'after inserting mid-block');
+  });
+
+  it('duplicates a custom question under a key of its own', () => {
+    const { schema, index } = questions();
+    const withOptions = updateField(schema, index, 1, { type: 'radio' });
+    const next = duplicateField(withOptions, index, 1);
+    const fields = blockFields(next.blocks[index]);
+
+    expect(fields.map((field) => field.label)).toEqual(['First', 'Second', 'Second', 'Third']);
+    expect(fields[2].key).not.toBe(fields[1].key);
+    expect(fields[2].options).toEqual(fields[1].options);
+    // A copy, not a shared reference: editing it must not edit the original.
+    expect(fields[2].options).not.toBe(fields[1].options);
+    stillValid(next, 'after duplicating');
+  });
+
+  it('refuses to duplicate a system field, which would be a second email question', () => {
+    const schema = blankFormSchema('PUBLIC');
+    const registrant = blockIndexOfType(schema, 'REGISTRANT');
+    const email = fieldIndex(schema, registrant, 'contact_email');
+    expect(duplicateField(schema, registrant, email)).toBe(schema);
+  });
+
+  it('drags a question to a new place in its block', () => {
+    const { schema, index } = questions();
+    const next = reorderField(schema, index, 0, 2);
+    expect(labels(next, index)).toEqual(['Second', 'Third', 'First']);
+    stillValid(next, 'after dragging');
+  });
+
+  it('clears a condition dragged above the question it reads', () => {
+    let { schema } = questions();
+    const { index } = questions();
+    schema = updateField(schema, index, 1, { condition: { field: 'first', op: 'answered' } });
+
+    const next = reorderField(schema, index, 1, 0);
+    expect(blockFields(next.blocks[index])[0].condition).toBeUndefined();
+    stillValid(next, 'after dragging a rule above its source');
   });
 });

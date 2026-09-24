@@ -1,11 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Inbox } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { resolveFormCopy } from '@/lib/forms/resolve-copy';
 import { resolveRepeaterLimits } from '@/lib/forms/limits';
 import { parseFormSchema } from '@/lib/forms/schema';
@@ -13,15 +9,14 @@ import { blankFormSchema } from '@/lib/forms/templates';
 import { FormBuilder } from '../builder/form-builder';
 import { getForm, getFormCascade } from '../queries';
 import { PARTY_CAP_KEY, vestigialCapWarning } from '../party-cap';
-import { FormSettings } from './form-settings';
-import { ResolvedFacts } from './resolved-facts';
-import { StatusControls } from './status-controls';
 
-export const metadata: Metadata = { title: 'Form' };
+export const metadata: Metadata = { title: 'Questions' };
 
 /**
- * `/admin/concerts/{id}/forms/{formId}` — the builder, the settings and the
- * facts this form inherits (spec/v2.md §8.2, spec/admin.md §14.1).
+ * `/admin/concerts/{id}/forms/{formId}` — the Questions tab: the builder
+ * (spec/v2.md §8.2, spec/admin.md §14.1). The frame around it — title, status,
+ * publish, the three tabs — is `layout.tsx`; Settings and Responses are their
+ * own routes beside this one.
  *
  * A Server Component, because everything the builder needs to draw a faithful
  * preview is resolved here: the copy tokens and the repeater caps both come
@@ -33,23 +28,6 @@ export const metadata: Metadata = { title: 'Form' };
  * and where to enter it. Rendering "add up to 0 guests" because nobody has
  * configured the segment yet is the failure §2.1 exists to prevent.
  */
-
-/** `datetime-local` wants `YYYY-MM-DDTHH:mm` in the venue's zone, not an ISO instant. */
-function toLocalInput(value: Date | null, timeZone: string | null): string {
-  if (!value || !timeZone) return '';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(value);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
-  const hour = get('hour') === '24' ? '00' : get('hour');
-  return `${get('year')}-${get('month')}-${get('day')}T${hour}:${get('minute')}`;
-}
 
 export default async function FormPage({
   params,
@@ -98,58 +76,9 @@ export default async function FormPage({
   );
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          nativeButton={false}
-          render={<Link href={`/admin/concerts/${concertId}/forms`} />}
-        >
-          <ArrowLeft />
-          All forms
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold">
-            {form.title}
-            {form.roundLabel && <Badge variant="outline">{form.roundLabel}</Badge>}
-            <Badge variant={form.status === 'OPEN' ? 'default' : 'secondary'}>
-              {form.status.toLowerCase()}
-            </Badge>
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            {form.showName}
-            {form.segmentName ? ` · ${form.segmentName}` : ''} · /f/{form.slug} · schema v
-            {form.schemaVersion}
-          </p>
-        </div>
-
-        <div className="flex flex-col items-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            nativeButton={false}
-            render={<Link href={`/admin/concerts/${concertId}/forms/${formId}/responses`} />}
-          >
-            <Inbox />
-            {form.responses === 1 ? '1 response' : `${form.responses} responses`}
-          </Button>
-          <StatusControls
-            concertId={concertId}
-            formId={formId}
-            status={form.status}
-            responses={form.responses}
-            title={form.title}
-          />
-        </div>
-      </div>
-
+    <>
       {!parsed.ok && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mx-auto max-w-[770px]">
           <AlertTitle>This form&rsquo;s saved questions could not be read</AlertTitle>
           <AlertDescription className="whitespace-pre-wrap">
             {parsed.message}
@@ -160,14 +89,14 @@ export default async function FormPage({
       )}
 
       {capWarning && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mx-auto max-w-[770px]">
           <AlertTitle>This form stores a party cap that nothing reads</AlertTitle>
           <AlertDescription>{capWarning}</AlertDescription>
         </Alert>
       )}
 
       {!limits.ok && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mx-auto max-w-[770px]">
           <AlertTitle>This form cannot offer seats yet</AlertTitle>
           <AlertDescription>
             Nothing has set{' '}
@@ -190,57 +119,18 @@ export default async function FormPage({
         </Alert>
       )}
 
-      <Tabs defaultValue="questions">
-        <TabsList>
-          <TabsTrigger value="questions">Questions</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-          <TabsTrigger value="inherited">Inherited</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="questions" className="pt-4">
-          <FormBuilder
-            concertId={concertId}
-            formId={formId}
-            initialSchema={schema}
-            limits={limits.ok ? limits.limits : {}}
-            copy={copy}
-            readOnly={form.status === 'CLOSED'}
-            // A key is frozen the moment a form can take an answer, because
-            // answers are stored under it (spec/v2.md §8.2.3).
-            canRekey={form.status === 'DRAFT'}
-          />
-        </TabsContent>
-
-        <TabsContent value="settings" className="pt-4">
-          <FormSettings
-            concertId={concertId}
-            formId={formId}
-            timeZone={form.timeZone}
-            defaults={{
-              title: form.title,
-              roundLabel: form.roundLabel,
-              slug: form.slug,
-              descriptionMd: form.descriptionMd,
-              confirmationMessageMd: form.confirmationMessageMd,
-              opensAt: toLocalInput(form.opensAt, form.timeZone),
-              closesAt: toLocalInput(form.closesAt, form.timeZone),
-              allowEditUntil: toLocalInput(form.allowEditUntil, form.timeZone),
-              maxResponses: form.maxResponses,
-              oneResponsePerIdentity: form.oneResponsePerIdentity ?? false,
-              autoCloseOnCapacity: form.autoCloseOnCapacity ?? false,
-            }}
-          />
-        </TabsContent>
-
-        <TabsContent value="inherited" className="pt-4">
-          <ResolvedFacts
-            concertId={concertId}
-            segmentId={form.segmentId}
-            cascade={cascade}
-            timeZone={form.timeZone}
-          />
-        </TabsContent>
-      </Tabs>
-    </div>
+      <FormBuilder
+        concertId={concertId}
+        formId={formId}
+        initialSchema={schema}
+        initialTitle={form.title}
+        initialDescription={form.descriptionMd ?? ''}
+        copy={copy}
+        readOnly={form.status === 'CLOSED'}
+        // A key is frozen the moment a form can take an answer, because
+        // answers are stored under it (spec/v2.md §8.2.3).
+        canRekey={form.status === 'DRAFT'}
+      />
+    </>
   );
 }

@@ -46,7 +46,7 @@ export default async function VerifyPage({
   if (outcome.state === 'UNKNOWN') return <FormNotFound />;
 
   return (
-    <Empty className="border-0">
+    <Empty className="bg-form-card rounded-lg border border-solid border-form-line">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           {outcome.state === 'VERIFIED' ? <CircleCheckIcon /> : <MailCheckIcon />}

@@ -4,7 +4,8 @@ import { useMemo, useState, useSyncExternalStore } from 'react';
 import { Eye, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RichText } from '@/components/forms/rich-text';
-import { FormRenderer } from '@/components/forms/form-renderer';
+import { FormRenderer, hasRequiredQuestion } from '@/components/forms/form-renderer';
+import { FormHeaderCard } from '@/components/forms/form-surface';
 import { emptyAnswers, type FormAnswers } from '@/lib/forms/answers';
 import type { CopyValues } from '@/lib/forms/copy';
 import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
@@ -127,7 +128,7 @@ export function FormPreview({
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-3">
       {/*
         A banner, not a watermark. It has to be unmissable — this page looks
         exactly like the real form, which is the point, and an admin who forgot
@@ -135,7 +136,7 @@ export function FormPreview({
         open. It scrolls away with the page rather than sticking, because a
         fixed bar would change the layout it exists to show faithfully.
       */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed bg-muted/40 px-4 py-3">
+      <div className="bg-form-card border-form-accent flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed px-4 py-3">
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Eye className="size-4 shrink-0" />
           <span>
@@ -159,14 +160,11 @@ export function FormPreview({
         </Button>
       </div>
 
-      <header className="flex flex-col gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">{title}</h1>
-        {description ? (
-          <div className="text-sm text-muted-foreground">
-            <RichText markdown={description} />
-          </div>
-        ) : null}
-      </header>
+      <FormHeaderCard
+        title={title}
+        description={description ? <RichText markdown={description} /> : null}
+        requiredNote={hasRequiredQuestion(schema)}
+      />
 
       <FormRenderer
         schema={schema}
@@ -176,13 +174,21 @@ export function FormPreview({
         onValueChange={setAnswers}
       />
 
-      <div className="flex flex-col gap-2">
-        <Button type="button" size="lg" disabled className="w-full">
-          Submit
+      <div className="mt-1 flex items-center justify-between gap-3 pb-6">
+        <div className="flex flex-col gap-1">
+          <Button type="button" disabled className="self-start">
+            Submit
+          </Button>
+          <p className="text-muted-foreground text-xs">Nothing is sent from a preview.</p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => setAnswers(emptyAnswers(schema, limits))}
+          className="self-start"
+        >
+          Clear form
         </Button>
-        <p className="text-center text-xs text-muted-foreground">
-          Nothing is sent from a preview.
-        </p>
       </div>
     </div>
   );

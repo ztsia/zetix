@@ -5,33 +5,34 @@ import { useRouter } from 'next/navigation';
 import { Save } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { saveFormSettingsAction } from '../actions';
+import {
+  SettingRow,
+  SettingsCard,
+  SettingsGroup,
+  SettingsSubheading,
+} from './settings/settings-layout';
 
 /**
- * The form's own settings — its window, its limits and its copy (spec/v2.md §8.3).
+ * The form's own settings — its window, its limits and its copy (spec/v2.md
+ * §8.3), laid out as Google Forms' Settings tab: groups that fold, and a row per
+ * setting with its control at the right.
  *
  * **What is not on this screen is the point of it.** Party size, base quota,
  * extra rows and the claim deadline are *segment* values (`domain.md` §6) and
- * they resolve through the cascade, so they appear here as read-only facts with
- * a link to where they are set. Offering them as inputs would write a fifth
- * cascade level that `resolve_setting()` does not have — and the admin would
- * have configured something that nothing reads (`party-cap.ts`, decision 43).
+ * they resolve through the cascade, so they appear below this card as read-only
+ * facts with a link to where they are set. Offering them as inputs would write a
+ * fifth cascade level that `resolve_setting()` does not have — and the admin
+ * would have configured something that nothing reads (`party-cap.ts`, decision
+ * 43).
  *
- * Everything that *is* here is a property of this form rather than of the
- * audience it serves: when it opens, how many responses it takes, whether one
- * person may answer twice, and how long they may go back and correct it.
+ * **The title and introduction are edited on the Questions tab**, in the header
+ * card above the first question, as on Google Forms, and this save does not
+ * touch them — so a Settings tab left open cannot undo a newer title.
  */
 
 export function FormSettings({
@@ -43,10 +44,8 @@ export function FormSettings({
   concertId: number;
   formId: number;
   defaults: {
-    title: string;
     roundLabel: string | null;
     slug: string;
-    descriptionMd: string | null;
     confirmationMessageMd: string | null;
     opensAt: string;
     closesAt: string;
@@ -61,6 +60,8 @@ export function FormSettings({
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [editingConfirmation, setEditingConfirmation] = useState(false);
+  const [confirmation, setConfirmation] = useState(defaults.confirmationMessageMd ?? '');
   const [isPending, startTransition] = useTransition();
 
   function submit(formData: FormData) {
@@ -73,12 +74,13 @@ export function FormSettings({
         return;
       }
       setMessage(result.message ?? 'Saved.');
+      setEditingConfirmation(false);
       router.refresh();
     });
   }
 
   return (
-    <form action={submit} className="flex max-w-2xl flex-col gap-6">
+    <form action={submit} className="flex flex-col gap-3">
       {!timeZone && (
         <Alert variant="destructive">
           <AlertTitle>This concert has no timezone</AlertTitle>
@@ -89,173 +91,209 @@ export function FormSettings({
         </Alert>
       )}
 
-      <FieldSet>
-        <FieldLegend>Identity</FieldLegend>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`${id}-title`}>Title</FieldLabel>
-            <Input id={`${id}-title`} name="title" required defaultValue={defaults.title} />
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`${id}-round`}>Round</FieldLabel>
-            <Input
-              id={`${id}-round`}
-              name="roundLabel"
-              defaultValue={defaults.roundLabel ?? ''}
-              placeholder="Round 1"
+      <SettingsCard title="Settings">
+        <SettingsGroup
+          title="Responses"
+          description="Manage how responses are collected and protected"
+        >
+          <SettingRow
+            label="Limit to 1 response per person"
+            hint="Keyed on the player link, or the email address. Someone returning edits their answer rather than starting a second one."
+            htmlFor={`${id}-identity`}
+          >
+            <Switch
+              id={`${id}-identity`}
+              name="oneResponsePerIdentity"
+              defaultChecked={defaults.oneResponsePerIdentity}
             />
-            <FieldDescription>
-              How two rounds on the same segment are told apart.
-            </FieldDescription>
-          </Field>
+          </SettingRow>
 
-          <Field>
-            <FieldLabel htmlFor={`${id}-slug`}>Link</FieldLabel>
-            <Input id={`${id}-slug`} name="slug" required defaultValue={defaults.slug} />
-            <FieldDescription>
-              <code className="text-xs">/f/{defaults.slug}</code> — unique across every
-              concert. Changing it breaks any link already shared.
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`${id}-description`}>Introduction</FieldLabel>
-            <Textarea
-              id={`${id}-description`}
-              name="descriptionMd"
-              rows={3}
-              defaultValue={defaults.descriptionMd ?? ''}
-            />
-            <FieldDescription>Shown above the first question.</FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`${id}-confirmation`}>Confirmation message</FieldLabel>
-            <Textarea
-              id={`${id}-confirmation`}
-              name="confirmationMessageMd"
-              rows={3}
-              defaultValue={defaults.confirmationMessageMd ?? ''}
-            />
-            <FieldDescription>
-              Shown after a successful submission, above the seats granted.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </FieldSet>
-
-      <FieldSet>
-        <FieldLegend>Window</FieldLegend>
-        <FieldDescription>
-          {timeZone
-            ? `Times are the venue's clock (${timeZone}), never the reader's.`
-            : 'Set a concert timezone before entering times.'}
-        </FieldDescription>
-        <FieldGroup>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={`${id}-opens`}>Opens</FieldLabel>
-              <Input
-                id={`${id}-opens`}
-                name="opensAt"
-                type="datetime-local"
-                defaultValue={defaults.opensAt}
-                disabled={!timeZone}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${id}-closes`}>Closes</FieldLabel>
-              <Input
-                id={`${id}-closes`}
-                name="closesAt"
-                type="datetime-local"
-                defaultValue={defaults.closesAt}
-                disabled={!timeZone}
-              />
-            </Field>
-          </div>
-
-          <Field>
-            <FieldLabel htmlFor={`${id}-edit-until`}>Editable until</FieldLabel>
-            <Input
-              id={`${id}-edit-until`}
-              name="allowEditUntil"
-              type="datetime-local"
-              defaultValue={defaults.allowEditUntil}
-              disabled={!timeZone}
-            />
-            <FieldDescription>
-              How long a registrant may go back and correct their answers. An edit may
-              correct or reduce, never add seats.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </FieldSet>
-
-      <FieldSet>
-        <FieldLegend>Limits</FieldLegend>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`${id}-max`}>Maximum responses</FieldLabel>
+          <SettingRow
+            label="Maximum responses"
+            hint={
+              <>
+                Blank for no limit. This caps <em>responses</em>, not seats — capacity is the
+                segment&rsquo;s, and the allocation engine enforces it.
+              </>
+            }
+            htmlFor={`${id}-max`}
+          >
             <Input
               id={`${id}-max`}
               name="maxResponses"
               type="number"
               min={1}
               inputMode="numeric"
+              placeholder="No limit"
+              className="w-32"
               defaultValue={defaults.maxResponses ?? ''}
             />
-            <FieldDescription>
-              Blank for no limit. This caps <em>responses</em>, not seats — capacity is
-              the segment&rsquo;s, and the allocation engine is what enforces it.
-            </FieldDescription>
-          </Field>
+          </SettingRow>
 
-          <Field orientation="horizontal">
-            <Switch
-              id={`${id}-identity`}
-              name="oneResponsePerIdentity"
-              defaultChecked={defaults.oneResponsePerIdentity}
-            />
-            <FieldLabel htmlFor={`${id}-identity`}>One response per person</FieldLabel>
-          </Field>
-          <FieldDescription>
-            Keyed on the player token, or the email address. A returning visitor loads
-            their existing response to edit rather than starting a second one.
-          </FieldDescription>
-
-          <Field orientation="horizontal">
+          <SettingRow
+            label="Stop taking responses when the segment is full"
+            htmlFor={`${id}-auto-close`}
+          >
             <Switch
               id={`${id}-auto-close`}
               name="autoCloseOnCapacity"
               defaultChecked={defaults.autoCloseOnCapacity}
             />
-            <FieldLabel htmlFor={`${id}-auto-close`}>Close when the segment is full</FieldLabel>
-          </Field>
-        </FieldGroup>
-      </FieldSet>
+          </SettingRow>
 
-      {error && (
-        <Alert variant="destructive" role="alert">
-          <AlertTitle className="text-sm leading-relaxed font-normal whitespace-pre-wrap">
-            {error}
-          </AlertTitle>
-        </Alert>
-      )}
+          <SettingsSubheading>Response editing</SettingsSubheading>
+          <SettingRow
+            label="Allow changes until"
+            hint="Blank leaves changes open with no end date. A change may correct or reduce a party, never add seats."
+            htmlFor={`${id}-edit-until`}
+          >
+            <Input
+              id={`${id}-edit-until`}
+              name="allowEditUntil"
+              type="datetime-local"
+              className="w-56"
+              defaultValue={defaults.allowEditUntil}
+              disabled={!timeZone}
+            />
+          </SettingRow>
+        </SettingsGroup>
 
-      {message && (
-        <Alert>
-          <AlertTitle className="text-sm font-normal">{message}</AlertTitle>
-        </Alert>
-      )}
+        <SettingsGroup
+          title="Schedule"
+          description={
+            timeZone
+              ? `When the form takes responses, on the venue's clock (${timeZone})`
+              : 'Set a concert timezone before entering times'
+          }
+        >
+          <SettingRow
+            label="Opens"
+            hint="Blank opens it the moment it is published."
+            htmlFor={`${id}-opens`}
+          >
+            <Input
+              id={`${id}-opens`}
+              name="opensAt"
+              type="datetime-local"
+              className="w-56"
+              defaultValue={defaults.opensAt}
+              disabled={!timeZone}
+            />
+          </SettingRow>
+          <SettingRow
+            label="Closes"
+            hint="Blank keeps it open until you stop responses."
+            htmlFor={`${id}-closes`}
+          >
+            <Input
+              id={`${id}-closes`}
+              name="closesAt"
+              type="datetime-local"
+              className="w-56"
+              defaultValue={defaults.closesAt}
+              disabled={!timeZone}
+            />
+          </SettingRow>
+        </SettingsGroup>
 
-      <div>
-        <Button type="submit" disabled={isPending}>
-          {isPending ? <Spinner /> : <Save />}
-          {isPending ? 'Saving…' : 'Save settings'}
-        </Button>
-      </div>
+        <SettingsGroup
+          title="Presentation"
+          description="Manage how the form and responses are presented"
+        >
+          <SettingsSubheading>After submission</SettingsSubheading>
+          {/*
+            Google Forms shows the message in italics with an Edit link beside
+            it, rather than a textarea that is always open; most forms never
+            change it. The textarea is always in the DOM — hidden until Edit —
+            so the save posts whatever is there either way.
+          */}
+          <SettingRow
+            label="Confirmation message"
+            hint={
+              editingConfirmation ? null : (
+                <span className="italic">
+                  {confirmation || 'Your registration has been recorded.'}
+                </span>
+              )
+            }
+          >
+            {!editingConfirmation && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-form-accent"
+                onClick={() => setEditingConfirmation(true)}
+              >
+                Edit
+              </Button>
+            )}
+          </SettingRow>
+          <Textarea
+            id={`${id}-confirmation`}
+            name="confirmationMessageMd"
+            aria-label="Confirmation message"
+            rows={3}
+            hidden={!editingConfirmation}
+            value={confirmation}
+            placeholder="Shown after a successful submission, above the seats granted."
+            onChange={(event) => setConfirmation(event.target.value)}
+          />
+        </SettingsGroup>
+
+        <SettingsGroup
+          title="Link and round"
+          description="Where the form lives, and how rounds on one segment are told apart"
+        >
+          <SettingRow
+            label="Link"
+            hint={
+              <>
+                <code className="text-xs">/f/{defaults.slug}</code> — unique across every
+                concert. Changing it breaks any link already shared.
+              </>
+            }
+            htmlFor={`${id}-slug`}
+          >
+            <Input
+              id={`${id}-slug`}
+              name="slug"
+              required
+              className="w-56"
+              defaultValue={defaults.slug}
+            />
+          </SettingRow>
+          <SettingRow label="Round" hint="Round 1, Round 2 …" htmlFor={`${id}-round`}>
+            <Input
+              id={`${id}-round`}
+              name="roundLabel"
+              className="w-56"
+              defaultValue={defaults.roundLabel ?? ''}
+              placeholder="Round 1"
+            />
+          </SettingRow>
+        </SettingsGroup>
+
+        <div className="flex flex-wrap items-center justify-end gap-3 py-4">
+          {error && (
+            <p role="alert" className="text-destructive mr-auto text-sm whitespace-pre-wrap">
+              {error}
+            </p>
+          )}
+          {message && !error && (
+            <p role="status" className="text-muted-foreground mr-auto text-sm">
+              {message}
+            </p>
+          )}
+          <Button
+            type="submit"
+            disabled={isPending}
+          >
+            {isPending ? <Spinner /> : <Save />}
+            {isPending ? 'Saving…' : 'Save settings'}
+          </Button>
+        </div>
+      </SettingsCard>
     </form>
   );
 }

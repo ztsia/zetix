@@ -47,6 +47,7 @@
   --scan-admitted: oklch(0.65 0.19 145);
   --scan-duplicate: oklch(0.78 0.16 80);
   --scan-error: oklch(0.58 0.24 27);
+
 }
 
 .dark {
@@ -81,6 +82,38 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+}
+
+/* Declared on `.dark` as well as `:root` because an alias resolves where it is
+   declared: dark mode is switched on a wrapper element (the scanner's layout
+   does), and an alias computed only at the root would keep the light values. */
+:root,
+.dark {
+  /* The form surfaces (spec/v2.md §8.2): the respondent's form and the builder
+     that draws it. Laid out like Google Forms, coloured by this design system —
+     every one is an alias of a system token, so the forms follow the console's
+     theme and radius.
+
+     **This block is the form's theme hook.** A per-form theme (a banner image
+     and the colour taken from it) would set these on the form's own wrapper and
+     nothing else would change: every form screen reads `--form-*`, never the
+     system tokens directly. */
+  --form-accent: var(--primary);
+  --form-accent-foreground: var(--primary-foreground);
+  --form-accent-soft: color-mix(in oklch, var(--primary) 8%, transparent);
+  --form-canvas: var(--muted);
+  --form-card: var(--card);
+  --form-line: var(--border);
+  --form-error: var(--destructive);
+  /* The bar down the left of the card being edited. */
+  --form-focus: var(--primary);
+}
+
+.dark {
+  /* In dark mode `--muted` is lighter than a card, which would sink the cards
+     into the page; the plain background keeps them lifted. */
+  --form-canvas: var(--background);
 }
 
 @theme inline {
@@ -109,6 +142,14 @@
   --color-scan-admitted: var(--scan-admitted);
   --color-scan-duplicate: var(--scan-duplicate);
   --color-scan-error: var(--scan-error);
+  --color-form-accent: var(--form-accent);
+  --color-form-accent-foreground: var(--form-accent-foreground);
+  --color-form-accent-soft: var(--form-accent-soft);
+  --color-form-canvas: var(--form-canvas);
+  --color-form-card: var(--form-card);
+  --color-form-line: var(--form-line);
+  --color-form-error: var(--form-error);
+  --color-form-focus: var(--form-focus);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);

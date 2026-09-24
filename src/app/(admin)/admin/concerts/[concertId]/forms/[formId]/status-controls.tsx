@@ -25,7 +25,8 @@ import { setFormStatusAction, startNewRoundAction } from '../actions';
 import type { FormStatus } from '../queries';
 
 /**
- * Opening, closing, and starting the next round.
+ * Publishing, closing, and starting the next round — the right-hand end of the
+ * form's top bar, where Google Forms keeps its Publish button.
  *
  * **`open` is controlled on the confirm dialog.** `AlertDialogAction` is a plain
  * `Button` rather than a `Close`, so it does not dismiss its own dialog — every
@@ -70,10 +71,32 @@ export function StatusControls({
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex flex-wrap items-center gap-2">
+        <NewRoundDialog
+          concertId={concertId}
+          formId={formId}
+          title={title}
+          open={status === 'OPEN'}
+          trigger={
+            <Button size="sm" variant="ghost">
+              <CopyPlus />
+              New round
+            </Button>
+          }
+        />
+
+        {/*
+          Google Forms' "Publish", as the bar's one primary button: it is the
+          action that changes what strangers can reach. Once open it becomes
+          the quieter way back.
+        */}
         {status !== 'OPEN' && (
-          <Button size="sm" disabled={isPending} onClick={() => setStatus('OPEN')}>
+          <Button
+            size="sm"
+            disabled={isPending}
+            onClick={() => setStatus('OPEN')}
+          >
             {isPending ? <Spinner /> : <Play />}
-            {status === 'CLOSED' ? 'Reopen' : 'Open the form'}
+            {status === 'CLOSED' ? 'Reopen' : 'Publish'}
           </Button>
         )}
 
@@ -85,22 +108,9 @@ export function StatusControls({
             onClick={() => setConfirmClose(true)}
           >
             <Lock />
-            Close
+            Stop responses
           </Button>
         )}
-
-        <NewRoundDialog
-          concertId={concertId}
-          formId={formId}
-          title={title}
-          open={status === 'OPEN'}
-          trigger={
-            <Button size="sm" variant="outline">
-              <CopyPlus />
-              New round
-            </Button>
-          }
-        />
       </div>
 
       {error && (

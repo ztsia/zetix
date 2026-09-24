@@ -5,7 +5,7 @@ import {
   TicketXIcon,
   WrenchIcon,
 } from 'lucide-react';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { FormHeaderCard } from '@/components/forms/form-surface';
 import { formatDateTime } from '@/lib/portal/format';
 
 /**
@@ -23,7 +23,14 @@ import { formatDateTime } from '@/lib/portal/format';
  * link is broken when the truth is usually that they are early, or late.
  */
 
-/** Shared frame, so the five states cannot drift apart in spacing or tone. */
+/**
+ * Shared frame, so the five states cannot drift apart in spacing or tone.
+ *
+ * Google Forms' own "this form is no longer accepting responses" page: the
+ * header card, with its accent band, holding the title and one line of what to
+ * do. The icon stays, small, beside the title — it is what tells "not yet" from
+ * "no longer" at a glance.
+ */
 function State({
   icon,
   title,
@@ -34,13 +41,17 @@ function State({
   children: React.ReactNode;
 }) {
   return (
-    <Empty className="border-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">{icon}</EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{children}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
+    <FormHeaderCard
+      title={
+        <span className="flex items-start gap-3">
+          <span className="text-form-accent mt-1.5 shrink-0 [&_svg]:size-6 sm:mt-2" aria-hidden>
+            {icon}
+          </span>
+          <span>{title}</span>
+        </span>
+      }
+      description={<p className="text-muted-foreground">{children}</p>}
+    />
   );
 }
 

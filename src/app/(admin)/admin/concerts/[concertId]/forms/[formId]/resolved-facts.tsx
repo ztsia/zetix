@@ -1,10 +1,10 @@
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
 import { OriginBadge } from '../../../cascade-hint';
 import { formatInZone } from '@/lib/export';
 import type { ResolvedSetting } from '@/db/cascade-origin';
 import { PARTY_CAP_KEY } from '../party-cap';
+import { SettingRow, SettingsCard } from './settings/settings-layout';
 
 /**
  * What this form inherits, and from where (spec/README.md §2.2, decision 43).
@@ -63,41 +63,45 @@ export function ResolvedFacts({
   const entries = Object.entries(LABEL);
 
   return (
-    <div className="flex max-w-2xl flex-col gap-3">
-      <p className="text-muted-foreground text-sm">
-        These belong to the segment, not to this form — so two rounds on one segment read
-        the same figures, and changing one here would be changing it for both. They are
-        set on the{' '}
-        <Link
-          href={`/admin/concerts/${concertId}/shows`}
-          className="underline underline-offset-4"
-        >
-          Shows
-        </Link>{' '}
-        screen.
-      </p>
+    <SettingsCard
+      title="Seats and limits"
+      description={
+        <>
+          These belong to the segment, not to this form — so two rounds on one segment read
+          the same figures. They are set on the{' '}
+          <Link
+            href={`/admin/concerts/${concertId}/shows`}
+            className="underline underline-offset-4"
+          >
+            Shows
+          </Link>{' '}
+          screen.
+        </>
+      }
+    >
+      <div className="py-2">
+        {entries.map(([key, label]) => {
+          const resolved = cascade[key];
+          const value = resolved?.value;
+          const unset = value === null || value === undefined;
 
-      {entries.map(([key, label]) => {
-        const resolved = cascade[key];
-        const value = resolved?.value;
-        const unset = value === null || value === undefined;
-
-        return (
-          <Item key={key} variant="outline" size="sm">
-            <ItemContent>
-              <ItemTitle>{label}</ItemTitle>
-              <ItemDescription>{MEANING[key]}</ItemDescription>
-            </ItemContent>
-            <ItemActions className="gap-2">
-              <OriginBadge resolved={resolved} />
-              <span className={unset ? 'text-destructive text-sm' : 'text-sm font-medium tabular-nums'}>
-                {unset ? 'not set' : formatValue(key, value, timeZone)}
+          return (
+            <SettingRow key={key} label={label} hint={MEANING[key]}>
+              <span className="flex items-center gap-2">
+                <OriginBadge resolved={resolved} />
+                <span
+                  className={
+                    unset ? 'text-destructive text-sm' : 'text-sm font-medium tabular-nums'
+                  }
+                >
+                  {unset ? 'not set' : formatValue(key, value, timeZone)}
+                </span>
               </span>
-            </ItemActions>
-          </Item>
-        );
-      })}
-    </div>
+            </SettingRow>
+          );
+        })}
+      </div>
+    </SettingsCard>
   );
 }
 

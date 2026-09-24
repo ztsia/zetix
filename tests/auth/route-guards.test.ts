@@ -45,6 +45,7 @@ vi.mock('@/lib/auth/session', () => ({
 const ScannerShowPage = (await import('@/app/(scanner)/scan/(app)/[showId]/page')).default;
 const ScannerHomePage = (await import('@/app/(scanner)/scan/(app)/page')).default;
 const AdminLayout = (await import('@/app/(admin)/admin/layout')).default;
+const FormPreviewPage = (await import('@/app/(registration)/preview/[formId]/page')).default;
 
 /** What the route did: `allowed`, or the guard signal it threw. */
 async function outcome(run: () => Promise<unknown>): Promise<string> {
@@ -170,5 +171,33 @@ describe('the admin layout is the console boundary', () => {
   it('sends a signed-out visitor to the admin login', async () => {
     anonymous();
     expect(await outcome(render)).toBe('redirect:/login');
+  });
+});
+
+describe('/preview/[formId] is admin-only, though it sits on the public surface', () => {
+  /**
+   * The one admin screen outside `/admin`, so neither the admin layout nor
+   * `proxy.ts` covers it: `requireAdmin()` in the page is the whole guard. It
+   * reaches a draft form by a guessable id with none of `/f/{slug}`'s gates
+   * (spec/v2.md §8.2.2b). A QA probe deleted that call and the suite stayed
+   * green; these are what now go red.
+   */
+  const render = (id = 999_999) => FormPreviewPage({ params: Promise.resolve({ formId: String(id) }) });
+
+  it('sends a signed-out visitor to the admin login', async () => {
+    anonymous();
+    expect(await outcome(render)).toBe('redirect:/login');
+  });
+
+  it('refuses an OPERATOR', async () => {
+    asOperator();
+    expect(await outcome(render)).toBe('redirect:/scan');
+  });
+
+  it('lets the committee account through to the form lookup', async () => {
+    // Past the guard, an id with no form behind it is a 404 — which is how
+    // this proves the guard let the admin in.
+    asAdmin();
+    expect(await outcome(render)).toBe('notFound');
   });
 });

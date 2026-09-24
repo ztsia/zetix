@@ -121,6 +121,9 @@ async function loadConcert(concertId: number) {
  * concert is the authorization check, not a convenience.
  */
 async function loadForm(concertId: number, formId: number) {
+  // Server Actions take their arguments from the client, so an id that is not an
+  // integer is refused here rather than handed to Postgres as a `NaN` parameter.
+  if (!Number.isSafeInteger(concertId) || !Number.isSafeInteger(formId)) return null;
   const showId = sql<number>`coalesce(${showSegments.showId}, ${registrationForms.showId})`;
   const [row] = await getDb()
     .select({
@@ -338,18 +341,22 @@ export async function saveFormSchemaAction(
       after: { schemaVersion: updated.version, title: form.title },
     });
 
-    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`);
+    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`, 'layout');
     return { error: null, message: `Saved as version ${updated.version}.` };
   } catch (error) {
     return { error: dbErrorMessage(error) };
   }
 }
 
+/**
+ * Everything the Settings tab owns. **Not the title or the introduction** —
+ * those are the header card's (`saveFormHeaderAction`), and a settings save that
+ * also wrote them would carry whatever they were when the Settings tab was
+ * opened, silently undoing a newer header edit saved from another tab.
+ */
 const settingsSchema = z.object({
-  title: z.string().trim().min(1, 'A form needs a title.').max(300),
   roundLabel: optionalText,
   slug: z.string().trim().min(1, 'A form needs a link.').max(120),
-  descriptionMd: optionalLongText,
   confirmationMessageMd: optionalLongText,
   opensAt: localDateTime,
   closesAt: localDateTime,
@@ -359,7 +366,7 @@ const settingsSchema = z.object({
   autoCloseOnCapacity: checkbox,
 });
 
-/** The form's own settings — its window, its limits and its copy (§8.3). */
+/** The form's own settings — its window, its limits and its confirmation copy (§8.3). */
 export async function saveFormSettingsAction(
   concertId: number,
   formId: number,
@@ -404,10 +411,8 @@ export async function saveFormSettingsAction(
     await getDb()
       .update(registrationForms)
       .set({
-        title: values.title,
         roundLabel: values.roundLabel,
         slug,
-        descriptionMd: values.descriptionMd,
         confirmationMessageMd: values.confirmationMessageMd,
         opensAt,
         closesAt,
@@ -422,13 +427,65 @@ export async function saveFormSettingsAction(
       action: 'form.settings.save',
       entityType: 'registration_form',
       entityId: String(formId),
-      after: { title: values.title, slug, opensAt, closesAt, maxResponses: values.maxResponses },
+      after: { title: form.title, slug, opensAt, closesAt, maxResponses: values.maxResponses },
     });
 
-    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`);
+    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`, 'layout');
     return { error: null, message: 'Settings saved.' };
   } catch (error) {
     return { error: formErrorMessage(error, slug) };
+  }
+}
+
+const headerSchema = z.object({
+  title: z.string().trim().min(1, 'A form needs a title.').max(300),
+  descriptionMd: optionalLongText,
+});
+
+/**
+ * The title and introduction, from the header card at the top of the builder.
+ *
+ * **Its own action rather than a partial settings save.** Google Forms edits
+ * these in place, above the questions, and the builder does the same — but
+ * `saveFormSettingsAction` writes every setting at once, and a header edit that
+ * went through it would have to resend the window, the limits and the link it
+ * never showed, and could overwrite a change made in the Settings tab since.
+ * Two columns, written by the one screen that edits them.
+ */
+export async function saveFormHeaderAction(
+  concertId: number,
+  formId: number,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  await requireAdmin();
+
+  const form = await loadForm(concertId, formId);
+  if (!form) return { error: 'That form no longer exists.' };
+
+  const parsed = headerSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Check the title.' };
+  }
+
+  try {
+    await getDb()
+      .update(registrationForms)
+      .set({ title: parsed.data.title, descriptionMd: parsed.data.descriptionMd })
+      .where(eq(registrationForms.id, formId));
+
+    await writeAuditLog({
+      action: 'form.header.save',
+      entityType: 'registration_form',
+      entityId: String(formId),
+      before: { title: form.title },
+      after: { title: parsed.data.title },
+    });
+
+    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`, 'layout');
+    return { error: null, message: 'Saved.' };
+  } catch (error) {
+    return { error: dbErrorMessage(error) };
   }
 }
 
@@ -497,7 +554,7 @@ export async function setFormStatusAction(
     });
 
     revalidatePath(`/admin/concerts/${concertId}/forms`);
-    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`);
+    revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`, 'layout');
     return { error: null, message: `Form is now ${status.toLowerCase()}.` };
   } catch (error) {
     return { error: dbErrorMessage(error) };

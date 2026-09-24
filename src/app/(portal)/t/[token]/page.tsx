@@ -1,19 +1,29 @@
+import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
-import { CalendarDaysIcon, CircleCheckIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
+import { CalendarDaysIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
+import { BookletSection } from '@/components/portal/booklet-section';
+import { FeedbackClosed, FeedbackSection } from '@/components/portal/feedback-section';
+import { NotesSection } from '@/components/portal/notes-section';
+import { PracticalSection } from '@/components/portal/practical-section';
+import { WallSection } from '@/components/portal/wall-section';
+import { TicketSection, TicketStub } from '@/components/portal/ticket-section';
 import { countdownTo, formatDate, formatDateTime, formatTime, venueMapUrl } from '@/lib/portal/format';
+import { publishedBookletForShow } from '@/lib/portal/booklet';
+import { loadPortalFeedback, type PortalFeedbackResult } from '@/lib/portal/feedback';
+import { loadPortalNotes, type NotesResult } from '@/lib/portal/notes';
+import { loadPublicWall } from '@/lib/portal/wall';
 import { qrSvg } from '@/lib/portal/qr';
-import { ticketStatus } from '@/lib/portal/status';
+import {
+  portalIsUnlocked,
+  sectionOrder,
+  type PortalSectionId,
+} from '@/lib/portal/sections';
+import { attendeeIdForToken, ticketStatus } from '@/lib/portal/status';
+import type { FormAnswers } from '@/lib/forms/answers';
+import { submitFeedbackAction } from './feedback-actions';
+import { submitNoteAction } from './notes-actions';
 import { TicketNotFound } from '../../ticket-not-found';
 import { Countdown } from './countdown';
 
@@ -25,18 +35,31 @@ import { Countdown } from './countdown';
  * checking it three days early out of curiosity must get something friendly
  * (spec/v2.md §13.2). That is the whole brief.
  *
- * It is the V1 subset of §13.2's progressive disclosure, and it stops there:
- * the booklet, notes and the public wall unlock on admission in **V2**
- * (spec/v2.md §13.3). An admitted holder here gets the same page with a
- * checked-in badge — honest about what the system knows, and nothing built
- * toward a surface V1 does not ship.
+ * **V2 grows it into the full portal** (§13.3) without disturbing that brief.
+ * The rows of §13.2's table are still served to every real ticket, whatever else
+ * is or is not configured; the sections are what `portal.unlock_mode` and the
+ * per-section flags add on top.
  *
- * **`shows.portal_unlock_mode` is not read, and that is not an oversight.** Its
- * three values distinguish what the *unlocked* portal reveals (§13.2); with no
- * booklet and no notes in V1 there is nothing behind the lock, so `ON_ADMISSION`,
- * `OPEN_TO_ALL` and `CLOSED` would all render this identical page. Resolving a
- * setting to ignore its answer would read as support for a feature that does not
- * exist. V2 is where that cascade lookup belongs.
+ * Three rules govern what appears, and each is easy to get backwards:
+ *
+ * - **`portal.unlock_mode` answers who, never when** (decision 39). It gates who
+ *   may see the unlocked sections and is never flipped by a show reaching
+ *   `COMPLETED`. Resolved through the cascade, never off
+ *   `shows.portal_unlock_mode` (§2.2) — a null column means the show does not
+ *   override, not `ON_ADMISSION`.
+ * - **`concerts.portal_enabled` does not gate the status page** (§13.2). A
+ *   printed QR cannot be recalled when a flag is flipped, so turning the portal
+ *   off must never turn a ticket into a dead link. It governs the sections
+ *   below, and nothing above them.
+ * - **"The show is over" comes off the clock, not off `shows.status`**
+ *   (decision 40). The flag trails by up to a day; the phase is correct the
+ *   instant it is true.
+ *
+ * **The section list is a slot, and `O` mounts notes and the wall into it.**
+ * `lib/portal/sections.ts` owns which sections exist and in what order; this
+ * file owns what each one looks like. The slot takes an ordering rather than an
+ * append because feedback is last in §13.3's list and first on the page once the
+ * show is over.
  *
  * **Nothing about admission depends on any of this** (decision 28). The door
  * scanner matches the token against its offline manifest and never dereferences
@@ -120,19 +143,169 @@ export default async function TicketStatusPage({
   const cancelled = status.state === 'CANCELLED';
   const admitted = status.state === 'ADMITTED';
 
+  /**
+   * **Who, not when** (decision 39). `portal.enabled` is a separate question
+   * asked separately below: one says whether this guest may see the sections,
+   * the other whether this concert runs them at all.
+   */
+  const unlocked = portalIsUnlocked({
+    mode: status.portal.unlockMode,
+    admitted,
+    cancelled,
+  });
+  const sectionsVisible = unlocked && status.portal.enabled;
+
+  /**
+   * The post-show layout applies only to someone who can actually see the
+   * sections. A holder still looking at a locked status page has nothing to
+   * reorder, and collapsing their ticket to a stub would take the QR away from
+   * the one person on this page who might still be about to use it — a guest
+   * whose show ran late, or whose `ends_at` is simply wrong.
+   */
+  const postShow = status.showIsOver && sectionsVisible;
+
   const showDate = formatDate(show.startsAt, timeZone);
   const showTime = formatTime(show.startsAt, timeZone);
   const doorsTime = formatTime(show.doorsOpenAt, timeZone);
   const mapUrl = venueMapUrl(show.venueName, show.venueAddress);
+  const admittedAt = admitted ? formatDateTime(status.admittedAt, timeZone) : null;
+  const ticketHref = `/api/portal/${status.qrToken}/ticket`;
+
+  /**
+   * Looked up only when the section could actually be drawn. A concert with the
+   * portal off, or a guest who has not unlocked it, should not cost a query for
+   * a booklet nobody is going to be shown.
+   */
+  const booklet =
+    sectionsVisible && status.portal.bookletEnabled
+      ? await publishedBookletForShow({ showId: show.id, concertId: status.concertId })
+      : null;
+
+  /**
+   * **Loaded only once the evening is over**, because §13.2's second row is
+   * explicit that an admitted guest whose show is still running gets no feedback
+   * form: the question has no answer yet. `portal.feedback_enabled` is the
+   * separate question of whether this show runs one at all.
+   *
+   * The attendee id is resolved here rather than carried on the page payload —
+   * it is needed to find this guest's own existing answer and nothing renders
+   * it.
+   */
+  /**
+   * **Resolved once, for whichever sections need it.** Feedback needs it after
+   * the show; notes need it whenever they are enabled, which §13.3's ordering
+   * puts *before* the show as well — a guest scanned in at the door may write
+   * during the interval, and `ON_ADMISSION` is what makes that a guest who is
+   * actually in the hall.
+   */
+  const needsFeedback = postShow && status.portal.feedbackEnabled;
+  const needsNotes = sectionsVisible && status.portal.notesEnabled;
+  const attendeeId = needsFeedback || needsNotes ? await attendeeIdForToken(token) : null;
+
+  const feedback =
+    !needsFeedback || attendeeId === null
+      ? null
+      : await loadPortalFeedback({
+          showId: show.id,
+          concertId: status.concertId,
+          attendeeId,
+          closeAt: status.portal.feedbackCloseAt,
+        });
+
+  /**
+   * Notes and the wall, each behind its own switch.
+   *
+   * They are two settings rather than one because they are two decisions an
+   * admin makes at different times: collecting notes starts on concert night,
+   * and publishing a wall happens after somebody has read them. A concert
+   * routinely runs the first without ever turning on the second.
+   */
+  const notes =
+    !needsNotes || attendeeId === null
+      ? null
+      : await loadPortalNotes({
+          attendeeId,
+          concertId: status.concertId,
+          enabled: status.portal.notesEnabled,
+          closeAt: status.portal.notesCloseAt,
+          maxLength: status.portal.noteMaxLength,
+        });
+
+  /**
+   * The wall is read for anyone who has unlocked the portal, whether or not
+   * *they* may leave a note — reading and writing are different permissions and
+   * `portal.notes_enabled` closing does not un-publish what is already up.
+   * `loadPublicWall` applies the visibility gate itself and returns nothing
+   * when the wall is not public, so this costs one query and cannot leak.
+   */
+  const wall = sectionsVisible
+    ? await loadPublicWall({
+        concertId: status.concertId,
+        enabled: status.portal.publicWallEnabled,
+        visibility: status.portal.publicWallVisibility,
+      })
+    : [];
 
   /**
    * Counted to the doors, not to the downbeat — the doors time is the one a
    * guest acts on. Falls back to the start time when no doors time is set, and
    * disappears entirely when neither is: half the show columns are nullable and
    * an unconfigured concert must still render a scannable ticket.
+   *
+   * **Gone once the show is over**, because a countdown that has run out reads
+   * "Doors are open" for ever, and a page telling last night's audience the
+   * doors are open is worse than one telling them nothing.
    */
   const countdownTarget = show.doorsOpenAt ?? show.startsAt;
-  const countdown = cancelled ? null : countdownTo(countdownTarget, new Date());
+  const countdown = cancelled || status.showIsOver ? null : countdownTo(countdownTarget, new Date());
+
+  /**
+   * What each slot draws, or `null` for a section this show does not run.
+   *
+   * **`notes` and `wall` are `O`'s** (§13.4). They are named here, rendering
+   * nothing, so that `O` supplies two nodes and changes no ordering, no unlock
+   * rule and no layout — the seam agreed in this branch's handoff.
+   *
+   * Each section carries its own lifecycle and they are deliberately
+   * independent: `booklets.published` and `portal.notes_close_at` end their own
+   * sections, which is why `COMPLETED` never needed to close the portal
+   * (decision 39).
+   */
+  const sections: Record<PortalSectionId, ReactNode> = {
+    ticket: postShow ? (
+      <TicketStub
+        key="ticket"
+        name={status.attendeeName}
+        admitted={admitted}
+        admittedAt={admittedAt}
+        downloadHref={ticketHref}
+      />
+    ) : (
+      <TicketSection
+        key="ticket"
+        name={status.attendeeName}
+        ticketCode={status.ticketCode}
+        qr={await qrSvg(status.qrToken)}
+        admitted={admitted}
+        admittedAt={admittedAt}
+        downloadHref={ticketHref}
+      />
+    ),
+    booklet: booklet ? (
+      <BookletSection
+        key="booklet"
+        title={booklet.title}
+        href={`/api/portal/${status.qrToken}/booklet`}
+      />
+    ) : null,
+    notes: notesNode(token, notes),
+    wall: <WallSection key="wall" notes={wall} />,
+    practical:
+      sectionsVisible && status.portal.practicalInfoMd ? (
+        <PracticalSection key="practical" markdown={status.portal.practicalInfoMd} />
+      ) : null,
+    feedback: feedbackNode(token, feedback),
+  };
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 py-8">
@@ -150,13 +323,12 @@ export default async function TicketStatusPage({
           </AlertDescription>
         </Alert>
       ) : (
-        <TicketCard
-          name={status.attendeeName}
-          ticketCode={status.ticketCode}
-          qr={await qrSvg(status.qrToken)}
-          admittedAt={admitted ? formatDateTime(status.admittedAt, timeZone) : null}
-          admitted={admitted}
-        />
+        /**
+         * The ordered slot. Before the show this leads with the ticket; after
+         * it, feedback comes first and the ticket collapses to a stub at the
+         * end (§13.2, §13.3).
+         */
+        sectionOrder(postShow).map((id) => sections[id])
       )}
 
       {countdown && countdownTarget ? (
@@ -239,70 +411,63 @@ export default async function TicketStatusPage({
 const DOORS_OPEN = 'Doors are open';
 
 /**
- * The ticket itself: the holder's name, the QR, and the code under it.
+ * The feedback slot's three outcomes, kept out of the section map so each one is
+ * readable.
  *
- * **The ticket code is here on purpose**, though §4.1's list stops at the QR.
- * It is the door's own secondary way in (spec/tickets.md §10.1 rule 4 — the scanner's
- * Search tab takes exactly this string), and this page is what a guest holds up
- * when the QR will not read off their screen. It is their own identifier and
- * discloses nothing further.
- *
- * **The segment is never shown**, here or anywhere on this surface: a guest does
- * not need to know they were in the "public" block (spec/v2.md §13.3).
+ * - **Nothing at all** — this show runs no feedback form, or the phase has not
+ *   arrived. An absent section, not an empty one.
+ * - **Closed** — `portal.feedback_close_at` has passed. Still rendered: the
+ *   guest followed a link from an email we sent them, and silence where the form
+ *   was is not an answer.
+ * - **The form**, prefilled with their own previous answer when they have left
+ *   one.
  */
-function TicketCard({
-  name,
-  ticketCode,
-  qr,
-  admitted,
-  admittedAt,
-}: {
-  name: string;
-  ticketCode: string | null;
-  qr: string;
-  admitted: boolean;
-  admittedAt: string | null;
-}) {
+function feedbackNode(token: string, feedback: PortalFeedbackResult | null): ReactNode {
+  if (feedback === null) return null;
+
+  if ('state' in feedback) {
+    return feedback.state === 'CLOSED' ? <FeedbackClosed key="feedback" /> : null;
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-xl text-balance">{name}</CardTitle>
-        <CardDescription>
-          {admitted
-            ? admittedAt
-              ? `Admitted ${admittedAt}`
-              : 'Already admitted'
-            : 'Present this QR at the door'}
-        </CardDescription>
-        {admitted ? (
-          <CardAction>
-            <Badge variant="secondary">
-              <CircleCheckIcon data-icon="inline-start" />
-              Checked in
-            </Badge>
-          </CardAction>
-        ) : null}
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-3">
-        {/*
-         * **Always light, never themed.** The symbol ships its own opaque white
-         * background path, and the padding around it extends that plate so the
-         * quiet zone survives on a dark page. This is spec/tickets.md §10.4's
-         * rendering constraint applied to a screen: a QR on a dark surface is a
-         * QR that does not scan.
-         *
-         * The markup is generated by `qrcode` from our own origin and a
-         * shape-checked base62 token, and is checked to be an `<svg>` element
-         * before it gets here (`src/lib/portal/qr.ts`).
-         */}
-        <div
-          className="w-full max-w-64 rounded-xl bg-white p-3 [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
-          dangerouslySetInnerHTML={{ __html: qr }}
-        />
-        {ticketCode ? (
-          <p className="font-mono text-lg tracking-[0.2em] tabular-nums">{ticketCode}</p>
-        ) : null}
-      </CardContent>
-    </Card>
+    <FeedbackSection
+      key="feedback"
+      token={token}
+      formId={feedback.id}
+      schema={feedback.schema}
+      title={feedback.title}
+      descriptionMd={feedback.descriptionMd}
+      copy={feedback.copy}
+      existing={(feedback.existing?.answers as FormAnswers | undefined) ?? null}
+      submit={submitFeedbackAction}
+    />
+  );
+}
+
+/**
+ * The notes slot's three outcomes, kept out of the section map for the same
+ * reason {@link feedbackNode} is.
+ *
+ * - **Nothing at all** — `portal.notes_enabled` is off, or the guest has not
+ *   unlocked the portal. An absent section rather than an empty one.
+ * - **Closed** — past `portal.notes_close_at`. The section still draws *if this
+ *   guest left a note*, so they can reread it; the component decides that,
+ *   because the loader is what knows whether a note exists.
+ * - **The form**, prefilled with their own note when they have left one.
+ */
+function notesNode(token: string, notes: NotesResult | null): ReactNode {
+  if (notes === null || notes.state === 'OFF') return null;
+
+  return (
+    <NotesSection
+      key="notes"
+      token={token}
+      state={notes.state}
+      players={notes.players}
+      defaultToPlayerId={notes.defaultToPlayerId}
+      existing={notes.existing}
+      maxLength={notes.maxLength}
+      submit={submitNoteAction}
+    />
   );
 }

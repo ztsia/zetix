@@ -101,8 +101,24 @@ describe('a ticket that has been issued', () => {
     expect(serialised).not.toContain('segment');
     expect(serialised).not.toContain('Guest 2');
     expect(Object.keys(status!).sort()).toEqual([
-      'admittedAt', 'attendeeName', 'concertName', 'qrToken', 'show', 'state',
-      'ticketCode', 'timeZone',
+      'admittedAt', 'attendeeName', 'concertId', 'concertName', 'portal', 'qrToken',
+      'show', 'showIsOver', 'state', 'ticketCode', 'timeZone',
+    ]);
+
+    /**
+     * The V2 portal context is configuration and ids, not other people. Pinned
+     * key-by-key for the same reason the outer list is: this object is built
+     * from a query that joins shows and concerts, and the next person to add a
+     * column to either must be made to decide whether it belongs on a page a
+     * stranger can open with a guessed token.
+     */
+    expect(Object.keys(status!.portal).sort()).toEqual([
+      'bookletEnabled', 'enabled', 'feedbackCloseAt', 'feedbackEnabled',
+      'noteMaxLength', 'notesCloseAt', 'notesEnabled', 'practicalInfoMd',
+      'publicWallEnabled', 'publicWallVisibility', 'unlockMode',
+    ]);
+    expect(Object.keys(status!.show).sort()).toEqual([
+      'doorsOpenAt', 'id', 'name', 'startsAt', 'venueAddress', 'venueName',
     ]);
   });
 
@@ -259,5 +275,86 @@ describe('the token shape check', () => {
     expect(isTokenShaped('a'.repeat(23))).toBe(false);
     expect(isTokenShaped(`${'a'.repeat(21)}-`)).toBe(false);
     expect(isTokenShaped(`${'a'.repeat(21)}\n`)).toBe(false);
+  });
+});
+
+/**
+ * The four settings `O`'s sections read, through the cascade and never off a
+ * column (§2.2).
+ *
+ * These are asserted here rather than in the notes tests because the question
+ * is about *this query*: every one of them rides on the same single round trip
+ * the portal gets on venue wifi, and a key added to the resolve block without a
+ * test is a key that silently resolves to null for ever.
+ */
+describe('the notes and wall settings', () => {
+  const setSetting = async (key: string, value: unknown) => {
+    await sql`
+      insert into system_settings (key, value) values (${key}, ${JSON.stringify(value)}::jsonb)
+      on conflict (key) do update set value = excluded.value
+    `;
+  };
+
+  it('are all off, and all null, when nobody has configured the concert', async () => {
+    const { portal } = (await ticketStatus(token))!;
+    expect(portal.notesEnabled).toBe(false);
+    expect(portal.publicWallEnabled).toBe(false);
+    expect(portal.notesCloseAt).toBeNull();
+    expect(portal.noteMaxLength).toBeNull();
+    expect(portal.publicWallVisibility).toBeNull();
+  });
+
+  it('resolve from the system level when set there', async () => {
+    await setSetting('portal.notes_enabled', true);
+    await setSetting('portal.notes_close_at', '2026-09-26T16:00:00Z');
+    await setSetting('portal.note_max_length', 500);
+    await setSetting('portal.public_wall_enabled', true);
+    await setSetting('portal.public_wall_visibility', 'AUDIENCE');
+
+    const { portal } = (await ticketStatus(token))!;
+    expect(portal.notesEnabled).toBe(true);
+    expect(portal.notesCloseAt?.toISOString()).toBe('2026-09-26T16:00:00.000Z');
+    expect(portal.noteMaxLength).toBe(500);
+    expect(portal.publicWallEnabled).toBe(true);
+    expect(portal.publicWallVisibility).toBe('AUDIENCE');
+  });
+
+  it('let the concert override the system', async () => {
+    await setSetting('portal.notes_enabled', true);
+    await sql`
+      update concerts
+         set defaults = jsonb_build_object('portal.notes_enabled', false)
+       where id = ${concertId}
+    `;
+    expect((await ticketStatus(token))!.portal.notesEnabled).toBe(false);
+  });
+
+  /**
+   * **Only `true` is true, and only a positive integer is a cap.** Every one of
+   * these opens a section of the portal or bounds what it accepts, and the
+   * failure direction that matters is the one that publishes something early or
+   * refuses every note with no explanation. A hand-edited row is the shape
+   * these guard against — the settings screen cannot produce any of them.
+   */
+  it('read a malformed value as unset rather than guessing at it', async () => {
+    await setSetting('portal.notes_enabled', 'true');
+    await setSetting('portal.public_wall_enabled', 1);
+    await setSetting('portal.public_wall_visibility', 'EVERYONE');
+    await setSetting('portal.notes_close_at', 'next Tuesday');
+    await setSetting('portal.note_max_length', 0);
+
+    const { portal } = (await ticketStatus(token))!;
+    expect(portal.notesEnabled).toBe(false);
+    expect(portal.publicWallEnabled).toBe(false);
+    expect(portal.publicWallVisibility).toBeNull();
+    expect(portal.notesCloseAt).toBeNull();
+    expect(portal.noteMaxLength).toBeNull();
+  });
+
+  it('reads a negative or fractional length as unset', async () => {
+    for (const bad of [-1, 2.5]) {
+      await setSetting('portal.note_max_length', bad);
+      expect((await ticketStatus(token))!.portal.noteMaxLength).toBeNull();
+    }
   });
 });

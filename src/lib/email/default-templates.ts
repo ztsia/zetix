@@ -1,7 +1,7 @@
 import type { TemplateKey } from './templates';
 
 /**
- * Seeded default wording for the eight §11.3 message types, so the system can
+ * Seeded default wording for the nine §11.3 message types, so the system can
  * send before anyone opens the editor — the same argument decision 10 makes for
  * ticket templates.
  *
@@ -49,7 +49,10 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '',
       'Please confirm your email address to complete your registration for **{{ show.name }}**.',
       '',
-      'Your tickets will follow once your registration is confirmed.',
+      '[Confirm my email address]({{ verify_url }})',
+      '',
+      'Your tickets will follow once your registration is confirmed. Your seats are already held —',
+      'confirming only tells us we can reach you.',
     ].join('\n'),
   },
   public_ticket: {
@@ -119,13 +122,42 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       'Have the QR code ready to show the registration crew at the door, one per guest. Seating is unreserved.',
     ].join('\n'),
   },
+  /**
+   * **The one message addressed to a player rather than a registration**
+   * (decision 22). It greets through `{{ player.name }}`, because a player has
+   * no registration and `registration.contact_name` resolves to nothing here —
+   * the pre-V2 seed opened with it and would have sent "Dear ,".
+   *
+   * It names no show for the same kind of reason: a digest gathers every note
+   * written to this player across the concert, which may be more than one
+   * night, so `{{ show.name }}` has no single answer.
+   */
   player_notes_digest: {
     name: 'Notes from the audience',
     subject: 'Notes for you from {{ concert.name }}',
     bodyMd: [
+      'Dear {{ player.name }},',
+      '',
+      'Members of the audience left these notes for you after **{{ concert.name }}**.',
+      '',
+      '{{ notes_list }}',
+      '',
+      'Thank you for playing.',
+    ].join('\n'),
+  },
+  feedback_request: {
+    name: 'How was your evening?',
+    subject: 'How was {{ show.name }}?',
+    bodyMd: [
       'Dear {{ registration.contact_name }},',
       '',
-      'Members of the audience left these notes for you after **{{ show.name }}**.',
+      'Thank you for coming to **{{ show.name }}**. We would love to know how you found it —',
+      'it takes a minute, and the orchestra reads every one.',
+      '',
+      '{{ feedback_links }}',
+      '',
+      'With thanks,',
+      'The {{ concert.name }} team',
     ].join('\n'),
   },
 };

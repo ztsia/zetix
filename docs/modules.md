@@ -265,9 +265,14 @@ extras review screen (round 1 can be granted by hand for one concert) or `H`'s d
 
 ## 6. What is deliberately not a module
 
-**V2 is not here** — native forms (§8), the full portal (§13), notes (§13.4, §14.2), per-IP rate
-limiting (§8.3). `spec/README.md` §4.2 keeps them specified so the V1 schema does not need reshaping, but no
-V1 branch builds them and none should make a schema choice V2 would have to undo.
+**V2 is not here** — native forms (§8), the full portal (§13), notes (§13.4, §14.2), feedback (§13.5),
+per-IP rate limiting (§8.3). `spec/README.md` §4.2 keeps them specified so the V1 schema does not need
+reshaping, but no V1 branch builds them and none should make a schema choice V2 would have to undo.
+
+**V2 now has its own branch map: [`modules-v2.md`](modules-v2.md)**, six branches lettered `J`–`O`,
+continuing the series this file started at `A`. Its PRs target `v2`, not `main`. The cut is deliberately
+coarser than this file's: V1's fine split was a scheduling instrument for a dated concert, and V2 has no
+date (`modules-v2.md` §2.1).
 
 **The spec split was not a module either, and is done.** `spec.md` is now `spec/` — one file per
 module above — so that a session working on the scanner reads the scanner's spec rather than 2,000

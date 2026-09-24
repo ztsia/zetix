@@ -25,7 +25,7 @@ import { ADMIN_LOGIN_PATH, SCANNER_LOGIN_PATH } from '@/lib/auth/guards';
  * | `/admin/**` | signed in, then `ADMIN` |
  * | `/scan/**` | signed in, then `ADMIN` or `OPERATOR` |
  * | `/t/**` | the token in the URL — deliberately open |
- * | registration | open; V1 uses Google Forms and ships no route |
+ * | `/f/**`, `/api/forms/**` | open, or the token in the URL. **Throttled per IP in the handler**, never here: `src/lib/forms/throttle.ts` reads its policy through the cascade, and this file must not read the database (`modules.md` §5.2.1) |
  *
  * The two login paths stay reachable while signed in. Proxy cannot tell an
  * admin from an operator, so bouncing off a login page here would either loop or

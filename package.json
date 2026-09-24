@@ -18,7 +18,8 @@
     "db:seed": "tsx scripts/seed-settings.ts",
     "db:seed:dev": "tsx scripts/seed-dev.ts",
     "db:seed:email": "tsx scripts/seed-email-templates.ts",
-    "bootstrap-admin": "tsx scripts/bootstrap-admin.ts"
+    "bootstrap-admin": "tsx scripts/bootstrap-admin.ts",
+    "email:form-blast": "tsx --conditions=react-server scripts/feedback-form-blast.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

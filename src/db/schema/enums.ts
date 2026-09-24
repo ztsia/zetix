@@ -29,6 +29,19 @@ export const audienceMode = pgEnum('audience_mode', ['PLAYER_INVITED', 'PUBLIC']
 export const extrasPolicy = pgEnum('extras_policy', ['REVIEW', 'AUTO_FCFS']);
 
 export const formStatus = pgEnum('form_status', ['DRAFT', 'OPEN', 'CLOSED']);
+
+/**
+ * What a form *is*, and therefore which system blocks are pre-built into it
+ * (spec/v2.md §8.2, decision 35).
+ *
+ * This is the whole of V2's mapping model: a block's destination is chosen when
+ * the block is created, never mapped afterwards, and `kind` is what chooses.
+ * `PLAYER` and `PUBLIC` attach to a segment and create seats; `FEEDBACK`
+ * attaches to a **show**, creates none, and collapses its registrant block to
+ * the identity the attendee's own `qr_token` already resolved
+ * (spec/domain.md §5.1, spec/v2.md §13.5).
+ */
+export const formKind = pgEnum('form_kind', ['PLAYER', 'PUBLIC', 'FEEDBACK']);
 export const registrationSource = pgEnum('registration_source', ['FORM', 'IMPORT', 'ADMIN']);
 
 /**

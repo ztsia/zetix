@@ -44,6 +44,16 @@ export type BlastSplit = {
   unissuedAttendees: number;
   unissuedRegistrations: number;
   failedRetryable: number;
+  /**
+   * Messages held back by the double opt-in gate (spec/v2.md §8.1.4) — a
+   * public registrant who has not yet clicked their verification link.
+   *
+   * Beside the others for the same reason `unissuedRegistrations` is: it is a
+   * gap between what the admin expects to queue and what will queue, and a
+   * silent one is how somebody concludes the blast is broken. These parties
+   * hold their seats throughout — verification gates the email, never the seat.
+   */
+  heldForVerification: number;
 };
 
 export type BlastTarget = { segmentId: number; templateKey: string };
@@ -115,6 +125,46 @@ const IS_LIVE_REGISTRATION = sql`
 `;
 
 /**
+ * The double opt-in gate (spec/v2.md §8.1.4).
+ *
+ * **Verification gates the email, never the seat.** An unverified registration
+ * is `CONFIRMED`, holds its seats and is visible in admin; it is only held back
+ * from the blast until the registrant clicks the link or an admin overrides.
+ *
+ * **A registration is gated if, and only if, it carries a
+ * `verification_token`** — which is how `J` designed it: the token is nullable,
+ * and a registration that was never sent a link simply has none. That single
+ * condition covers every case the spec lists without the blast needing to know
+ * anything about form kinds:
+ *
+ * - **`source = IMPORT` skips verification entirely.** The 19 Sep cohort never
+ *   received a link, and holding their tickets behind one would strand them.
+ *   Import issues no token, so this predicate passes them.
+ * - **Player forms do not verify.** The address came from the roster, not from
+ *   a stranger typing it. No token, so they pass.
+ * - **An admin override** sets `email_verified_at` by hand, which releases the
+ *   party without pretending the registrant clicked anything.
+ *
+ * Getting this backwards — gating by form kind, or by `email_verified_at`
+ * alone — would hold back every imported registration in the system, and the
+ * failure would be silent: tickets simply never queued.
+ */
+const IS_VERIFIED = sql`
+  (r.verification_token is null or r.email_verified_at is not null)
+`;
+
+/**
+ * Only a ticket-bearing message waits for verification.
+ *
+ * §8.1.4 gates *the ticket email*. A cancellation or an extras decline is not a
+ * ticket and withholding it would leave a registrant uninformed for the sake of
+ * an address we are unsure of — and `public_verify` itself obviously cannot wait
+ * on its own click.
+ */
+const requireVerified = (templateKey: string) =>
+  carriesTickets(templateKey) ? sql`and ${IS_VERIFIED}` : sql``;
+
+/**
  * The numbers §11.4 requires on screen before anything is queued.
  *
  * Reads only. An admin who is shown a split and then queues a different set has
@@ -131,6 +181,7 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
       unissued_attendees: number;
       unissued_registrations: number;
       failed_retryable: number;
+      held_for_verification: number;
     }>(sql`
       select
         (select count(*)::int from attendees a
@@ -150,11 +201,13 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
             and a.status = 'CONFIRMED' and a.deleted_at is null
             and a.ticket_sent_at is null
             and ${IS_LIVE_REGISTRATION}
+            ${requireVerified(target.templateKey)}
             ${excludeUnissued(target.templateKey)}) as pending_attendees,
         (select count(*)::int from registrations r
           where r.segment_id = ${target.segmentId}
             and ${IS_LIVE_REGISTRATION}
             and ${HAS_UNDELIVERED_SEAT}
+            ${requireVerified(target.templateKey)}
             ${excludeUnissued(target.templateKey)}) as pending_registrations,
         (select count(*)::int from attendees a
            join registrations r on r.id = a.registration_id
@@ -172,7 +225,19 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
            join registrations r on r.id = o.registration_id
           where r.segment_id = ${target.segmentId}
             and o.template_key = ${target.templateKey}
-            and o.status = 'FAILED') as failed_retryable
+            and o.status = 'FAILED') as failed_retryable,
+        /**
+         * Held back by §8.1.4, and **named on the screen rather than simply
+         * missing**. A blast that quietly queues fewer parties than the admin
+         * expects is the silence §11.2.1 exists to end: the admin's next signal
+         * would be a registrant asking where their ticket is.
+         */
+        (select count(*)::int from registrations r
+          where r.segment_id = ${target.segmentId}
+            and ${IS_LIVE_REGISTRATION}
+            and ${HAS_UNDELIVERED_SEAT}
+            and not ${IS_VERIFIED}
+            ${excludeUnissued(target.templateKey)}) as held_for_verification
     `);
 
     const row = rows[0];
@@ -184,6 +249,7 @@ export async function blastSplit(target: BlastSplit extends never ? never : Blas
       unissuedAttendees: row?.unissued_attendees ?? 0,
       unissuedRegistrations: row?.unissued_registrations ?? 0,
       failedRetryable: row?.failed_retryable ?? 0,
+      heldForVerification: row?.held_for_verification ?? 0,
     };
   } catch (error) {
     rethrowDbError(error);
@@ -259,6 +325,7 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
      where r.segment_id = ${target.segmentId}
        and ${IS_LIVE_REGISTRATION}
        and ${HAS_UNDELIVERED_SEAT}
+       ${requireVerified(target.templateKey)}
        ${excludeUnissued(target.templateKey)}
      order by r.requested_at, r.id
   `);

@@ -36,6 +36,7 @@ const SYSTEM_SEEDS: Record<string, unknown> = {
   'portal.note_max_length': 1000,
   'form.rate_limit_per_ip_per_min': 5,
   'form.seat_indicator_exact_below': 20,
+  'form.verification_grace_hours': 48,
   'auth.admin_max_attempts': 5,
   'auth.admin_lockout_window_min': 15,
   'email.transport': 'gmail_smtp',
@@ -68,6 +69,31 @@ const SYSTEM_SEEDS: Record<string, unknown> = {
    * rather than auto-granting what should have been reviewed.
    */
   'allocation.extras_policy': { PLAYER_INVITED: 'REVIEW', PUBLIC: 'AUTO_FCFS' },
+
+  /**
+   * The two V2 keys `docs/modules-v2.md` §3 says to seed at system level "like
+   * every other runtime value", editable per show and per concert.
+   *
+   * §6 lists both in its *operational* table, whose preamble says the system
+   * ships with no numeric default — so this is the same tension
+   * `allocation.extras_policy` above already sits in, and it is resolved the
+   * same way. Both describe the runtime rather than the event: how long after
+   * the printed end time an evening counts as over, and what hour of the day is
+   * a civil one to email people at. Neither is a capacity, a quota or a
+   * deadline, and neither comes from `context.md`.
+   *
+   * **The numbers are the spec's own worked examples, not a choice made here.**
+   * `spec/v2.md` §13.2.1 calls the flip "the two-hour precision" and §13.5.2
+   * walks through "a show marked complete at 10:30pm with a send hour of noon".
+   * They are a starting point an admin overrides at show or concert level, which
+   * is the whole reason they are data rather than constants.
+   *
+   * What this does *not* soften: with `shows.ends_at` null both stay inert —
+   * there is no post-show phase and no auto-completion at all (decision 41), and
+   * no duration is inferred from `starts_at`.
+   */
+  'show.auto_complete_after_hours': 2,
+  'portal.feedback_send_hour': 12,
 };
 
 async function main() {

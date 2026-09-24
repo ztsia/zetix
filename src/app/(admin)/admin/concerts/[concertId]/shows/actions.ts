@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { TZDate } from '@date-fns/tz';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
@@ -10,6 +10,7 @@ import { concerts } from '@/db/schema/concerts';
 import { shows, showSegments } from '@/db/schema/shows';
 import { writeAuditLog } from '@/lib/audit';
 import { requireAdmin } from '@/lib/auth/guards';
+import { FEEDBACK_TEMPLATE_KEY, queueFeedbackBlast } from '@/lib/email/feedback-blast';
 import type { FormState } from '../../form-state';
 
 /**
@@ -92,6 +93,17 @@ function toInstant(local: string | null, timeZone: string): Date | null {
 const showSchema = z.object({
   name: z.string().trim().min(1, 'A show needs a name.').max(200),
   startsAt: localDateTime,
+  /**
+   * What "the show is over" is measured from (spec/v2.md §13.2.1, decision 41).
+   *
+   * **Optional, and inert when blank.** With no end time there is no post-show
+   * phase and no auto-completion, and an admin marks the show `COMPLETED` by
+   * hand as before. Nothing is inferred from `startsAt`: a concert with an
+   * interval runs well past its nominal length, and a portal that flipped to
+   * "how was your evening?" mid-performance would be worse than one that waited
+   * for a human.
+   */
+  endsAt: localDateTime,
   doorsOpenAt: localDateTime,
   venueName: optionalText,
   venueAddress: optionalText,
@@ -104,6 +116,7 @@ function readShowForm(formData: FormData) {
   return showSchema.safeParse({
     name: formData.get('name') ?? '',
     startsAt: formData.get('startsAt') ?? '',
+    endsAt: formData.get('endsAt') ?? '',
     doorsOpenAt: formData.get('doorsOpenAt') ?? '',
     venueName: formData.get('venueName') ?? '',
     venueAddress: formData.get('venueAddress') ?? '',
@@ -139,7 +152,9 @@ export async function createShowAction(
   }
 
   const zone = await concertZone(concertId);
-  if (!zone && (parsed.data.startsAt || parsed.data.doorsOpenAt)) return { error: NO_ZONE };
+  if (!zone && (parsed.data.startsAt || parsed.data.endsAt || parsed.data.doorsOpenAt)) {
+    return { error: NO_ZONE };
+  }
 
   try {
     const [created] = await getDb()
@@ -148,6 +163,7 @@ export async function createShowAction(
         concertId,
         name: parsed.data.name,
         startsAt: toInstant(parsed.data.startsAt, zone ?? 'UTC'),
+        endsAt: toInstant(parsed.data.endsAt, zone ?? 'UTC'),
         doorsOpenAt: toInstant(parsed.data.doorsOpenAt, zone ?? 'UTC'),
         venueName: parsed.data.venueName,
         venueAddress: parsed.data.venueAddress,
@@ -185,7 +201,9 @@ export async function updateShowAction(
   }
 
   const zone = await concertZone(concertId);
-  if (!zone && (parsed.data.startsAt || parsed.data.doorsOpenAt)) return { error: NO_ZONE };
+  if (!zone && (parsed.data.startsAt || parsed.data.endsAt || parsed.data.doorsOpenAt)) {
+    return { error: NO_ZONE };
+  }
 
   try {
     const db = getDb();
@@ -200,6 +218,7 @@ export async function updateShowAction(
       .set({
         name: parsed.data.name,
         startsAt: toInstant(parsed.data.startsAt, zone ?? 'UTC'),
+        endsAt: toInstant(parsed.data.endsAt, zone ?? 'UTC'),
         doorsOpenAt: toInstant(parsed.data.doorsOpenAt, zone ?? 'UTC'),
         venueName: parsed.data.venueName,
         venueAddress: parsed.data.venueAddress,
@@ -222,8 +241,39 @@ export async function updateShowAction(
       },
     });
 
+    /**
+     * **Completing a show by hand queues its feedback email**, exactly as the
+     * daily sweep does (spec/v2.md §13.5.2). The status dialog is decision 42's
+     * manual twin for auto-completion, and a twin that skipped the queueing
+     * would mean an admin who completed a show on the night got no email at all
+     * until the cron came round and found the show already `COMPLETED` — which
+     * it skips, because it only ever moves `OPEN` → `COMPLETED`.
+     *
+     * Only on the transition. Re-saving an already-`COMPLETED` show is an edit
+     * to its name or venue, not a second blast.
+     *
+     * **A queueing failure does not fail the save.** The status change is what
+     * the admin asked for and it has committed; the message says what happened
+     * to the email, and **Generate feedback emails** re-runs it once the
+     * configuration it needs is there.
+     */
+    let note = '';
+    if (parsed.data.status === 'COMPLETED' && before.status !== 'COMPLETED') {
+      try {
+        const { queued } = await queueFeedbackBlast({ showId });
+        note =
+          queued > 0
+            ? ` ${queued} feedback email${queued === 1 ? '' : 's'} queued.`
+            : ' No feedback email queued — nobody was admitted, or they already have one.';
+      } catch (error) {
+        note = ` The show is complete, but its feedback email could not be queued: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`;
+      }
+    }
+
     revalidatePath(`/admin/concerts/${concertId}/shows`);
-    return { error: null, message: `Saved ${parsed.data.name}.` };
+    return { error: null, message: `Saved ${parsed.data.name}.${note}` };
   } catch (error) {
     // Lowering the hall below what its segments hold, or below confirmed seats,
     // is refused by `shows_capacity_guard` with a sentence naming the numbers.
@@ -653,3 +703,155 @@ function friendlySegmentError(error: unknown, mode: 'PLAYER_INVITED' | 'PUBLIC')
   return message;
 }
 
+/**
+ * **Generate feedback emails** — decision 42's manual twin for the queueing step
+ * (spec/v2.md §13.5.3).
+ *
+ * Queues without waiting for the cron, and without needing the show to change
+ * status: the two reasons to press it are a show already completed whose email
+ * failed to queue, and an usher's phone that only drained its scan queue the
+ * next morning. The second is why the audience is computed now rather than
+ * frozen at completion time (§13.5.1) — this button is what picks those people
+ * up.
+ *
+ * Safe to press repeatedly. `outbox_no_duplicate_pending` stops a second
+ * pending row, and `queueFeedbackBlast` skips any registration that already has
+ * a `SENT` one, so a re-run reaches only the people a previous run missed.
+ */
+export async function generateFeedbackEmailsAction(
+  concertId: number,
+  showId: number,
+): Promise<FormState> {
+  await requireAdmin();
+
+  try {
+    const { queued, requeued, alreadySent } = await queueFeedbackBlast({ showId });
+
+    revalidatePath(`/admin/concerts/${concertId}/shows`);
+
+    const parts: string[] = [];
+    if (queued > 0) {
+      parts.push(`${queued} feedback email${queued === 1 ? '' : 's'} queued`);
+    }
+    /**
+     * **Reported separately from `queued`, because it is the run that fixed the
+     * late drain.** A party whose message was already waiting gets it rewritten
+     * to name the seat that has only just been scanned in (§13.5.1); folding
+     * that into the queued count would say "0 queued" on exactly the press that
+     * did the thing this button exists for.
+     */
+    if (requeued > 0) {
+      parts.push(
+        `${requeued} already waiting updated to include ${requeued === 1 ? 'a guest' : 'guests'} admitted since`,
+      );
+    }
+
+    if (parts.length > 0) {
+      return {
+        error: null,
+        message: `${parts.join(', ')}. They send at the feedback send hour, or press Send now.`,
+      };
+    }
+
+    /**
+     * Three different nothings, and they are not interchangeable — saying
+     * "nobody has been admitted" to an admin whose emails are sitting in the
+     * outbox sends them looking for a door problem that does not exist.
+     */
+    if (alreadySent > 0) {
+      return {
+        error: null,
+        message: `Nothing new to queue — ${alreadySent} ${alreadySent === 1 ? 'party has' : 'parties have'} already been emailed.`,
+      };
+    }
+
+    const waiting = await pendingFeedbackCount(showId);
+    if (waiting > 0) {
+      return {
+        error: null,
+        message: `Nothing new to queue — ${waiting} feedback email${waiting === 1 ? ' is' : 's are'} already waiting to send.`,
+      };
+    }
+
+    return {
+      error: null,
+      message: 'Nothing to queue — nobody has been admitted to this show yet.',
+    };
+  } catch (error) {
+    return { error: dbErrorMessage(error) };
+  }
+}
+
+/**
+ * **Send now** — decision 42's manual twin for the timed send
+ * (spec/v2.md §13.5.3).
+ *
+ * **It makes the rows due; it does not send them.** `scheduled_for` moves to
+ * now, and the dispatcher claims them on its next pass exactly as it claims
+ * anything else — the console's queue banner offers Resume the moment they are
+ * due (spec/email.md §11.2.1), and the daily cron is the safety net behind that.
+ * Bypassing the dispatcher would mean a second sending path with its own ideas
+ * about the daily cap, the reclaim window and `max_attempts`.
+ *
+ * It exists because a feedback row is scheduled for `portal.feedback_send_hour`
+ * and is therefore deliberately *not* resumable until then — which is right for
+ * the normal case and wrong for the admin who wants them gone now. The blast
+ * screen's own Send cannot reach them either: that screen is per segment and
+ * per template, and feedback is addressed per **show**, across both its
+ * audiences.
+ *
+ * Only `QUEUED` rows move. A `DRAFT` is a batch nobody confirmed, a `SENDING`
+ * row is in flight, and a `SENT` one is gone.
+ */
+export async function sendFeedbackNowAction(
+  concertId: number,
+  showId: number,
+): Promise<FormState> {
+  await requireAdmin();
+
+  try {
+    const rows = await getDb().execute<{ id: string }>(sql`
+      update email_outbox o
+         set scheduled_for = now(), updated_at = now()
+        from registrations r
+       where r.id = o.registration_id
+         and r.show_id = ${showId}
+         and o.template_key = ${FEEDBACK_TEMPLATE_KEY}
+         and o.status = 'QUEUED'
+         and o.scheduled_for > now()
+      returning o.id
+    `);
+
+    await writeAuditLog({
+      action: 'feedback.send_now',
+      entityType: 'show',
+      entityId: showId,
+      after: { released: rows.length },
+    });
+
+    revalidatePath(`/admin/concerts/${concertId}/shows`);
+
+    return {
+      error: null,
+      message:
+        rows.length === 0
+          ? 'Nothing waiting — the feedback emails are already due or already sent.'
+          : `${rows.length} feedback email${rows.length === 1 ? '' : 's'} released. They go out on the next dispatch — use Resume in the banner above, or wait for the daily run.`,
+    };
+  } catch (error) {
+    return { error: dbErrorMessage(error) };
+  }
+}
+
+/** How many feedback messages for this show are queued and have not gone yet. */
+async function pendingFeedbackCount(showId: number): Promise<number> {
+  const rows = await getDb().execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from email_outbox o
+      join registrations r on r.id = o.registration_id
+     where r.show_id = ${showId}
+       and o.template_key = ${FEEDBACK_TEMPLATE_KEY}
+       and o.status in ('DRAFT', 'QUEUED', 'SENDING')
+  `);
+  return rows[0]?.n ?? 0;
+}

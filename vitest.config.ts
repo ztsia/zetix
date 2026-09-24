@@ -40,7 +40,10 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['tests/helpers/setup.ts'],
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    // `.tsx` too, so the form renderer can be asserted against its real output.
+    // `tests/forms/renderer.test.tsx` renders it with `renderToStaticMarkup`,
+    // which needs no DOM — see that file for why there is no jsdom here.
+    include: ['src/**/*.test.ts?(x)', 'tests/**/*.test.ts?(x)'],
     // claim_seats() tests run against a real local Postgres and take a row
     // lock; running files in parallel would make the concurrency assertions
     // lie about what they proved.

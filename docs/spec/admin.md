@@ -19,7 +19,7 @@ See [`../modules.md`](../modules.md) for what each label owns and when it runs.
     /overview                  capacity across all shows, at-a-glance status
     /shows                     CRUD; capacity, quota, deadline, policy, portal mode per show
     /players                   CRUD, CSV import, invite links, resend/rotate tokens
-    /forms                     builder, preview, open/close, response list
+    /forms                     block builder, preview, open/close, responses, export (`v2.md` §8.2)
     /registrations             searchable table + full manual CRUD (`allocation.md` §7.5)
     /extras-review             the batch grant screen, per segment (`allocation.md` §7.5)
     /import                    upload → map → validate → commit
@@ -27,8 +27,9 @@ See [`../modules.md`](../modules.md) for what each label owns and when it runs.
     /email                     templates, outbox, blast (with round dedup, `email.md` §11.4), send log
     /checkin                   live dashboard, scan log
     /operators                 provision operators, assign shows, reset codes, deactivate
-    /portal                    booklet upload, practical info, unlock mode
+    /portal                    booklet upload, practical info, unlock mode, per-section flags
     /notes                     wall + per-player grouping (§14.2)
+    /feedback                  post-show form, responses, blast (`v2.md` §13.5)
     /exports                   CSV/XLSX of any table view
   /settings                    users, roles, system defaults, SMTP test, audit log
 ```

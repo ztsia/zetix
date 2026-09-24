@@ -12,6 +12,7 @@ import { deleteSegmentAction, deleteShowAction } from './actions';
 import { DeleteButton } from './delete-button';
 import { MoveCapacityDialog } from './move-capacity-dialog';
 import { SegmentFormDialog } from './segment-form-dialog';
+import { GenerateFeedbackButton } from './generate-feedback-button';
 import { ShowFormDialog } from './show-form-dialog';
 import type { SegmentView, ShowView } from './queries';
 
@@ -106,6 +107,14 @@ export function ShowCard({
             />
           </div>
         </div>
+
+        {/*
+          * The audience only exists once the evening is over, so the control
+          * appears with the status that says so (spec/v2.md §13.5.3).
+          */}
+        {show.status === 'COMPLETED' ? (
+          <GenerateFeedbackButton concertId={concertId} showId={show.id} />
+        ) : null}
 
         <CapacityBar show={show} hallOrigin={hall} />
       </CardHeader>

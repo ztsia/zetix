@@ -291,9 +291,21 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       {
         key: 'form.seat_indicator_exact_below',
         min: 0,
-        label: 'Show exact seats below',
+        label: 'Show exact seats above',
         kind: 'number',
-        description: 'Under this many seats left, the form shows a number instead of a band.',
+        description:
+          'Once fewer than this many seats remain, the form stops naming the figure and says ' +
+          '“only a few seats left”. It exists to avoid a stampede, so scarcity is what goes vague.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'form.verification_grace_hours',
+        min: 1,
+        label: 'Verification grace period (hours)',
+        kind: 'number',
+        description:
+          'V2. An unverified public registration older than this is flagged for admin review. It keeps its seats either way — verification gates the email, never the seat.',
         operational: false,
         level: 'system',
       },
@@ -314,6 +326,28 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         level: 'concert',
       },
       {
+        key: 'portal.enabled',
+        label: 'Portal enabled',
+        kind: 'boolean',
+        /**
+         * V2. The master switch for §13.3's sections — booklet, notes, wall,
+         * practical info, feedback.
+         *
+         * **It does not gate the ticket status page**, which is served to every
+         * real token regardless: a printed QR cannot be recalled when a flag is
+         * flipped, so turning the portal off must never turn a ticket into a
+         * dead link (`spec/v2.md` §13.2).
+         *
+         * Listed here because `concerts.portal_enabled` is written by no form —
+         * without this entry the value resolves to null at every level, every
+         * section is off, and there is no way to turn the portal on at all.
+         */
+        description:
+          'V2. Whether the portal’s sections appear at all. The ticket status page is always served, flag or no flag.',
+        operational: true,
+        level: 'concert',
+      },
+      {
         key: 'portal.unlock_mode',
         label: 'Portal unlock',
         kind: 'text',
@@ -328,6 +362,62 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         kind: 'number',
         description:
           'Resolves show → concert → the seeded global default. Normally chosen on the tickets screen; never read as a raw column.',
+        operational: false,
+        level: 'concert',
+      },
+      {
+        key: 'show.auto_complete_after_hours',
+        min: 0,
+        label: 'Show counts as over after (hours)',
+        kind: 'number',
+        description:
+          'V2. How long after a show’s end time the portal shows its post-show phase and the show auto-completes. Inert while the show has no end time — nothing is inferred from the start time.',
+        /**
+         * Seeded, not left empty, on `modules-v2.md` §3's explicit instruction:
+         * "seeded at system level like every other runtime value and editable
+         * per show and per concert". §6 lists it in its operational table, whose
+         * preamble says the system ships with no numeric default — the same
+         * tension `allocation.extras_policy` already sits in, and resolved the
+         * same way. It describes the runtime (how long after the printed end
+         * time we call an evening over), not the event, and with no value at any
+         * level V2's post-show phase never happens at all.
+         */
+        operational: false,
+        level: 'show',
+      },
+      {
+        key: 'portal.booklet_enabled',
+        label: 'Booklet section enabled',
+        kind: 'boolean',
+        description: 'V2. The booklet still only appears once a booklet is published.',
+        operational: true,
+        level: 'show',
+      },
+      {
+        key: 'portal.feedback_enabled',
+        label: 'Feedback section enabled',
+        kind: 'boolean',
+        description: 'V2. Whether the post-show feedback form appears in the portal at all.',
+        operational: true,
+        level: 'show',
+      },
+      {
+        key: 'portal.feedback_close_at',
+        label: 'Feedback closes at',
+        kind: 'text',
+        description: 'V2. An ISO timestamp, after which the feedback form stops accepting answers.',
+        operational: true,
+        level: 'show',
+      },
+      {
+        key: 'portal.feedback_send_hour',
+        min: 0,
+        max: 23,
+        label: 'Feedback send hour',
+        kind: 'number',
+        description:
+          'V2. The hour, in the concert’s timezone, at which queued feedback email becomes due. The gap between queueing at ~10:30pm and sending is the review window, and it is what stops anyone being emailed at 10:30pm.',
+        /** Seeded for the same reason as `show.auto_complete_after_hours` above. */
         operational: false,
         level: 'concert',
       },

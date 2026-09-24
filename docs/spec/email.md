@@ -132,6 +132,7 @@ the banner is for the one somebody does.
 | `registration_cancelled` | Admin cancels | Registrant |
 | `reminder` | Admin-triggered, pre-show | All confirmed |
 | `player_notes_digest` | Admin-triggered, post-show | Player — notes addressed to them |
+| `feedback_request` | Show reaches `COMPLETED` | Registrant — one portal link per **admitted** attendee (`v2.md` §13.5.2) |
 
 Markdown + `{{ }}` placeholders stored in the DB, editable with live preview and a documented token
 list. Plain-text alternative auto-generated.

@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { segmentPool } from '@/db/allocation';
 import { resolveSetting } from '@/db/settings';
-import { RichText } from '@/components/forms/rich-text';
 import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
 import { loadFormBySlug } from '@/lib/forms/load';
 import { resolveRegistrant } from '@/lib/forms/registrant';
@@ -188,17 +187,9 @@ export default async function RegistrationFormPage({
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">{form.title}</h1>
-        {form.description ? (
-          <div className="text-sm text-muted-foreground">
-            <RichText markdown={form.description} />
-          </div>
-        ) : null}
-      </header>
-
-      <RegistrationForm
+    <RegistrationForm
+        title={form.title}
+        description={form.description}
         slug={form.slug}
         schema={form.schema}
         schemaVersion={form.schemaVersion}
@@ -219,6 +210,5 @@ export default async function RegistrationFormPage({
          */
         unknownToken={registrant.kind === 'UNKNOWN_TOKEN'}
       />
-    </div>
   );
 }

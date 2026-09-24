@@ -56,10 +56,13 @@ function controlIds(html: string): string[] {
   return [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1] ?? '');
 }
 
-/** Every visible label, with markup stripped. */
+/**
+ * Every visible label, with markup stripped — the controls' labels and legends,
+ * and the section headings that name a block.
+ */
 function labels(html: string): string[] {
-  return [...html.matchAll(/<(?:label|legend)\b[^>]*>([\s\S]*?)<\/(?:label|legend)>/g)].map((m) =>
-    (m[1] ?? '').replace(/<[^>]+>/g, '').replace(/\*$/, '').trim(),
+  return [...html.matchAll(/<(label|legend|h2)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) =>
+    (m[2] ?? '').replace(/<[^>]+>/g, '').replace(/\*$/, '').trim(),
   );
 }
 

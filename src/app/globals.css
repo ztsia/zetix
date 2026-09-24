@@ -47,6 +47,21 @@
   --scan-admitted: oklch(0.65 0.19 145);
   --scan-duplicate: oklch(0.78 0.16 80);
   --scan-error: oklch(0.58 0.24 27);
+
+  /* The form surfaces (spec/v2.md §8.2): the respondent's form and the builder
+     that draws it. Taken from Google Forms' default theme, because every round
+     of this concert has been answered there and the form should feel like the
+     one people already know. Only the form screens read these. */
+  --form-accent: #5746e3;
+  --form-accent-foreground: #ffffff;
+  --form-accent-soft: rgb(87 70 227 / 0.12);
+  --form-canvas: #eeedfc;
+  --form-card: #ffffff;
+  --form-line: #dadce0;
+  --form-error: #d93025;
+  /* The bar down the left of the question being edited: Google Forms' blue, not
+     the accent, so "this one is selected" never reads as a themed decoration. */
+  --form-focus: #4285f4;
 }
 
 .dark {
@@ -81,6 +96,15 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  --form-accent: #8f83f2;
+  --form-accent-foreground: #16112f;
+  --form-accent-soft: rgb(143 131 242 / 0.18);
+  --form-canvas: oklch(0.17 0.01 285);
+  --form-card: oklch(0.22 0.01 285);
+  --form-line: oklch(1 0 0 / 14%);
+  --form-error: #f28b82;
+  --form-focus: #8ab4f8;
 }
 
 @theme inline {
@@ -109,6 +133,14 @@
   --color-scan-admitted: var(--scan-admitted);
   --color-scan-duplicate: var(--scan-duplicate);
   --color-scan-error: var(--scan-error);
+  --color-form-accent: var(--form-accent);
+  --color-form-accent-foreground: var(--form-accent-foreground);
+  --color-form-accent-soft: var(--form-accent-soft);
+  --color-form-canvas: var(--form-canvas);
+  --color-form-card: var(--form-card);
+  --color-form-line: var(--form-line);
+  --color-form-error: var(--form-error);
+  --color-form-focus: var(--form-focus);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);

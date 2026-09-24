@@ -5,15 +5,6 @@ import { PlusIcon, XIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { FieldGroup, FieldLegend, FieldSet } from '@/components/ui/field';
-import { Separator } from '@/components/ui/separator';
-import {
   emptyRow,
   fieldPathKey,
   type AnswerErrors,
@@ -31,6 +22,7 @@ import {
   type FormSchema,
 } from '@/lib/forms/schema';
 import { FormFieldControl } from './form-field';
+import { FormCard, SectionHeaderCard } from './form-surface';
 import { RichText } from './rich-text';
 
 /**
@@ -48,6 +40,11 @@ import { RichText } from './rich-text';
  * indicator, and what any of it means. That boundary is what lets the same
  * component be a read-only preview in the admin console and a live form on a
  * stranger's phone.
+ *
+ * **Drawn as Google Forms draws a form** — a card per section heading, a card
+ * per question, a card per seat, all on the tinted form canvas — because that
+ * is the form everyone answering this one has already filled in. The pieces
+ * live in `form-surface.tsx`, which the builder's cards share.
  *
  * **Controlled, always.** The caller holds the answers — `M` needs them on the
  * server after a failed submit, and `L`'s preview needs to reset them when the
@@ -112,26 +109,36 @@ export function FormRenderer({
     [schema, value],
   );
 
+  const total = schema.blocks.length;
+
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-3">
       {schema.blocks.map((block, index) => (
-        <div key={block.id} className="flex flex-col gap-4">
-          {index > 0 ? <Separator className="mb-2" /> : null}
-          <BlockRenderer
-            block={block}
-            answer={value[block.id]}
-            onChange={(next) => setBlock(block.id, next)}
-            cap={limits[block.id]}
-            copy={copy}
-            errors={errors}
-            disabled={disabled}
-            showCopyWarnings={showCopyWarnings}
-            flatVisible={flatVisible}
-          />
-        </div>
+        <BlockRenderer
+          key={block.id}
+          block={block}
+          index={index}
+          total={total}
+          answer={value[block.id]}
+          onChange={(next) => setBlock(block.id, next)}
+          cap={limits[block.id]}
+          copy={copy}
+          errors={errors}
+          disabled={disabled}
+          showCopyWarnings={showCopyWarnings}
+          flatVisible={flatVisible}
+        />
       ))}
     </div>
   );
+}
+
+/**
+ * Whether any question on the form is required — the header card's "*
+ * Indicates required question" line is only true, and only drawn, when one is.
+ */
+export function hasRequiredQuestion(schema: FormSchema): boolean {
+  return schema.blocks.some((block) => blockFields(block).some((field) => field.required));
 }
 
 /** Every flat block's answers as one map. Keys are unique across the scope by contract. */
@@ -147,6 +154,9 @@ function flatAnswers(schema: FormSchema, value: FormAnswers): Record<string, Fie
 
 type BlockProps = {
   block: FormBlock;
+  /** Where this block sits, for the "Section 2 of 3" tab. */
+  index: number;
+  total: number;
   answer: BlockAnswer | undefined;
   onChange: (next: BlockAnswer) => void;
   cap: number | undefined;
@@ -159,35 +169,38 @@ type BlockProps = {
 };
 
 function BlockRenderer(props: BlockProps) {
-  const { block, copy, showCopyWarnings, errors } = props;
+  const { block, index, total, copy, showCopyWarnings, errors } = props;
   const description = useMemo(
     () => (block.description_md ? interpolateCopy(block.description_md, copy) : null),
     [block.description_md, copy],
   );
+  const headingId = `${block.id}-heading`;
 
+  /**
+   * A `section` named by its heading, so a screen reader can move between
+   * sections the way a sighted reader moves between the cards.
+   */
   return (
-    <FieldSet>
-      <FieldLegend>{block.title}</FieldLegend>
-      {description ? (
-        <RichText markdown={description.text} className="text-sm text-muted-foreground" />
-      ) : null}
-      {showCopyWarnings && description && description.unknown.length > 0 ? (
-        <Alert variant="destructive">
-          <AlertTitle>This block&rsquo;s text uses a token that does not exist</AlertTitle>
-          <AlertDescription>
-            {description.unknown.map((token) => `{{${token}}}`).join(', ')} will render as nothing.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {errors[block.id] ? (
-        <Alert variant="destructive">
-          <AlertDescription>{errors[block.id]}</AlertDescription>
-        </Alert>
-      ) : null}
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <SectionHeaderCard index={index} total={total} title={<span id={headingId}>{block.title}</span>}>
+        {description ? <RichText markdown={description.text} className="text-sm leading-6" /> : null}
+        {showCopyWarnings && description && description.unknown.length > 0 ? (
+          <Alert variant="destructive">
+            <AlertTitle>This section&rsquo;s text uses a token that does not exist</AlertTitle>
+            <AlertDescription>
+              {description.unknown.map((token) => `{{${token}}}`).join(', ')} will render as nothing.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {errors[block.id] ? (
+          <Alert variant="destructive">
+            <AlertDescription>{errors[block.id]}</AlertDescription>
+          </Alert>
+        ) : null}
+      </SectionHeaderCard>
 
       {isRepeaterType(block.type) ? <Repeater {...props} /> : <FlatBlock {...props} />}
-    </FieldSet>
+    </section>
   );
 }
 
@@ -196,47 +209,27 @@ function FlatBlock({ block, answer, onChange, errors, disabled, flatVisible }: B
   const fields = blockFields(block);
 
   return (
-    <FieldGroup className="gap-3">
+    <>
       {fields
         .filter((field) => flatVisible.has(field.key))
-        .map((field) => (
-          <QuestionCard key={field.key}>
-            <FormFieldControl
-              field={field}
-              path={fieldPathKey(block.id, field.key)}
-              value={values[field.key] ?? null}
-              onChange={(next) =>
-                onChange({ kind: 'flat', values: { ...values, [field.key]: next } })
-              }
-              error={errors[fieldPathKey(block.id, field.key)]}
-              disabled={disabled}
-            />
-          </QuestionCard>
-        ))}
-    </FieldGroup>
-  );
-}
-
-/**
- * One question, one card (spec/v2.md §8.2).
- *
- * **Because a run of questions in one column is a wall of text.** Spacing alone
- * leaves the reader working out where one question ends and the next begins,
- * and it gets worse exactly where it matters most — a grid or a scale is
- * several controls under one legend, which reads as several questions until
- * something draws the boundary. A card is that boundary, and it is the shape
- * everyone answering this form has already met on Google Forms.
- *
- * **`overflow-visible` is load-bearing.** `Card` clips its content by default,
- * which is right for an image or a table and wrong for a form: a focus ring sits
- * just outside the control it belongs to, and a clipped ring is a keyboard user
- * losing their place.
- */
-function QuestionCard({ children }: { children: React.ReactNode }) {
-  return (
-    <Card size="sm" className="overflow-visible">
-      <CardContent>{children}</CardContent>
-    </Card>
+        .map((field) => {
+          const path = fieldPathKey(block.id, field.key);
+          return (
+            <FormCard key={field.key} invalid={Boolean(errors[path])}>
+              <FormFieldControl
+                field={field}
+                path={path}
+                value={values[field.key] ?? null}
+                onChange={(next) =>
+                  onChange({ kind: 'flat', values: { ...values, [field.key]: next } })
+                }
+                error={errors[path]}
+                disabled={disabled}
+              />
+            </FormCard>
+          );
+        })}
+    </>
   );
 }
 
@@ -270,63 +263,66 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
   const setRows = (next: Record<string, FieldValue>[]) => onChange({ kind: 'repeater', rows: next });
   const full = rows.length >= cap;
 
+  /**
+   * The admin's own wording for the add control, which the builder offers and
+   * this used to ignore — falling back to the old fixed words when a block
+   * carries none.
+   */
+  const addLabel =
+    ('add_label' in block ? block.add_label : undefined) ??
+    (block.type === 'GUESTS_PARTY' ? 'Add a guest' : 'Add a seat');
+
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {cap === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <FormCard className="text-muted-foreground text-sm">
           There are no seats to add in this section.
-        </p>
+        </FormCard>
       ) : null}
 
       {rows.map((row, index) => {
         const visible = visibleFieldKeys(fields, row);
+        const rowInvalid = fields.some(
+          (field) => errors[fieldPathKey(block.id, field.key, index)] !== undefined,
+        );
         /*
-         * A seat is a card too, and now a real one. This was a hand-rolled
-         * `rounded-lg border p-4`, which is `Card` with the theming left out —
-         * it missed `bg-card`, so on a tinted surface the seat had no fill and
-         * the border did all the work.
-         *
-         * `overflow-visible` for the same reason as `QuestionCard`: a focus
-         * ring on the last control in a seat must not be clipped by its own
-         * container.
+         * One card per seat, its questions stacked inside, divided by the same
+         * hairline Google Forms draws between an item's parts. A seat is one
+         * person, so its name and email belong in one card rather than one
+         * card each — that is what keeps "Seat 2" legible as a unit when an
+         * error lands in it.
          */
         return (
-          <Card key={index} size="sm" className="overflow-visible">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">Seat {index + 1}</CardTitle>
-              <CardAction>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
+          <FormCard key={index} invalid={rowInvalid} className="flex flex-col gap-6">
+            <div className="-mt-1 flex items-center justify-between gap-3">
+              <h3 className="text-base font-medium">Seat {index + 1}</h3>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                onClick={() => setRows(rows.filter((_, i) => i !== index))}
+              >
+                <XIcon aria-hidden />
+                Remove
+              </Button>
+            </div>
+            {fields
+              .filter((field) => visible.has(field.key))
+              .map((field) => (
+                <FormFieldControl
+                  key={field.key}
+                  field={field}
+                  path={fieldPathKey(block.id, field.key, index)}
+                  value={row[field.key] ?? null}
+                  onChange={(next) =>
+                    setRows(rows.map((r, i) => (i === index ? { ...r, [field.key]: next } : r)))
+                  }
+                  error={errors[fieldPathKey(block.id, field.key, index)]}
                   disabled={disabled}
-                  onClick={() => setRows(rows.filter((_, i) => i !== index))}
-                >
-                  <XIcon aria-hidden />
-                  Remove
-                </Button>
-              </CardAction>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-              {fields
-                .filter((field) => visible.has(field.key))
-                .map((field) => (
-                  <FormFieldControl
-                    key={field.key}
-                    field={field}
-                    path={fieldPathKey(block.id, field.key, index)}
-                    value={row[field.key] ?? null}
-                    onChange={(next) =>
-                      setRows(rows.map((r, i) => (i === index ? { ...r, [field.key]: next } : r)))
-                    }
-                    error={errors[fieldPathKey(block.id, field.key, index)]}
-                    disabled={disabled}
-                  />
-                ))}
-              </FieldGroup>
-            </CardContent>
-          </Card>
+                />
+              ))}
+          </FormCard>
         );
       })}
 
@@ -335,19 +331,19 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
           <Button
             type="button"
             variant="outline"
-            className="h-11"
+            className="bg-form-card h-10 rounded border-form-line"
             disabled={disabled || full}
             onClick={() => setRows([...rows, emptyRow(fields)])}
           >
             <PlusIcon aria-hidden />
-            {block.type === 'GUESTS_PARTY' ? 'Add a guest' : 'Add a seat'}
+            {addLabel}
           </Button>
           <span className="text-sm text-muted-foreground" aria-live="polite">
             {rows.length} of {cap} added
           </span>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 

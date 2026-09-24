@@ -3,10 +3,27 @@
 import { useMemo, useState, useTransition } from 'react';
 import { CircleAlertIcon, LightbulbIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { FormRenderer } from '@/components/forms/form-renderer';
+import { FormRenderer, hasRequiredQuestion } from '@/components/forms/form-renderer';
+import {
+  FormHeaderCard,
+  FormPrimaryButton,
+  FormTextButton,
+} from '@/components/forms/form-surface';
+import { RichText } from '@/components/forms/rich-text';
 import { emptyAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import type { CopyValues } from '@/lib/forms/copy';
 import type { FormSchema } from '@/lib/forms/schema';
@@ -24,6 +41,9 @@ import { submitRegistration, type SubmitResult } from './actions';
  */
 
 export type RegistrationFormProps = {
+  title: string;
+  /** The form's introduction, as markdown. */
+  description: string | null;
   slug: string;
   schema: FormSchema;
   schemaVersion: number;
@@ -41,6 +61,8 @@ const CONTACT_NAME = 'contact_name';
 const CONTACT_EMAIL = 'contact_email';
 
 export function RegistrationForm({
+  title,
+  description,
   slug,
   schema,
   schemaVersion,
@@ -64,7 +86,7 @@ export function RegistrationForm({
    * upstream re-rendered, and the prefill is a starting point, not a lock — a
    * player whose roster email is out of date must be able to correct it here.
    */
-  const [answers, setAnswers] = useState<FormAnswers>(() => {
+  const [initialAnswers] = useState<FormAnswers>(() => {
     const initial = emptyAnswers(schema, limits);
     if (!registrant || registrantBlockId === null) return initial;
     const block = initial[registrantBlockId];
@@ -83,6 +105,7 @@ export function RegistrationForm({
       },
     };
   });
+  const [answers, setAnswers] = useState<FormAnswers>(initialAnswers);
 
   const [errors, setErrors] = useState<AnswerErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -162,26 +185,47 @@ export function RegistrationForm({
     });
   };
 
-  return (
-    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-8">
-      {indicator && indicator.state !== 'FULL' ? (
-        <div>
-          <Badge variant={indicator.state === 'BAND' ? 'secondary' : 'outline'}>
-            {seatIndicatorLabel(indicator)}
-          </Badge>
-        </div>
-      ) : null}
+  /**
+   * "Clear form", as on Google Forms: back to how the page opened — the player's
+   * prefilled name and email included, because those came from the link and
+   * are not answers the reader typed — with every error and warning dropped.
+   */
+  const [confirmClear, setConfirmClear] = useState(false);
+  const clearForm = () => {
+    setConfirmClear(false);
+    setAnswers(initialAnswers);
+    setErrors({});
+    setFormError(null);
+    setAddressConfirmed(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-      {unknownToken ? (
-        <Alert>
-          <TriangleAlertIcon />
-          <AlertTitle>We did not recognise that link</AlertTitle>
-          <AlertDescription>
-            Your details have not been filled in. You can still register below, or check the link in
-            your invitation.
-          </AlertDescription>
-        </Alert>
-      ) : null}
+  return (
+    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-3">
+      <FormHeaderCard
+        title={title}
+        description={description ? <RichText markdown={description} /> : null}
+        requiredNote={hasRequiredQuestion(schema)}
+      >
+        {indicator && indicator.state !== 'FULL' ? (
+          <div>
+            <Badge variant={indicator.state === 'BAND' ? 'secondary' : 'outline'}>
+              {seatIndicatorLabel(indicator)}
+            </Badge>
+          </div>
+        ) : null}
+
+        {unknownToken ? (
+          <Alert>
+            <TriangleAlertIcon />
+            <AlertTitle>We did not recognise that link</AlertTitle>
+            <AlertDescription>
+              Your details have not been filled in. You can still register below, or check the
+              link in your invitation.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+      </FormHeaderCard>
 
       {formError ? (
         <Alert variant="destructive">
@@ -216,15 +260,40 @@ export function RegistrationForm({
         disabled={pending}
       />
 
-      <div className="flex flex-col gap-3">
-        <Button type="submit" size="lg" disabled={pending}>
-          {pending ? <Spinner data-icon="inline-start" /> : null}
-          {pending ? 'Submitting…' : 'Submit registration'}
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          Seats are confirmed when you submit. We will email your tickets before the concert.
-        </p>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <FormPrimaryButton type="submit" disabled={pending}>
+          {pending ? <Spinner /> : null}
+          {pending ? 'Submitting…' : 'Submit'}
+        </FormPrimaryButton>
+
+        {/*
+          Behind a confirm, as on Google Forms: one stray tap on a phone would
+          otherwise wipe a party of four's names with no way back. Controlled,
+          because `AlertDialogAction` is a plain button and does not close its
+          own dialog.
+        */}
+        <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+          <AlertDialogTrigger render={<FormTextButton disabled={pending} />}>
+            Clear form
+          </AlertDialogTrigger>
+          <AlertDialogContent size="sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear form?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will remove your answers from all questions and cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={clearForm}>Clear form</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
+
+      <p className="text-muted-foreground pb-6 text-xs">
+        Seats are confirmed when you submit. We will email your tickets before the concert.
+      </p>
     </form>
   );
 }

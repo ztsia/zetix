@@ -43,6 +43,7 @@ vi.mock('@/lib/auth/session', () => ({
 
 const {
   createFormAction,
+  saveFormHeaderAction,
   saveFormSchemaAction,
   setFormStatusAction,
   startNewRoundAction,
@@ -286,6 +287,71 @@ describe('saving the schema', () => {
       form({ schema: JSON.stringify(blankFormSchema('PUBLIC')) }),
     );
     expect(result.error).toMatch(/no longer exists/i);
+  });
+});
+
+describe('the header card', () => {
+  it('writes the title and introduction, and leaves the schema version alone', async () => {
+    await asAdmin();
+    const { concertId, publicSegment } = await scenario();
+    const created = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register' }),
+    );
+    const formId = Number(created.message);
+    const before = (await readForm(formId)).schema_version;
+
+    const result = await saveFormHeaderAction(
+      concertId,
+      formId,
+      NO_STATE,
+      form({ title: '  Autumn concert  ', descriptionMd: 'Free admission.' }),
+    );
+    expect(result.error).toBeNull();
+
+    const [row] = await sql<{ title: string; description_md: string | null; schema_version: number }[]>`
+      select title, description_md, schema_version from registration_forms where id = ${formId}
+    `;
+    expect(row.title).toBe('Autumn concert');
+    expect(row.description_md).toBe('Free admission.');
+    // The header is not the questions: nothing answered against this version changed.
+    expect(row.schema_version).toBe(before);
+  });
+
+  it('refuses a blank title', async () => {
+    await asAdmin();
+    const { concertId, publicSegment } = await scenario();
+    const created = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register' }),
+    );
+    const result = await saveFormHeaderAction(
+      concertId,
+      Number(created.message),
+      NO_STATE,
+      form({ title: '   ' }),
+    );
+    expect(result.error).toBe('A form needs a title.');
+  });
+
+  it('refuses a form belonging to another concert', async () => {
+    await asAdmin();
+    const { concertId, publicSegment } = await scenario();
+    const other = await createConcert(`Other ${randomUUID().slice(0, 8)}`);
+    const created = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register' }),
+    );
+    const result = await saveFormHeaderAction(
+      other,
+      Number(created.message),
+      NO_STATE,
+      form({ title: 'Hijacked' }),
+    );
+    expect(result.error).toBe('That form no longer exists.');
   });
 });
 

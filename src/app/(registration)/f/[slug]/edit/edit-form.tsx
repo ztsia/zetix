@@ -6,8 +6,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
+import { FormCard } from '@/components/forms/form-surface';
 import type { EditableResponse } from '@/lib/registrations/edit';
 import { requestExtraSeatsAction, saveEditAction } from './actions';
 
@@ -102,8 +102,9 @@ export function EditResponseForm({
     });
   };
 
+  // One card per part, on the form canvas, like the form this edits.
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-3">
       {note ? (
         <Alert variant={note.ok ? 'default' : 'destructive'}>
           {note.ok ? <CircleCheckIcon /> : <CircleAlertIcon />}
@@ -112,8 +113,8 @@ export function EditResponseForm({
         </Alert>
       ) : null}
 
-      <section className="flex flex-col gap-4">
-        <h2 className="text-sm font-medium">Your details</h2>
+      <FormCard className="flex flex-col gap-4">
+        <h2 className="text-base font-medium">Your details</h2>
         <div className="flex flex-col gap-2">
           <Label htmlFor="contact-name">Full name</Label>
           <Input
@@ -147,13 +148,11 @@ export function EditResponseForm({
             To change the address your tickets go to, please contact the orchestra.
           </p>
         </div>
-      </section>
+      </FormCard>
 
-      <Separator />
-
-      <section className="flex flex-col gap-4">
+      <FormCard className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-medium">
+          <h2 className="text-base font-medium">
             Your seats ({kept.length})
           </h2>
           <p className="text-xs text-muted-foreground">
@@ -231,18 +230,16 @@ export function EditResponseForm({
           {pending ? <Spinner data-icon="inline-start" /> : null}
           Save changes
         </Button>
-      </section>
-
-      <Separator />
+      </FormCard>
 
       {/*
         The offer that replaces adding a guest (§8.3.1). It is visually and
         functionally separate from Save, because it is a different thing: a new
         request with a new `requested_at`, at the back of the queue.
       */}
-      <section className="flex flex-col gap-4">
+      <FormCard className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-medium">Need more seats?</h2>
+          <h2 className="text-base font-medium">Need more seats?</h2>
           <p className="text-xs text-muted-foreground">
             Extra seats cannot be added to a registration you have already made. Requesting them
             joins the queue at today&rsquo;s date, and we will let you know either way.
@@ -292,7 +289,7 @@ export function EditResponseForm({
             </Button>
           ) : null}
         </div>
-      </section>
+      </FormCard>
     </div>
   );
 }

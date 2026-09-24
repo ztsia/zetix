@@ -1,13 +1,8 @@
 import type { Metadata } from 'next';
 import { sql } from 'drizzle-orm';
-import {
-  CircleCheckIcon,
-  ClockIcon,
-  HourglassIcon,
-  MailIcon,
-  TicketIcon,
-} from 'lucide-react';
+import { CircleCheckIcon, ClockIcon, HourglassIcon, MailIcon, TicketIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { FormCard, FormHeaderCard } from '@/components/forms/form-surface';
 import {
   Item,
   ItemContent,
@@ -113,110 +108,116 @@ export default async function RegistrationDonePage({
   const confirmed = Number(row.confirmed_base) + Number(row.confirmed_extra);
   const pending = Number(row.pending);
   const waitlisted = Number(row.waitlisted);
-  const showTime = formatDateTime(
-    row.starts_at ? new Date(row.starts_at) : null,
-    row.timezone,
-  );
+  const showTime = formatDateTime(row.starts_at ? new Date(row.starts_at) : null, row.timezone);
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-primary">
-          <CircleCheckIcon className="size-5" aria-hidden />
-          <span className="text-sm font-medium">Registration received</span>
-        </div>
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">
-          Thank you, {row.contact_name}
-        </h1>
-        {row.confirmation_message_md ? (
-          <p className="text-sm text-muted-foreground">{row.confirmation_message_md}</p>
-        ) : null}
-      </header>
+    <div className="flex flex-col gap-3">
+      {/*
+        Google Forms' "Your response has been recorded" card: the header card,
+        with the thanks as its title and the admin's confirmation message under
+        it. What was granted follows in a card of its own.
+      */}
+      <FormHeaderCard
+        title={`Thank you, ${row.contact_name}`}
+        description={
+          <div className="flex flex-col gap-2">
+            <p className="text-form-accent flex items-center gap-2 font-medium">
+              <CircleCheckIcon className="size-5" aria-hidden />
+              Your registration has been recorded.
+            </p>
+            {row.confirmation_message_md ? <p>{row.confirmation_message_md}</p> : null}
+          </div>
+        }
+      />
 
-      <ItemGroup className="gap-2">
-        {confirmed > 0 ? (
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <TicketIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>
-                {confirmed} seat{confirmed === 1 ? '' : 's'} confirmed
-              </ItemTitle>
-              {/*
+      <FormCard className="flex flex-col gap-3">
+        <ItemGroup className="gap-2">
+          {confirmed > 0 ? (
+            <Item variant="outline">
+              <ItemMedia variant="icon">
+                <TicketIcon />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>
+                  {confirmed} seat{confirmed === 1 ? '' : 's'} confirmed
+                </ItemTitle>
+                {/*
                 Base and extra broken out, as §8.4 asks — but only where both
                 exist. "4 confirmed (0 base, 4 extra)" on a public form is noise
                 about a distinction the reader does not have.
               */}
-              {Number(row.confirmed_base) > 0 && Number(row.confirmed_extra) > 0 ? (
+                {Number(row.confirmed_base) > 0 && Number(row.confirmed_extra) > 0 ? (
+                  <ItemDescription>
+                    {row.confirmed_base} from your allocation, {row.confirmed_extra} additional
+                  </ItemDescription>
+                ) : null}
+              </ItemContent>
+            </Item>
+          ) : null}
+
+          {pending > 0 ? (
+            <Item variant="outline">
+              <ItemMedia variant="icon">
+                <HourglassIcon />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>
+                  {pending} seat{pending === 1 ? '' : 's'} awaiting review
+                </ItemTitle>
                 <ItemDescription>
-                  {row.confirmed_base} from your allocation, {row.confirmed_extra} additional
+                  Additional seats are allocated after the deadline. We will email you either way.
                 </ItemDescription>
-              ) : null}
-            </ItemContent>
-          </Item>
-        ) : null}
+              </ItemContent>
+            </Item>
+          ) : null}
 
-        {pending > 0 ? (
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <HourglassIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>
-                {pending} seat{pending === 1 ? '' : 's'} awaiting review
-              </ItemTitle>
-              <ItemDescription>
-                Additional seats are allocated after the deadline. We will email you either way.
-              </ItemDescription>
-            </ItemContent>
-          </Item>
-        ) : null}
+          {waitlisted > 0 ? (
+            <Item variant="outline">
+              <ItemMedia variant="icon">
+                <ClockIcon />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>
+                  {waitlisted} seat{waitlisted === 1 ? '' : 's'} waitlisted
+                </ItemTitle>
+                <ItemDescription>
+                  There was not room for {waitlisted === 1 ? 'this one' : 'these'} when you
+                  submitted. We will be in touch if a seat frees up.
+                </ItemDescription>
+              </ItemContent>
+            </Item>
+          ) : null}
+        </ItemGroup>
 
-        {waitlisted > 0 ? (
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <ClockIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>
-                {waitlisted} seat{waitlisted === 1 ? '' : 's'} waitlisted
-              </ItemTitle>
-              <ItemDescription>
-                There was not room for {waitlisted === 1 ? 'this one' : 'these'} when you submitted.
-                We will be in touch if a seat frees up.
-              </ItemDescription>
-            </ItemContent>
-          </Item>
-        ) : null}
-      </ItemGroup>
-
-      {/*
+        {/*
         The honest line when the engine granted less than the form offered. The
         counts above already say what happened; this says it is not a mistake,
         because a reader who asked for four and sees two needs to know which of
         the two numbers is real (§8.3).
       */}
-      {confirmed === 0 ? (
+        {confirmed === 0 ? (
+          <Alert>
+            <ClockIcon />
+            <AlertTitle>No seats were confirmed</AlertTitle>
+            <AlertDescription>
+              Your registration is recorded and holds its place in the queue. Nothing further is
+              needed from you.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <Alert>
-          <ClockIcon />
-          <AlertTitle>No seats were confirmed</AlertTitle>
+          <MailIcon />
+          <AlertTitle>Your tickets go to {row.contact_email}</AlertTitle>
           <AlertDescription>
-            Your registration is recorded and holds its place in the queue. Nothing further is
-            needed from you.
+            Check the spelling — tickets are sent to this address, and it is the only way we can
+            reach you.
+            {showTime
+              ? ` ${row.show_name} is on ${showTime}${row.venue ? `, ${row.venue}` : ''}.`
+              : ''}
           </AlertDescription>
         </Alert>
-      ) : null}
-
-      <Alert>
-        <MailIcon />
-        <AlertTitle>Your tickets go to {row.contact_email}</AlertTitle>
-        <AlertDescription>
-          Check the spelling — tickets are sent to this address, and it is the only way we can reach
-          you.
-          {showTime ? ` ${row.show_name} is on ${showTime}${row.venue ? `, ${row.venue}` : ''}.` : ''}
-        </AlertDescription>
-      </Alert>
+      </FormCard>
     </div>
   );
 }

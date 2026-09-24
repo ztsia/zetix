@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next';
 /**
  * The registration surface (spec/surfaces.md §15.2).
  *
- * **Single column, no chrome, orchestra branding.** There is no navigation
+ * **Single column, no chrome, drawn like Google Forms.** There is no navigation
  * because there is nowhere to go: someone arrives on a link from an email or a
  * poster, fills in one form, and leaves. A header with links would offer them a
  * site that does not exist.
@@ -50,13 +50,14 @@ export default function RegistrationSurfaceLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-svh bg-background text-foreground">
+    <div className="bg-form-canvas min-h-svh text-foreground">
       {/*
-        One column, centred, capped at a comfortable measure. `px-4` rather than
-        a container query: this surface has exactly one layout at every width,
-        and the only thing that changes is how much room is left beside it.
+        One column, capped at Google Forms' 640px measure, on the form's tinted
+        canvas — the look everyone answering has already met on the rounds
+        collected there. `px-4` keeps a gutter on a phone; the cap is a maximum,
+        not a target, so nothing changes but the room left beside it.
       */}
-      <main className="mx-auto w-full max-w-xl px-4 py-10 sm:py-14">{children}</main>
+      <main className="mx-auto w-full max-w-[672px] px-4 py-3 sm:py-6">{children}</main>
     </div>
   );
 }

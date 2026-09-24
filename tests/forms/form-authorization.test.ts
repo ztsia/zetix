@@ -48,6 +48,7 @@ vi.mock('@/lib/auth/session', () => ({
 
 const {
   createFormAction,
+  saveFormHeaderAction,
   saveFormSchemaAction,
   saveFormSettingsAction,
   setFormStatusAction,
@@ -141,6 +142,8 @@ function mutations(concertId: number, formId: number, publicSegment: number) {
         NO_STATE,
         form({ title: 'Renamed by someone else', slug: 'renamed-by-someone-else' }),
       ),
+    saveHeader: () =>
+      saveFormHeaderAction(concertId, formId, NO_STATE, form({ title: 'Renamed in the header' })),
     setStatus: () => setFormStatusAction(concertId, formId, NO_STATE, form({ status: 'OPEN' })),
     newRound: () =>
       startNewRoundAction(concertId, formId, NO_STATE, form({ roundLabel: 'Round 2' })),

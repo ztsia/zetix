@@ -45,6 +45,7 @@ const {
   createFormAction,
   saveFormHeaderAction,
   saveFormSchemaAction,
+  saveFormSettingsAction,
   setFormStatusAction,
   startNewRoundAction,
 } = await import('@/app/(admin)/admin/concerts/[concertId]/forms/actions');
@@ -317,6 +318,46 @@ describe('the header card', () => {
     expect(row.description_md).toBe('Free admission.');
     // The header is not the questions: nothing answered against this version changed.
     expect(row.schema_version).toBe(before);
+  });
+
+  it('is not undone by a Settings save from a tab opened before it', async () => {
+    // The Settings tab used to post the title and introduction back as hidden
+    // fields from when it loaded, so saving it reverted a newer header edit.
+    await asAdmin();
+    const { concertId, publicSegment } = await scenario();
+    const created = await createFormAction(
+      concertId,
+      NO_STATE,
+      form({ kind: 'PUBLIC', parentId: String(publicSegment), title: 'Register' }),
+    );
+    const formId = Number(created.message);
+
+    await saveFormHeaderAction(
+      concertId,
+      formId,
+      NO_STATE,
+      form({ title: 'Newer title', descriptionMd: 'Newer intro' }),
+    );
+    const settings = await saveFormSettingsAction(
+      concertId,
+      formId,
+      NO_STATE,
+      form({ title: 'Register', descriptionMd: 'Stale intro', slug: 'register-settings' }),
+    );
+    expect(settings.error).toBeNull();
+
+    const [row] = await sql<{ title: string; description_md: string | null }[]>`
+      select title, description_md from registration_forms where id = ${formId}
+    `;
+    expect(row.title).toBe('Newer title');
+    expect(row.description_md).toBe('Newer intro');
+  });
+
+  it('refuses a form id that is not an integer rather than querying with it', async () => {
+    await asAdmin();
+    const { concertId } = await scenario();
+    const result = await saveFormHeaderAction(concertId, Number.NaN, NO_STATE, form({ title: 'x' }));
+    expect(result.error).toBe('That form no longer exists.');
   });
 
   it('refuses a blank title', async () => {

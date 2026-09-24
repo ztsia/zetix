@@ -53,10 +53,8 @@ export default async function FormSettingsPage({
         formId={formId}
         timeZone={form.timeZone}
         defaults={{
-          title: form.title,
           roundLabel: form.roundLabel,
           slug: form.slug,
-          descriptionMd: form.descriptionMd,
           confirmationMessageMd: form.confirmationMessageMd,
           opensAt: toLocalInput(form.opensAt, form.timeZone),
           closesAt: toLocalInput(form.closesAt, form.timeZone),

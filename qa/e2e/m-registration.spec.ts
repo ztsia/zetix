@@ -94,7 +94,7 @@ test.describe('the public form', () => {
      */
     await page.goto('/f/qa-public');
     await fillRegistrant(page, 'Solo Tan', addr('solo'));
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
 
     await expect(page.getByText('Registration received')).toBeVisible();
     expect(await partyOf(addr('solo'))).toEqual([
@@ -108,7 +108,7 @@ test.describe('the public form', () => {
     await page.getByRole('button', { name: 'Add a guest' }).click();
     await field(page, 'party.0.full_name').fill('Bob Tan');
     await field(page, 'party.1.full_name').fill('Cara Tan');
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
 
     await expect(page.getByText('3 seats confirmed')).toBeVisible();
     const party = await partyOf(addr('alice'));
@@ -120,7 +120,7 @@ test.describe('the public form', () => {
   test('a registration is written with its receipt and verification token', async ({ page }) => {
     await page.goto('/f/qa-public');
     await fillRegistrant(page, 'Receipt Tan', addr('receipt'));
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('Registration received')).toBeVisible();
 
     const [row] = await sql<
@@ -148,13 +148,13 @@ test.describe('the public form', () => {
     // The typo nudge is live, before anything is submitted.
     await expect(page.getByText('Did you mean gmail.com?')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText(/could not find the mail server/i)).toBeVisible();
     expect(await partyOf(typoAddress)).toHaveLength(0);
 
     // Submitting again goes through: nobody is locked out of a scarce seat by a
     // DNS answer.
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('Registration received')).toBeVisible();
     expect(await partyOf(typoAddress)).toHaveLength(1);
   });
@@ -176,7 +176,7 @@ test.describe('the player form', () => {
     // the cap has room, so there is no add button to press for the first seat.
     await field(page, 'base.0.full_name').fill('Base Guest');
     await field(page, 'extras.0.full_name').fill('Extra Guest');
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('Registration received')).toBeVisible();
 
     const party = await partyOf('vera@example.com');
@@ -190,7 +190,7 @@ test.describe('the player form', () => {
     await page.goto('/f/qa-player?k=not-a-real-token');
     await expect(page.getByText('We did not recognise that link')).toBeVisible();
     // And the form beneath it is still usable — a mistyped link is not a dead end.
-    await expect(page.getByRole('button', { name: 'Submit registration' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Submit' })).toBeVisible();
   });
 });
 
@@ -205,7 +205,7 @@ test.describe('the states that are not a form', () => {
   test('a full segment says so rather than offering a form', async ({ page }) => {
     await page.goto('/f/qa-full');
     await expect(page.getByText(/is full/i).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Submit registration' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Submit' })).toHaveCount(0);
   });
 
   /**
@@ -231,7 +231,7 @@ test.describe('verification', () => {
   test('the link confirms the address and says the seats were never at stake', async ({ page }) => {
     await page.goto('/f/qa-public');
     await fillRegistrant(page, 'Verify Tan', addr('verify'));
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('Registration received')).toBeVisible();
 
     const [row] = await sql<{ verification_token: string }[]>`
@@ -265,7 +265,7 @@ test.describe('editing a response', () => {
     await page.getByRole('button', { name: 'Add a guest' }).click();
     await field(page, 'party.0.full_name').fill('Keep Tan');
     await field(page, 'party.1.full_name').fill('Drop Tan');
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('3 seats confirmed')).toBeVisible();
 
     const [response] = await sql<{ edit_token: string }[]>`
@@ -305,7 +305,7 @@ test.describe('editing a response', () => {
   test('the superseded edit link stops working', async ({ page }) => {
     await page.goto('/f/qa-public');
     await fillRegistrant(page, 'Chain Tan', addr('chain'));
-    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
     await expect(page.getByText('Registration received')).toBeVisible();
 
     const [response] = await sql<{ edit_token: string }[]>`

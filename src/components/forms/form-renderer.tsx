@@ -295,7 +295,14 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
         return (
           <FormCard key={index} invalid={rowInvalid} className="flex flex-col gap-6">
             <div className="-mt-1 flex items-center justify-between gap-3">
-              <h3 className="text-base font-medium">Seat {index + 1}</h3>
+              {/*
+                "Guest", not "Seat", on the public party: the registrant is
+                seat #1 (decision 36), so the first card here is the second
+                seat, and numbering it "Seat 1" contradicts the section above.
+              */}
+              <h3 className="text-base font-medium">
+                {block.type === 'GUESTS_PARTY' ? 'Guest' : 'Seat'} {index + 1}
+              </h3>
               <Button
                 type="button"
                 variant="ghost"

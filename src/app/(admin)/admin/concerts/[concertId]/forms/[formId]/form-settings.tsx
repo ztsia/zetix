@@ -31,9 +31,8 @@ import {
  * 43).
  *
  * **The title and introduction are edited on the Questions tab**, in the header
- * card above the first question, as on Google Forms. They still travel with this
- * save as hidden fields, because `saveFormSettingsAction` writes the whole row:
- * leaving them out would blank them.
+ * card above the first question, as on Google Forms, and this save does not
+ * touch them — so a Settings tab left open cannot undo a newer title.
  */
 
 export function FormSettings({
@@ -45,10 +44,8 @@ export function FormSettings({
   concertId: number;
   formId: number;
   defaults: {
-    title: string;
     roundLabel: string | null;
     slug: string;
-    descriptionMd: string | null;
     confirmationMessageMd: string | null;
     opensAt: string;
     closesAt: string;
@@ -84,9 +81,6 @@ export function FormSettings({
 
   return (
     <form action={submit} className="flex flex-col gap-3">
-      <input type="hidden" name="title" value={defaults.title} />
-      <input type="hidden" name="descriptionMd" value={defaults.descriptionMd ?? ''} />
-
       {!timeZone && (
         <Alert variant="destructive">
           <AlertTitle>This concert has no timezone</AlertTitle>

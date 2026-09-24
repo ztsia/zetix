@@ -95,7 +95,11 @@ export default async function FormLayout({
               <Eye />
             </Button>
 
-            <CopyLinkButton slug={form.slug} live={form.status === 'OPEN'} />
+            <CopyLinkButton
+              slug={form.slug}
+              live={form.status === 'OPEN'}
+              appUrl={process.env.APP_URL ?? null}
+            />
 
             <StatusControls
               concertId={concertId}

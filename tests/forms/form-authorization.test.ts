@@ -231,12 +231,15 @@ describe('the admin who owns the concert', () => {
 
     expect((await calls.saveSchema()).error).toBeNull();
     expect((await calls.saveSettings()).error).toBeNull();
+    expect((await calls.saveHeader()).error).toBeNull();
     expect((await calls.setStatus()).error).toBeNull();
     expect((await calls.export()).error).toBeNull();
 
     const after = await readForm(formId);
     expect(after.status).toBe('OPEN');
-    expect(after.title).toBe('Renamed by someone else');
+    // Settings owns the link; the title is the header card's.
+    expect(after.slug).toBe('renamed-by-someone-else');
+    expect(after.title).toBe('Renamed in the header');
     expect(after.schema_version).toBe(2);
   });
 });

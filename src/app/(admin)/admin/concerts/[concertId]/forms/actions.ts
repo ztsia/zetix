@@ -121,6 +121,9 @@ async function loadConcert(concertId: number) {
  * concert is the authorization check, not a convenience.
  */
 async function loadForm(concertId: number, formId: number) {
+  // Server Actions take their arguments from the client, so an id that is not an
+  // integer is refused here rather than handed to Postgres as a `NaN` parameter.
+  if (!Number.isSafeInteger(concertId) || !Number.isSafeInteger(formId)) return null;
   const showId = sql<number>`coalesce(${showSegments.showId}, ${registrationForms.showId})`;
   const [row] = await getDb()
     .select({
@@ -345,11 +348,15 @@ export async function saveFormSchemaAction(
   }
 }
 
+/**
+ * Everything the Settings tab owns. **Not the title or the introduction** —
+ * those are the header card's (`saveFormHeaderAction`), and a settings save that
+ * also wrote them would carry whatever they were when the Settings tab was
+ * opened, silently undoing a newer header edit saved from another tab.
+ */
 const settingsSchema = z.object({
-  title: z.string().trim().min(1, 'A form needs a title.').max(300),
   roundLabel: optionalText,
   slug: z.string().trim().min(1, 'A form needs a link.').max(120),
-  descriptionMd: optionalLongText,
   confirmationMessageMd: optionalLongText,
   opensAt: localDateTime,
   closesAt: localDateTime,
@@ -359,7 +366,7 @@ const settingsSchema = z.object({
   autoCloseOnCapacity: checkbox,
 });
 
-/** The form's own settings — its window, its limits and its copy (§8.3). */
+/** The form's own settings — its window, its limits and its confirmation copy (§8.3). */
 export async function saveFormSettingsAction(
   concertId: number,
   formId: number,
@@ -404,10 +411,8 @@ export async function saveFormSettingsAction(
     await getDb()
       .update(registrationForms)
       .set({
-        title: values.title,
         roundLabel: values.roundLabel,
         slug,
-        descriptionMd: values.descriptionMd,
         confirmationMessageMd: values.confirmationMessageMd,
         opensAt,
         closesAt,
@@ -422,7 +427,7 @@ export async function saveFormSettingsAction(
       action: 'form.settings.save',
       entityType: 'registration_form',
       entityId: String(formId),
-      after: { title: values.title, slug, opensAt, closesAt, maxResponses: values.maxResponses },
+      after: { title: form.title, slug, opensAt, closesAt, maxResponses: values.maxResponses },
     });
 
     revalidatePath(`/admin/concerts/${concertId}/forms/${formId}`, 'layout');

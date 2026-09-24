@@ -191,6 +191,21 @@ export function FormBuilder({
     startTransition(async () => {
       const messages: string[] = [];
 
+      // The questions first. They are what the contract can refuse, and a
+      // refusal should leave nothing half-saved — the title alone written and
+      // the questions not is a save that looks done and is not.
+      if (schemaDirty) {
+        const data = new FormData();
+        data.set('schema', JSON.stringify(candidate));
+        const result = await saveFormSchemaAction(concertId, formId, { error: null }, data);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        setSaved(candidate);
+        if (result.message) messages.push(result.message);
+      }
+
       if (headerDirty) {
         const data = new FormData();
         data.set('title', header.title);
@@ -202,18 +217,6 @@ export function FormBuilder({
         }
         setSavedHeader({ title: header.title, description: header.description });
         setTitle(header.title);
-      }
-
-      if (schemaDirty) {
-        const data = new FormData();
-        data.set('schema', JSON.stringify(candidate));
-        const result = await saveFormSchemaAction(concertId, formId, { error: null }, data);
-        if (result.error) {
-          setError(result.error);
-          return;
-        }
-        setSaved(candidate);
-        if (result.message) messages.push(result.message);
       }
 
       setMessage(messages.join(' ') || 'Saved.');

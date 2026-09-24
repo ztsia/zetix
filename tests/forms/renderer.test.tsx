@@ -288,11 +288,28 @@ describe('repeaters', () => {
   });
 
   it('numbers the seats, so an error against row 2 can be found', () => {
+    const value = emptyAnswers(PLAYER_FORM, PLAYER_LIMITS);
+    value.base = { kind: 'repeater', rows: [{ full_name: 'A' }, { full_name: 'B' }] };
+    const html = render(PLAYER_FORM, PLAYER_LIMITS, { value });
+    expect(html).toContain('Seat 1');
+    expect(html).toContain('Seat 2');
+  });
+
+  it('numbers a public party as guests, since the registrant is seat #1', () => {
     const value = emptyAnswers(PUBLIC_FORM, PUBLIC_LIMITS);
     value.party = { kind: 'repeater', rows: [{ full_name: 'A' }, { full_name: 'B' }] };
     const html = render(PUBLIC_FORM, PUBLIC_LIMITS, { value });
-    expect(html).toContain('Seat 1');
-    expect(html).toContain('Seat 2');
+    expect(html).toContain('Guest 1');
+    expect(html).toContain('Guest 2');
+    expect(html).not.toContain('Seat 1');
+  });
+
+  it('labels the add control with the section’s own wording', () => {
+    const schema = clone(PUBLIC_FORM);
+    const party = schema.blocks.find((block) => block.type === 'GUESTS_PARTY');
+    if (!party || !('guest_fields' in party)) throw new Error('fixture has no party block');
+    party.add_label = 'Bring someone along';
+    expect(render(schema, PUBLIC_LIMITS)).toContain('Bring someone along');
   });
 });
 
@@ -312,8 +329,8 @@ describe('errors', () => {
       value,
       errors: { 'party.1.full_name': 'This is required.' },
     });
-    // The message sits after Seat 2's heading, not Seat 1's.
-    expect(html.indexOf('This is required.')).toBeGreaterThan(html.indexOf('Seat 2'));
+    // The message sits after Guest 2's heading, not Guest 1's.
+    expect(html.indexOf('This is required.')).toBeGreaterThan(html.indexOf('Guest 2'));
   });
 
   it('shows a block error above the block', () => {

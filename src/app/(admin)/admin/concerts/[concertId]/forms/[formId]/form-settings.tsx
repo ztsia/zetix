@@ -288,7 +288,6 @@ export function FormSettings({
           <Button
             type="submit"
             disabled={isPending}
-            className="bg-form-accent text-form-accent-foreground hover:bg-form-accent/90"
           >
             {isPending ? <Spinner /> : <Save />}
             {isPending ? 'Saving…' : 'Save settings'}

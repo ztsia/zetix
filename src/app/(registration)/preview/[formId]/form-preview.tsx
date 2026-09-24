@@ -5,11 +5,7 @@ import { Eye, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RichText } from '@/components/forms/rich-text';
 import { FormRenderer, hasRequiredQuestion } from '@/components/forms/form-renderer';
-import {
-  FormHeaderCard,
-  FormPrimaryButton,
-  FormTextButton,
-} from '@/components/forms/form-surface';
+import { FormHeaderCard } from '@/components/forms/form-surface';
 import { emptyAnswers, type FormAnswers } from '@/lib/forms/answers';
 import type { CopyValues } from '@/lib/forms/copy';
 import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
@@ -180,17 +176,19 @@ export function FormPreview({
 
       <div className="mt-1 flex items-center justify-between gap-3 pb-6">
         <div className="flex flex-col gap-1">
-          <FormPrimaryButton type="button" disabled className="self-start">
+          <Button type="button" disabled className="self-start">
             Submit
-          </FormPrimaryButton>
+          </Button>
           <p className="text-muted-foreground text-xs">Nothing is sent from a preview.</p>
         </div>
-        <FormTextButton
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => setAnswers(emptyAnswers(schema, limits))}
           className="self-start"
         >
           Clear form
-        </FormTextButton>
+        </Button>
       </div>
     </div>
   );

@@ -18,11 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { FormRenderer, hasRequiredQuestion } from '@/components/forms/form-renderer';
-import {
-  FormHeaderCard,
-  FormPrimaryButton,
-  FormTextButton,
-} from '@/components/forms/form-surface';
+import { FormHeaderCard } from '@/components/forms/form-surface';
 import { RichText } from '@/components/forms/rich-text';
 import { emptyAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import type { CopyValues } from '@/lib/forms/copy';
@@ -261,10 +257,10 @@ export function RegistrationForm({
       />
 
       <div className="mt-1 flex items-center justify-between gap-3">
-        <FormPrimaryButton type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending}>
           {pending ? <Spinner /> : null}
           {pending ? 'Submitting…' : 'Submit'}
-        </FormPrimaryButton>
+        </Button>
 
         {/*
           Behind a confirm, as on Google Forms: one stray tap on a phone would
@@ -273,7 +269,7 @@ export function RegistrationForm({
           own dialog.
         */}
         <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
-          <AlertDialogTrigger render={<FormTextButton disabled={pending} />}>
+          <AlertDialogTrigger render={<Button type="button" variant="ghost" disabled={pending} />}>
             Clear form
           </AlertDialogTrigger>
           <AlertDialogContent size="sm">

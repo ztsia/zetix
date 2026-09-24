@@ -57,9 +57,9 @@ const UNDERLINE =
 const RADIO =
   'size-5 border-2 border-muted-foreground data-checked:border-form-accent data-checked:bg-transparent dark:data-checked:bg-transparent aria-invalid:aria-checked:border-form-accent [&_[data-slot=radio-group-indicator]]:size-5 [&_[data-slot=radio-group-indicator]_span]:size-2.5 [&_[data-slot=radio-group-indicator]_span]:bg-form-accent';
 
-/** An 18px square in the accent, filled when ticked. */
+/** An 18px square in the accent, filled when ticked; the corner is the component's own. */
 const CHECKBOX =
-  'size-[18px] rounded-[2px] border-2 border-muted-foreground data-checked:border-form-accent data-checked:bg-form-accent data-checked:text-form-accent-foreground dark:data-checked:bg-form-accent aria-invalid:aria-checked:border-form-accent';
+  'size-[18px] border-2 border-muted-foreground data-checked:border-form-accent data-checked:bg-form-accent data-checked:text-form-accent-foreground dark:data-checked:bg-form-accent aria-invalid:aria-checked:border-form-accent';
 
 export type FormFieldControlProps = {
   field: FormField;
@@ -164,7 +164,7 @@ function Control({
       return (
         <NativeSelect
           {...shared}
-          className="w-full sm:w-fit sm:min-w-52 [&>select]:h-12 [&>select]:rounded [&>select]:border-form-line [&>select]:pl-4 [&>select]:text-base md:[&>select]:text-sm"
+          className="w-full sm:w-fit sm:min-w-52 [&>select]:h-12 [&>select]:border-form-line [&>select]:pl-4 [&>select]:text-base md:[&>select]:text-sm"
           value={asText(value)}
           onChange={(event) => onChange(event.target.value)}
         >
@@ -516,7 +516,7 @@ function GridField({ field, path, value, onChange, error, disabled }: FormFieldC
               <tr key={row.value} className="bg-muted">
                 <th
                   scope="row"
-                  className="bg-muted sticky left-0 max-w-40 rounded-l py-3 pr-4 pl-3 text-left font-normal"
+                  className="bg-muted sticky left-0 max-w-40 rounded-l-lg py-3 pr-4 pl-3 text-left font-normal"
                 >
                   {row.label}
                 </th>
@@ -531,7 +531,7 @@ function GridField({ field, path, value, onChange, error, disabled }: FormFieldC
                       key={column.value}
                       className={cn(
                         'px-2 py-2 text-center',
-                        index === columns.length - 1 && 'rounded-r',
+                        index === columns.length - 1 && 'rounded-r-lg',
                       )}
                     >
                       {/*

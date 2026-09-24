@@ -85,15 +85,14 @@ export function StatusControls({
         />
 
         {/*
-          Google Forms' "Publish", in the form's accent: the one action on this
-          bar that changes what strangers can reach, so it is the one that
-          stands out. Once open it becomes the quieter way back.
+          Google Forms' "Publish", as the bar's one primary button: it is the
+          action that changes what strangers can reach. Once open it becomes
+          the quieter way back.
         */}
         {status !== 'OPEN' && (
           <Button
             size="sm"
             disabled={isPending}
-            className="bg-form-accent text-form-accent-foreground hover:bg-form-accent/90"
             onClick={() => setStatus('OPEN')}
           >
             {isPending ? <Spinner /> : <Play />}

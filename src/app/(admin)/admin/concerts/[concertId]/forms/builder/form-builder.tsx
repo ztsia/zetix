@@ -333,7 +333,6 @@ export function FormBuilder({
               type="button"
               onClick={save}
               disabled={isPending || !dirty || !parsed.ok || title.trim() === ''}
-              className="bg-form-accent text-form-accent-foreground hover:bg-form-accent/90"
             >
               {isPending ? <Spinner /> : <Save />}
               {isPending ? 'Saving…' : 'Save'}

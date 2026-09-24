@@ -12,8 +12,11 @@ import { cn } from '@/lib/utils';
  * new form. The builder draws its cards from these same pieces, so what an admin
  * edits is what a registrant sees.
  *
- * Every colour is a `--form-*` token from `globals.css` — the accent, the canvas
- * and the card — so the look is set in one place and has a dark variant.
+ * **Google Forms' layout, this design system's look.** Every colour is a
+ * `--form-*` token from `globals.css`, each an alias of a system token, and the
+ * corners use the system radius — so a form reads as part of the same product
+ * as the console. The `--form-*` layer is also where a per-form theme would
+ * plug in. Buttons are the system `Button`, not look-alikes.
  *
  * Server-safe: nothing here holds state, so the confirmation and closed pages
  * can use them without shipping JavaScript.
@@ -155,40 +158,5 @@ export function QuestionError({ id, children }: { id?: string; children: React.R
       </svg>
       {children}
     </p>
-  );
-}
-
-/**
- * The accent-filled button Google Forms uses for Submit and Next. A plain
- * element rather than `Button`, because `Button`'s variants are the console's
- * neutral palette and this one has to wear the form's accent.
- */
-export function FormPrimaryButton({ className, ...props }: React.ComponentProps<'button'>) {
-  return (
-    <button
-      className={cn(
-        'bg-form-accent text-form-accent-foreground inline-flex h-9 items-center justify-center gap-2 rounded px-6 text-sm font-medium',
-        'shadow-sm transition-shadow hover:shadow-md focus-visible:ring-form-accent focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-        'disabled:pointer-events-none disabled:opacity-50',
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-/** The accent-coloured text button — "Clear form", "Back". */
-export function FormTextButton({ className, ...props }: React.ComponentProps<'button'>) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'text-form-accent hover:bg-form-accent-soft inline-flex h-9 items-center justify-center rounded px-3 text-sm font-medium',
-        'focus-visible:ring-form-accent focus-visible:ring-2 focus-visible:outline-none',
-        'disabled:pointer-events-none disabled:opacity-50',
-        className,
-      )}
-      {...props}
-    />
   );
 }

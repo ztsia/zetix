@@ -44,7 +44,7 @@ export function FormTabs({
           href={tab.href}
           aria-current={tab.active ? 'page' : undefined}
           className={cn(
-            'relative inline-flex h-10 items-center gap-1.5 rounded-t px-3 text-sm font-medium transition-colors',
+            'relative inline-flex h-10 items-center gap-1.5 rounded-t-md px-3 text-sm font-medium transition-colors',
             'hover:bg-form-accent-soft focus-visible:ring-form-accent focus-visible:ring-2 focus-visible:outline-none',
             tab.active ? 'text-form-accent' : 'text-muted-foreground hover:text-foreground',
           )}

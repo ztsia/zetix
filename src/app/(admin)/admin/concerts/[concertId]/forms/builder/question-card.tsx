@@ -74,7 +74,7 @@ import { canDeleteField, isSystemField, type ConditionSource, type FieldPatch } 
  * **Two states, as there.** At rest the card shows the question exactly as a
  * registrant will meet it — drawn by the same `FormFieldControl` the public form
  * uses, so the builder's cards *are* the live preview §8.2.2b asks for. Click it
- * and it opens for editing: a blue bar down the left, the question in a grey
+ * and it opens for editing: a bar down the left, the question in a grey
  * box, the type picker beside it, the answers editable in place, and along the
  * bottom duplicate, delete, Required and a ⋮ menu for the rarer settings.
  *
@@ -136,7 +136,7 @@ const ANSWER_HINT: Partial<Record<FieldType, string>> = {
 
 /** The builder's grey question box: a filled field with an underline that thickens on focus. */
 const TITLE_INPUT =
-  'bg-muted/70 h-14 rounded-none rounded-t border-0 border-b border-muted-foreground/40 px-4 text-base shadow-none focus-visible:border-b-2 focus-visible:border-form-accent focus-visible:ring-0 md:text-base dark:bg-muted/70';
+  'bg-muted/70 h-14 rounded-none rounded-t-lg border-0 border-b border-muted-foreground/40 px-4 text-base shadow-none focus-visible:border-b-2 focus-visible:border-form-accent focus-visible:ring-0 md:text-base dark:bg-muted/70';
 
 /** An inline, borderless-until-hovered underline input — an option's label, a scale's end. */
 const INLINE_INPUT =
@@ -359,7 +359,7 @@ function ActiveQuestion({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="border-form-line text-muted-foreground flex h-14 items-center gap-3 rounded border px-4 text-sm sm:w-64" />
+                  <span className="border-form-line text-muted-foreground flex h-14 items-center gap-3 rounded-lg border px-4 text-sm sm:w-64" />
                 }
               >
                 <TypeIcon type={field.type} />
@@ -570,7 +570,7 @@ function TypePicker({
       <SelectTrigger
         id={id}
         aria-label="Answer type"
-        className="border-form-line h-14! w-full rounded px-4 sm:w-64"
+        className="border-form-line h-14! w-full px-4 sm:w-64"
       >
         <SelectValue>
           <span className="flex items-center gap-3">
@@ -696,7 +696,7 @@ function AnswerEditor({
       return (
         <p className="text-muted-foreground flex items-center gap-3 text-sm">
           <span
-            className="border-muted-foreground size-[18px] rounded-[2px] border-2"
+            className="border-muted-foreground size-[18px] rounded-[4px] border-2"
             aria-hidden
           />
           The question above sits beside a single box to tick.
@@ -723,7 +723,7 @@ function MarkerGlyph({ marker, index }: { marker: Marker; index: number }) {
       aria-hidden
       className={cn(
         'border-muted-foreground/60 size-5 shrink-0 border-2',
-        marker === 'radio' ? 'rounded-full' : 'size-[18px] rounded-[2px]',
+        marker === 'radio' ? 'rounded-full' : 'size-[18px] rounded-[4px]',
       )}
     />
   );

@@ -48,20 +48,6 @@
   --scan-duplicate: oklch(0.78 0.16 80);
   --scan-error: oklch(0.58 0.24 27);
 
-  /* The form surfaces (spec/v2.md §8.2): the respondent's form and the builder
-     that draws it. Taken from Google Forms' default theme, because every round
-     of this concert has been answered there and the form should feel like the
-     one people already know. Only the form screens read these. */
-  --form-accent: #5746e3;
-  --form-accent-foreground: #ffffff;
-  --form-accent-soft: rgb(87 70 227 / 0.12);
-  --form-canvas: #eeedfc;
-  --form-card: #ffffff;
-  --form-line: #dadce0;
-  --form-error: #d93025;
-  /* The bar down the left of the question being edited: Google Forms' blue, not
-     the accent, so "this one is selected" never reads as a themed decoration. */
-  --form-focus: #4285f4;
 }
 
 .dark {
@@ -97,14 +83,37 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 
-  --form-accent: #8f83f2;
-  --form-accent-foreground: #16112f;
-  --form-accent-soft: rgb(143 131 242 / 0.18);
-  --form-canvas: oklch(0.17 0.01 285);
-  --form-card: oklch(0.22 0.01 285);
-  --form-line: oklch(1 0 0 / 14%);
-  --form-error: #f28b82;
-  --form-focus: #8ab4f8;
+}
+
+/* Declared on `.dark` as well as `:root` because an alias resolves where it is
+   declared: dark mode is switched on a wrapper element (the scanner's layout
+   does), and an alias computed only at the root would keep the light values. */
+:root,
+.dark {
+  /* The form surfaces (spec/v2.md §8.2): the respondent's form and the builder
+     that draws it. Laid out like Google Forms, coloured by this design system —
+     every one is an alias of a system token, so the forms follow the console's
+     theme and radius.
+
+     **This block is the form's theme hook.** A per-form theme (a banner image
+     and the colour taken from it) would set these on the form's own wrapper and
+     nothing else would change: every form screen reads `--form-*`, never the
+     system tokens directly. */
+  --form-accent: var(--primary);
+  --form-accent-foreground: var(--primary-foreground);
+  --form-accent-soft: color-mix(in oklch, var(--primary) 8%, transparent);
+  --form-canvas: var(--muted);
+  --form-card: var(--card);
+  --form-line: var(--border);
+  --form-error: var(--destructive);
+  /* The bar down the left of the card being edited. */
+  --form-focus: var(--primary);
+}
+
+.dark {
+  /* In dark mode `--muted` is lighter than a card, which would sink the cards
+     into the page; the plain background keeps them lifted. */
+  --form-canvas: var(--background);
 }
 
 @theme inline {

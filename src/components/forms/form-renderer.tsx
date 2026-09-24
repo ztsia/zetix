@@ -338,7 +338,7 @@ function Repeater({ block, answer, onChange, cap, errors, disabled }: BlockProps
           <Button
             type="button"
             variant="outline"
-            className="bg-form-card h-10 rounded border-form-line"
+            className="bg-form-card h-10"
             disabled={disabled || full}
             onClick={() => setRows([...rows, emptyRow(fields)])}
           >

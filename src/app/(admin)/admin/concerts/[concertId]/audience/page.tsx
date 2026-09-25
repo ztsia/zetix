@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { parseTableState } from '@/components/data-table/url-state';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 import {
   AUDIENCE_URL_KEYS,
   filterFromUrl,
@@ -40,7 +41,8 @@ export default async function AudiencePage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
+  const read = { searchContacts: !masksContacts(user.role) };
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -58,8 +60,10 @@ export default async function AudiencePage({
   const paging = { pageIndex: state.pageIndex, pageSize: state.pageSize, sorting: state.sorting };
 
   const [page, counts, options, meters, segments, players] = await Promise.all([
-    grain === 'seats' ? listSeats(concertId, filter, paging) : listParties(concertId, filter, paging),
-    viewCounts(concertId, partyFilter(filter)),
+    grain === 'seats'
+      ? listSeats(concertId, filter, paging, read)
+      : listParties(concertId, filter, paging, read),
+    viewCounts(concertId, partyFilter(filter), read),
     audienceOptions(concertId),
     filter.view === 'needs-review'
       ? poolMeters(concertId, { segmentId: filter.segmentId, showId: filter.showId })
@@ -92,7 +96,9 @@ export default async function AudiencePage({
           grain={grain}
           filter={filter}
           state={state}
-          page={page}
+          // Masked on the server for a viewer (§28): a mask in the browser would be
+          // over data the RSC payload already carried.
+          page={maskForRole(user.role, page)}
           counts={counts}
           options={options}
           toolbarExtra={meters.length > 0 ? <PoolMeters meters={meters} /> : undefined}

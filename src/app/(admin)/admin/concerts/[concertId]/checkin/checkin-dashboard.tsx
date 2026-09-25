@@ -27,6 +27,7 @@ import type { ExportColumn } from '@/lib/export';
 import { RevertScanButton } from './revert-scan-button';
 import { RejectedSyncsAlert } from './rejected-syncs-alert';
 import { buildDashboardQuery, type DashboardChange } from './dashboard-url';
+import { AdminOnly } from '@/components/auth/role';
 
 type ShowOption = { id: number; name: string; startsAt: string | null };
 
@@ -495,12 +496,14 @@ function ScanLog({
         header: () => <span className="sr-only">Actions</span>,
         cell: ({ row }) =>
           row.original.revertedAt ? null : (
-            <RevertScanButton
-              checkInId={row.original.id}
-              showId={showId}
-              concertId={concertId}
-              attendeeName={row.original.attendeeName}
-            />
+            <AdminOnly>
+              <RevertScanButton
+                checkInId={row.original.id}
+                showId={showId}
+                concertId={concertId}
+                attendeeName={row.original.attendeeName}
+              />
+            </AdminOnly>
           ),
       },
     ],

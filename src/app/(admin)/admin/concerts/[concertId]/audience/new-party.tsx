@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Plus } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { useCanEdit } from '@/components/auth/role';
 import { RegistrationFormDialog } from '../registrations/registration-form-dialog';
 import type { PlayerOption, SegmentOption } from '../registrations/queries';
 
@@ -19,6 +20,8 @@ export function NewParty(props: {
   players: PlayerOption[];
 }) {
   const [outcome, setOutcome] = React.useState<string | null>(null);
+  // Creating a party is an admin's (spec/v3.md §28).
+  if (!useCanEdit()) return null;
   return (
     <div className="flex flex-col items-end gap-2">
       <RegistrationFormDialog

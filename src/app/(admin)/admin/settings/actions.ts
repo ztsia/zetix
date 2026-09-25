@@ -7,7 +7,7 @@ import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { systemSettings } from '@/db/schema/settings';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { getSessionUser } from '@/lib/auth/session';
 import { settingSpec, type SettingSpec } from './catalogue';
 import type { FormState } from '../concerts/form-state';
@@ -113,7 +113,7 @@ export async function setSystemSettingAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = z
     .object({ key: z.string().trim().min(1), value: z.string() })
@@ -178,7 +178,7 @@ export async function setSystemSettingAction(
  * guard watches deletes too.
  */
 export async function clearSystemSettingAction(key: string): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const spec = settingSpec(key);
   if (!spec) return { error: `“${key}” is not a setting this system reads.` };

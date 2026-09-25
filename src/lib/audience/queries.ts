@@ -38,7 +38,18 @@ import {
  * work. A party with no live seat and nothing cancelled is off the line: its
  * stage is null, and it appears only in the unfiltered list.
  */
-export function partyWhere(concertId: number, filter: AudienceFilter): SQL {
+/**
+ * Read options a page passes for its viewer. `searchContacts: false` is a
+ * `VIEWER` (spec/v3.md §28): they see addresses and phones masked, so their
+ * search must not match on them either — a search is an oracle otherwise.
+ */
+export type ReadOptions = { searchContacts?: boolean };
+
+export function partyWhere(
+  concertId: number,
+  filter: AudienceFilter,
+  { searchContacts = true }: ReadOptions = {},
+): SQL {
   const clauses: SQL[] = [sql`p.concert_id = ${concertId}`];
   const view = findView(filter.view);
   if (view?.kind === 'stage') clauses.push(sql`p.stage = ${view.value}`);
@@ -50,10 +61,12 @@ export function partyWhere(concertId: number, filter: AudienceFilter): SQL {
   const search = filter.search?.trim();
   if (search) {
     const like = likePattern(search);
+    const contacts = searchContacts
+      ? sql`or p.contact_email::text ilike ${like} or p.contact_phone ilike ${like}`
+      : sql``;
     clauses.push(sql`(
       p.contact_name ilike ${like}
-      or p.contact_email::text ilike ${like}
-      or p.contact_phone ilike ${like}
+      ${contacts}
       or exists (select 1 from attendees s
                   where s.registration_id = p.registration_id
                     and s.deleted_at is null
@@ -227,23 +240,24 @@ export async function listParties(
   concertId: number,
   filter: AudienceFilter,
   paging: Paging,
+  read: ReadOptions = {},
 ): Promise<Page<PartyRow>> {
   const rows = await getDb().execute<PartyDbRow & { total: number }>(sql`
     select ${PARTY_COLUMNS}, count(*) over ()::int as total
       from party_pipeline p
       ${PARTY_JOINS}
-     where ${partyWhere(concertId, partyFilter(filter))}
+     where ${partyWhere(concertId, partyFilter(filter), read)}
      ${orderBy(paging.sorting, PARTY_SORT, 'p.requested_at asc, p.registration_id asc')}
      limit ${paging.pageSize} offset ${paging.pageIndex * paging.pageSize}
   `);
-  return { rows: rows.map(toParty), total: rows[0]?.total ?? (await countParties(concertId, filter)) };
+  return { rows: rows.map(toParty), total: rows[0]?.total ?? (await countParties(concertId, filter, read)) };
 }
 
 /** The total when the requested page is past the end, so the pager can step back. */
-async function countParties(concertId: number, filter: AudienceFilter): Promise<number> {
+async function countParties(concertId: number, filter: AudienceFilter, read: ReadOptions): Promise<number> {
   const [row] = await getDb().execute<{ n: number }>(sql`
     select count(*)::int as n from party_pipeline p
-     where ${partyWhere(concertId, partyFilter(filter))}
+     where ${partyWhere(concertId, partyFilter(filter), read)}
   `);
   return row?.n ?? 0;
 }
@@ -362,8 +376,9 @@ export async function listSeats(
   concertId: number,
   filter: AudienceFilter,
   paging: Paging,
+  read: ReadOptions = {},
 ): Promise<Page<SeatRow>> {
-  const where = sql`${partyWhere(concertId, partyFilter(filter))} and ${seatWhere(filter)}`;
+  const where = sql`${partyWhere(concertId, partyFilter(filter), read)} and ${seatWhere(filter)}`;
   const rows = await getDb().execute<SeatDbRow & { total: number }>(sql`
     select ${SEAT_COLUMNS}, count(*) over ()::int as total
       from ${SEAT_FROM}
@@ -410,6 +425,7 @@ export async function matchSeatIds(
 export async function viewCounts(
   concertId: number,
   filter: AudienceFilter,
+  read: ReadOptions = {},
 ): Promise<{ all: number; views: Record<string, number> }> {
   const base = partyFilter({ ...filter, view: undefined });
   const columns = VIEWS.map((view) =>
@@ -420,7 +436,7 @@ export async function viewCounts(
   const [row] = await getDb().execute<{ counts: number[]; all: number }>(sql`
     select array[${sql.join(columns, sql`, `)}] as counts, count(*)::int as all
       from party_pipeline p
-     where ${partyWhere(concertId, base)}
+     where ${partyWhere(concertId, base, read)}
   `);
   const views: Record<string, number> = {};
   VIEWS.forEach((view, index) => {

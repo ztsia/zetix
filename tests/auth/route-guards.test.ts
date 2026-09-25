@@ -59,7 +59,7 @@ async function outcome(run: () => Promise<unknown>): Promise<string> {
   }
 }
 
-async function makeUser(role: 'ADMIN' | 'OPERATOR'): Promise<string> {
+async function makeUser(role: 'ADMIN' | 'OPERATOR' | 'VIEWER'): Promise<string> {
   const id = randomUUID();
   await sql`
     insert into app_users (id, email, display_name, role)
@@ -74,6 +74,7 @@ let assignedShow: number;
 let otherShow: number;
 let operator: string;
 let admin: string;
+let viewer: string;
 
 beforeEach(async () => {
   await resetDb();
@@ -84,6 +85,7 @@ beforeEach(async () => {
   otherShow = await createShow(concertId, 100);
   operator = await makeUser('OPERATOR');
   admin = await makeUser('ADMIN');
+  viewer = await makeUser('VIEWER');
   await sql`
     insert into operator_show_assignments (user_id, show_id)
     values (${operator}::uuid, ${assignedShow})
@@ -94,6 +96,8 @@ const asOperator = () =>
   sessionUser.mockResolvedValue({ id: operator, email: 'o@x', displayName: 'Wei', role: 'OPERATOR' });
 const asAdmin = () =>
   sessionUser.mockResolvedValue({ id: admin, email: 'a@x', displayName: 'Committee', role: 'ADMIN' });
+const asViewer = () =>
+  sessionUser.mockResolvedValue({ id: viewer, email: 'v@x', displayName: 'Mei', role: 'VIEWER' });
 const anonymous = () => sessionUser.mockResolvedValue(null);
 
 describe('/scan/[showId] enforces assignment', () => {
@@ -113,6 +117,11 @@ describe('/scan/[showId] enforces assignment', () => {
     asOperator();
     expect(await outcome(() => showPage(999_999))).toBe('notFound');
     expect(await outcome(() => showPage(otherShow))).toBe('notFound');
+  });
+
+  it('sends a VIEWER back to the console — reading is not admitting', async () => {
+    asViewer();
+    expect(await outcome(() => showPage(assignedShow))).toBe('redirect:/admin');
   });
 
   it('sends an anonymous visitor to the scanner login before touching the show', async () => {
@@ -156,8 +165,13 @@ describe('/scan lists only what the operator may reach', () => {
 describe('the admin layout is the console boundary', () => {
   const render = () => AdminLayout({ children: null });
 
-  it('admits the shared committee account', async () => {
+  it('admits an admin', async () => {
     asAdmin();
+    expect(await outcome(render)).toBe('allowed');
+  });
+
+  it('admits a VIEWER — they read every admin screen (spec/v3.md §28)', async () => {
+    asViewer();
     expect(await outcome(render)).toBe('allowed');
   });
 
@@ -174,10 +188,10 @@ describe('the admin layout is the console boundary', () => {
   });
 });
 
-describe('/preview/[formId] is admin-only, though it sits on the public surface', () => {
+describe('/preview/[formId] is console-only, though it sits on the public surface', () => {
   /**
    * The one admin screen outside `/admin`, so neither the admin layout nor
-   * `proxy.ts` covers it: `requireAdmin()` in the page is the whole guard. It
+   * `proxy.ts` covers it: `requireRole()` in the page is the whole guard. It
    * reaches a draft form by a guessable id with none of `/f/{slug}`'s gates
    * (spec/v2.md §8.2.2b). A QA probe deleted that call and the suite stayed
    * green; these are what now go red.
@@ -194,7 +208,12 @@ describe('/preview/[formId] is admin-only, though it sits on the public surface'
     expect(await outcome(render)).toBe('redirect:/scan');
   });
 
-  it('lets the committee account through to the form lookup', async () => {
+  it('lets a VIEWER through too — a preview submits nothing', async () => {
+    asViewer();
+    expect(await outcome(render)).toBe('notFound');
+  });
+
+  it('lets an admin through to the form lookup', async () => {
     // Past the guard, an id with no form behind it is a 404 — which is how
     // this proves the guard let the admin in.
     asAdmin();

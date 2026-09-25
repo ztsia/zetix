@@ -12,7 +12,7 @@ import { ADMIN_LOGIN_PATH, SCANNER_LOGIN_PATH } from '@/lib/auth/guards';
  * every request including prefetches, so it only reads the session cookie and
  * never touches the database — meaning it knows *whether* someone is signed in
  * but not *who they are* or *what role they hold*. The real check is
- * `requireAdmin()` / `requireScannerUser()` in the layout of each protected
+ * `requireRole()` / `requireScannerUser()` in the layout of each protected
  * group, which reads `app_users` and is what actually keeps an operator out of
  * the admin console.
  *

@@ -27,6 +27,7 @@ import {
   rotateInviteTokenAction,
   setPlayerActiveAction,
 } from './actions';
+import { useCanEdit } from '@/components/auth/role';
 
 export type PlayerRow = {
   id: number;
@@ -54,6 +55,7 @@ export function PlayersTable({
   concertId: number;
   players: PlayerRow[];
 }) {
+  const canEdit = useCanEdit();
   const columns: DataTableColumn<PlayerRow>[] = [
     selectionColumn<PlayerRow>(),
     {
@@ -93,16 +95,22 @@ export function PlayersTable({
         </Badge>
       ),
     },
-    {
-      id: 'actions',
-      enableHiding: false,
-      enableSorting: false,
-      meta: { label: 'Actions' },
-      header: () => <span className="sr-only">Actions</span>,
-      cell: ({ row }) => (
-        <PlayerRowActions concertId={concertId} player={row.original} />
-      ),
-    },
+    // Every row action changes the player or hands out their invite link, so a
+    // viewer gets none of them (spec/v3.md §28).
+    ...(canEdit
+      ? [
+          {
+            id: 'actions',
+            enableHiding: false,
+            enableSorting: false,
+            meta: { label: 'Actions' },
+            header: () => <span className="sr-only">Actions</span>,
+            cell: ({ row }) => (
+              <PlayerRowActions concertId={concertId} player={row.original} />
+            ),
+          } satisfies DataTableColumn<PlayerRow>,
+        ]
+      : []),
   ];
 
   return (

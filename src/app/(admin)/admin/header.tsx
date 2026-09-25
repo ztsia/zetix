@@ -28,7 +28,9 @@ export function AdminHeader() {
 
   const crumbs: { label: string; href?: string }[] = [{ label: 'Admin', href: '/admin/concerts' }];
 
-  if (segments[1] === 'settings') {
+  if (segments[1] === 'settings' && segments[2] === 'people') {
+    crumbs.push({ label: 'Settings', href: '/admin/settings' }, { label: 'People' });
+  } else if (segments[1] === 'settings') {
     crumbs.push({ label: 'Settings' });
   } else if (segments[1] === 'concerts') {
     if (segments.length === 2) {

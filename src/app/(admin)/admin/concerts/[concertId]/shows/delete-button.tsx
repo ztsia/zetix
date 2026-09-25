@@ -16,6 +16,7 @@ import {
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import type { FormState } from '../../form-state';
+import { useCanEdit } from '@/components/auth/role';
 
 /**
  * Confirmed removal of a show or a segment.
@@ -43,6 +44,7 @@ export function DeleteButton({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const canEdit = useCanEdit();
 
   function run() {
     setError(null);
@@ -56,6 +58,9 @@ export function DeleteButton({
       router.refresh();
     });
   }
+
+  // A delete is a mutation; a viewer is not offered one (spec/v3.md §28).
+  if (!canEdit) return null;
 
   return (
     <AlertDialog

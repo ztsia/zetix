@@ -11,6 +11,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Spinner } from '@/components/ui/spinner';
 import { clearSystemSettingAction, setSystemSettingAction } from './actions';
 import type { SettingSpec } from './catalogue';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * One tunable, at the root of the cascade.
@@ -112,25 +113,27 @@ export function SettingRow({
             />
           )}
 
-          <Button size="sm" onClick={save} disabled={isPending || !dirty}>
-            {isPending ? <Spinner /> : saved && !dirty ? <Check /> : null}
-            Save
-          </Button>
-
-          {isSet && (
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`Clear ${spec.label}`}
-              disabled={isPending}
-              onClick={() => {
-                setDraft('');
-                run(() => clearSystemSettingAction(spec.key));
-              }}
-            >
-              <RotateCcw />
+          <AdminOnly>
+            <Button size="sm" onClick={save} disabled={isPending || !dirty}>
+              {isPending ? <Spinner /> : saved && !dirty ? <Check /> : null}
+              Save
             </Button>
-          )}
+
+            {isSet && (
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Clear ${spec.label}`}
+                disabled={isPending}
+                onClick={() => {
+                  setDraft('');
+                  run(() => clearSystemSettingAction(spec.key));
+                }}
+              >
+                <RotateCcw />
+              </Button>
+            )}
+          </AdminOnly>
         </div>
       </div>
 

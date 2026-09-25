@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { canAccessShow } from '@/lib/auth/show-access';
 import { recordRejectedSync } from '@/lib/checkin/rejected-sync';
+import { hasRole } from '@/lib/auth/guards';
 
 /**
  * `POST /api/checkin/scan` — admissions reaching the server
@@ -76,6 +77,12 @@ export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+  // A viewer is never at the door (spec/v3.md §28). Refused before the
+  // rejected-sync path below, which exists for an usher whose roster changed
+  // and would otherwise put a viewer's probe on the check-in desk's screen.
+  if (!hasRole(user, 'ADMIN', 'OPERATOR')) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));

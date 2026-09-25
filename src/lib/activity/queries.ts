@@ -25,6 +25,12 @@ export async function listActivity(
     runId: number | null;
     pageIndex: number;
     pageSize: number;
+    /**
+     * The viewer's search: action and record id only. `reason` is free text
+     * that can hold an address, and matching it unmasked would let a viewer
+     * recover one a guess at a time (spec/v3.md §28).
+     */
+    withoutReason?: boolean;
   },
 ): Promise<Paged<ActivityRow>> {
   const view = ACTIVITY_VIEWS.find((v) => v.id === options.view);
@@ -55,7 +61,9 @@ export async function listActivity(
        ${options.runId ? sql`and l.command_run_id = ${options.runId}` : sql``}
        ${
          search
-           ? sql`and (l.action ilike ${likePattern(search)}
+           ? options.withoutReason
+             ? sql`and (l.action ilike ${likePattern(search)} or l.entity_id = ${search})`
+             : sql`and (l.action ilike ${likePattern(search)}
                       or l.reason ilike ${likePattern(search)}
                       or l.entity_id = ${search})`
            : sql``

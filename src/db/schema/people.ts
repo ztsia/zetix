@@ -21,16 +21,17 @@ import { createdAt, fk, pk, timestamps } from './columns';
  * schema keyed by uuid rather than a bigint identity. Every column elsewhere
  * that names a person (`created_by`, `actor_id`, `operator_id`, …) follows it.
  *
- * Two very different populations share the table (decisions 19 and 20):
+ * Two very different populations share the table (decisions 20 and 50):
  *
- * - **Exactly one `ADMIN`**, a shared committee account behind one secret code.
- *   No invitations and no admin user management.
+ * - **Named console accounts**, `ADMIN` or read-only `VIEWER`, each a committee
+ *   member signing in with email and password, provisioned from Settings ›
+ *   People (spec/v3.md §28). V1's single shared admin (decision 19) is gone.
  * - **Many `OPERATOR`s**, provisioned from the admin UI, one per usher, scoped
  *   to assigned shows.
  *
  * There is no sign-up flow, so the first ADMIN cannot be created through the
- * UI — `scripts/bootstrap-admin.ts` does it once from the environment
- * (spec/local.md §5).
+ * UI — `scripts/bootstrap-admin.ts` does it from the environment, and is also
+ * the way back in if every admin is locked out (spec/local.md §5).
  */
 export const appUsers = pgTable('app_users', {
   id: uuid('id').primaryKey(),

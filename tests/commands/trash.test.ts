@@ -92,6 +92,33 @@ describe('what the Trash lists', () => {
     expect(trash.rows.map((row) => row.id)).toEqual([Number(first.id)]);
   });
 
+  it('searches a viewer only by label, never the address in the detail (spec/v3.md §28)', async () => {
+    const [player] = await createPlayers(concertId, 1);
+    await sql`update players set email = 'hidden.one@example.test', deleted_at = now() where id = ${player}`;
+    const search = (q: string, labelOnly: boolean) =>
+      listTrash(concertId, 'player', { search: q, pageIndex: 0, pageSize: 25, labelOnly });
+
+    expect((await search('hidden.one@', false)).total).toBe(1);
+    // A viewer sees the address masked; matching it unmasked would spell it out.
+    expect((await search('hidden.one@', true)).total).toBe(0);
+    expect((await search('Player', true)).total).toBe(1);
+  });
+
+  it('searches a viewer’s deleted messages by id, since a subject can quote an address', async () => {
+    const id = await party(1);
+    const [message] = await sql<{ id: string }[]>`
+      insert into email_outbox (registration_id, to_email, template_key, purpose, subject, body_md, status, deleted_at)
+      values (${id}, 'tan@example.com', 'tickets', 'TICKETS', 'Re: daniel.subject@example.test', 'b', 'SENT', now())
+      returning id
+    `;
+    const search = (q: string, labelOnly: boolean) =>
+      listTrash(concertId, 'message', { search: q, pageIndex: 0, pageSize: 25, labelOnly });
+
+    expect((await search('daniel.subject', false)).total).toBe(1);
+    expect((await search('daniel.subject', true)).total).toBe(0);
+    expect((await search(String(message!.id), true)).total).toBe(1);
+  });
+
   it('never lists another concert’s rows', async () => {
     const otherConcert = await createConcert('Other');
     const [player] = await createPlayers(otherConcert, 1);

@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { TemplateSummary } from '@/lib/tickets/templates';
 import { DeleteButton } from '../../shows/delete-button';
 import { deleteTemplateAction, duplicateTemplateAction, setDefaultTemplateAction } from './actions';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The template list (spec/tickets.md §10.3).
@@ -133,30 +134,32 @@ export function TemplateList({
                       <Pencil />
                       Edit
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() =>
-                        run(() => duplicateTemplateAction({ concertId, templateId: template.id }))
-                      }
-                    >
-                      <Copy />
-                      Duplicate
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={pending || template.isDefault}
-                      onClick={() =>
-                        run(() =>
-                          setDefaultTemplateAction({ concertId, templateId: template.id }),
-                        )
-                      }
-                    >
-                      <Star />
-                      Make default
-                    </Button>
+                    <AdminOnly>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={pending}
+                        onClick={() =>
+                          run(() => duplicateTemplateAction({ concertId, templateId: template.id }))
+                        }
+                      >
+                        <Copy />
+                        Duplicate
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={pending || template.isDefault}
+                        onClick={() =>
+                          run(() =>
+                            setDefaultTemplateAction({ concertId, templateId: template.id }),
+                          )
+                        }
+                      >
+                        <Star />
+                        Make default
+                      </Button>
+                    </AdminOnly>
                     {/*
                       `DeleteButton` keeps a refusal inside the dialog, which is
                       what this needs: "5 tickets are pinned to this version" is

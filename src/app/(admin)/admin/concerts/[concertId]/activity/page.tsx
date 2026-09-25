@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { parseTableState } from '@/components/data-table/url-state';
 import { listActivity, listRuns } from '@/lib/activity/queries';
 import { getConcertHeader } from '../shows/queries';
 import { ActivityView } from './activity-view';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Activity' };
 
@@ -24,7 +25,7 @@ export default async function ActivityPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -44,6 +45,7 @@ export default async function ActivityPage({
           runId: Number.isInteger(runId) && runId > 0 ? runId : null,
           pageIndex: state.pageIndex,
           pageSize: state.pageSize,
+          withoutReason: masksContacts(user.role),
         })
       : null,
     tab === 'runs' ? listRuns(concertId, { pageIndex: state.pageIndex, pageSize: state.pageSize }) : null,
@@ -62,8 +64,8 @@ export default async function ActivityPage({
         timeZone={concert.timezone ?? 'UTC'}
         state={state}
         tab={tab}
-        changes={changes}
-        runs={runs}
+        changes={maskForRole(user.role, changes)}
+        runs={maskForRole(user.role, runs)}
       />
     </div>
   );

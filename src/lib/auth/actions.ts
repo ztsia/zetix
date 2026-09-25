@@ -13,15 +13,17 @@ import { operatorEmail } from './operator-slug';
 import { safeRedirect } from './redirect-target';
 import type { LoginState } from './login-state';
 import {
+  accountBucket,
   adminBucket,
   checkRateLimit,
   clearFailures,
   clientIp,
   registerFailure,
+  type RateLimitVerdict,
 } from './rate-limit';
 
 /**
- * Sign-in for both populations (spec/admin.md §14.3, spec/checkin.md §12.1).
+ * Sign-in for both populations (spec/v3.md §28, spec/checkin.md §12.1).
  *
  * Both are **real Supabase Auth password sign-ins**. No custom session
  * mechanism, no anonymous sign-in, no hand-rolled credential check: Supabase
@@ -30,14 +32,18 @@ import {
  */
 
 /**
- * One message for a wrong code, a code for a user that does not exist, and a
- * code for a deactivated account. Distinguishing them tells someone probing the
- * form which half of a guess was right.
+ * One message for a wrong password, an address with no account, and a
+ * deactivated account. Distinguishing them tells someone probing the form which
+ * half of a guess was right.
  */
-const BAD_CREDENTIALS = 'That code was not recognised.';
+const BAD_CREDENTIALS = 'That email and password were not recognised.';
 
-const adminSchema = z.object({
-  code: z.string().min(1, 'Enter the admin code.'),
+/** The operator form's refusal. Its fields are a name and a code, not an address. */
+const BAD_OPERATOR_CREDENTIALS = 'That code was not recognised.';
+
+const consoleSchema = z.object({
+  email: z.string().trim().min(1, 'Enter your email address.').email('Enter your email address.'),
+  password: z.string().min(1, 'Enter your password.'),
   next: z.string().nullable().optional(),
 });
 
@@ -47,44 +53,46 @@ const operatorSchema = z.object({
   next: z.string().nullable().optional(),
 });
 
+/** The roles the console sign-in admits (spec/v3.md §28). Operators use `/scan/login`. */
+const CONSOLE_ROLES = new Set(['ADMIN', 'VIEWER']);
+
 /**
- * The admin form asks for a code and nothing else. The address is a server-side
- * constant so nobody on the committee has to remember one (spec/admin.md §14.3).
+ * The console sign-in: a named `ADMIN` or `VIEWER` account, by email and
+ * password (spec/v3.md §28, replacing V1's code-only shared account).
+ *
+ * **Throttled per IP and per account** — two buckets, both checked before
+ * Supabase is touched, both charged with every wrong password, both cleared by
+ * a success; an attempt refused for a lockout charges only the locked one. Either one being locked refuses the attempt: the IP bucket stops one
+ * caller guessing many accounts, the account bucket stops many callers guessing
+ * one (`rate-limit.ts`, `accountBucket`).
  */
-export async function signInAdmin(
+export async function signInConsole(
   _prev: LoginState,
   formData: FormData,
 ): Promise<LoginState> {
-  const parsed = adminSchema.safeParse({
-    code: formData.get('code'),
+  const parsed = consoleSchema.safeParse({
+    email: formData.get('email'),
+    password: formData.get('password'),
     next: formData.get('next'),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? BAD_CREDENTIALS };
   }
+  const { email, password } = parsed.data;
 
-  const adminEmail = process.env.ADMIN_EMAIL;
-  if (!adminEmail) {
-    return {
-      error:
-        'ADMIN_EMAIL is not configured on this deployment, so the admin account ' +
-        'cannot be identified. See spec/local.md §5.',
-    };
-  }
-
-  const bucket = adminBucket(clientIp(await headers()));
+  const buckets = [adminBucket(clientIp(await headers())), accountBucket(email)];
 
   // Checked before Supabase is touched: a locked-out caller must not be able to
-  // use this route to test codes at all. The attempt is still *recorded*, so
-  // hammering a locked door extends the lockout rather than resetting it.
+  // use this route to test passwords at all. The attempt is still *recorded*,
+  // so hammering a locked door extends the lockout rather than resetting it.
   //
   // If the policy is not configured, this **refuses the sign-in** rather than
   // proceeding unthrottled. `auth.*` are seeded system values, so an absent one
   // means the install step was skipped (spec/local.md §4) — and the alternative,
   // a fallback number in code, is precisely what `CLAUDE.md` forbids.
-  let verdict: Awaited<ReturnType<typeof checkRateLimit>>;
+  let verdicts: RateLimitVerdict[];
   try {
-    verdict = await checkRateLimit(bucket);
+    verdicts = await Promise.all(buckets.map(checkRateLimit));
   } catch (error) {
     if (error instanceof MissingSettingError) {
       return {
@@ -96,43 +104,46 @@ export async function signInAdmin(
     throw error;
   }
 
-  if (!verdict.allowed) {
-    const extended = await registerFailure(bucket);
-    return {
-      error: lockoutMessage(
-        extended.allowed ? verdict.retryAfterSeconds : extended.retryAfterSeconds,
-      ),
-    };
+  if (verdicts.some((v) => !v.allowed)) {
+    // Only the locked bucket is charged. The attempt never reaches Supabase,
+    // so it guesses nothing — and charging the IP too would let one locked
+    // account spread: its owner retrying from the office would lock every
+    // colleague on that IP out as well.
+    const locked = buckets.filter((_, i) => !verdicts[i]!.allowed);
+    const extended = await Promise.all(locked.map(registerFailure));
+    return { error: lockoutMessage(longestLockout([...verdicts, ...extended])) };
   }
 
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: adminEmail,
-    password: parsed.data.code,
-  });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-  if (error || !data.user) {
-    const after = await registerFailure(bucket);
-    // Say "locked out" on the attempt that causes it, not on the next one.
-    return {
-      error: after.allowed ? BAD_CREDENTIALS : lockoutMessage(after.retryAfterSeconds),
-    };
-  }
+  if (error || !data.user) return refuse(buckets);
 
   const user = await activeUser(data.user.id);
-  if (!user || user.role !== 'ADMIN') {
-    // Authenticated by Supabase but not authorised by us. End the session rather
-    // than leaving a valid cookie for an account that may not use this console.
+  if (!user || !CONSOLE_ROLES.has(user.role)) {
+    // Authenticated by Supabase but not authorised by us — an operator's
+    // synthetic address typed here, or a deactivated account. End the session
+    // rather than leaving a valid cookie for an account that may not use this
+    // console, and count it like any other failure.
     await supabase.auth.signOut();
-    const after = await registerFailure(bucket);
-    return {
-      error: after.allowed ? BAD_CREDENTIALS : lockoutMessage(after.retryAfterSeconds),
-    };
+    return refuse(buckets);
   }
 
-  await clearFailures(bucket);
+  await Promise.all(buckets.map(clearFailures));
   await recordLogin(user.id);
   redirect(safeRedirect(parsed.data.next ?? null, '/admin'));
+}
+
+/** Charges both buckets and says "locked out" on the attempt that causes it. */
+async function refuse(buckets: string[]): Promise<LoginState> {
+  const after = await Promise.all(buckets.map(registerFailure));
+  const locked = longestLockout(after);
+  return { error: locked > 0 ? lockoutMessage(locked) : BAD_CREDENTIALS };
+}
+
+/** The longest wait any of these verdicts imposes, in seconds; 0 when none does. */
+function longestLockout(verdicts: RateLimitVerdict[]): number {
+  return Math.max(0, ...verdicts.map((v) => (v.allowed ? 0 : v.retryAfterSeconds)));
 }
 
 /**
@@ -152,7 +163,7 @@ export async function signInOperator(
     next: formData.get('next'),
   });
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? BAD_CREDENTIALS };
+    return { error: parsed.error.issues[0]?.message ?? BAD_OPERATOR_CREDENTIALS };
   }
 
   const email = operatorEmail(parsed.data.displayName);
@@ -162,12 +173,12 @@ export async function signInOperator(
     password: parsed.data.code,
   });
 
-  if (error || !data.user) return { error: BAD_CREDENTIALS };
+  if (error || !data.user) return { error: BAD_OPERATOR_CREDENTIALS };
 
   const user = await activeUser(data.user.id);
   if (!user) {
     await supabase.auth.signOut();
-    return { error: BAD_CREDENTIALS };
+    return { error: BAD_OPERATOR_CREDENTIALS };
   }
 
   await recordLogin(user.id);

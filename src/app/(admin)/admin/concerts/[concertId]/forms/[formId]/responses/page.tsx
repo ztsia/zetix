@@ -7,6 +7,9 @@ import { getForm, getResponses, isResponseSortKey } from '../../queries';
 import { ResponsesTable } from './responses-table';
 import { responseRow } from './rows';
 import { SchemaExportButton } from './schema-export-button';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
+import { requireRole } from '@/lib/auth/guards';
+import { AdminOnly } from '@/components/auth/role';
 
 export const metadata: Metadata = { title: 'Responses' };
 
@@ -24,6 +27,7 @@ export default async function ResponsesPage({
   params: Promise<{ concertId: string; formId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: rawConcert, formId: rawForm } = await params;
   const concertId = Number(rawConcert);
   const formId = Number(rawForm);
@@ -50,6 +54,7 @@ export default async function ResponsesPage({
     sort,
     desc,
     search,
+    idOnly: masksContacts(user.role),
   });
 
   const basePath = `/admin/concerts/${concertId}/forms/${formId}/responses`;
@@ -74,7 +79,9 @@ export default async function ResponsesPage({
             screen — a form asks, the allocation engine decides.
           </p>
         </div>
-        <SchemaExportButton concertId={concertId} formId={formId} count={form.responses} />
+        <AdminOnly>
+          <SchemaExportButton concertId={concertId} formId={formId} count={form.responses} />
+        </AdminOnly>
       </div>
 
       {form.kind === 'FEEDBACK' && (
@@ -89,7 +96,7 @@ export default async function ResponsesPage({
       )}
 
       <ResponsesTable
-        rows={rows.map((row) => responseRow(row, zone))}
+        rows={maskForRole(user.role, rows.map((row) => responseRow(row, zone)))}
         rowCount={rowCount}
         pageIndex={pageIndex}
         pageSize={pageSize}

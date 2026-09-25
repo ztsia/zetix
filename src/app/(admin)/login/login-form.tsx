@@ -3,7 +3,7 @@
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { KeyRound } from 'lucide-react';
-import { signInAdmin } from '@/lib/auth/actions';
+import { signInConsole } from '@/lib/auth/actions';
 import { NO_STATE } from '@/lib/auth/login-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,35 +22,47 @@ function SubmitButton() {
 }
 
 /**
- * The admin form asks for the code and nothing else.
- *
- * There is one shared committee account and its address is a server-side
- * constant, so nobody has to remember an email (spec/admin.md §14.3). Underneath
- * it is still an ordinary Supabase password sign-in — no bespoke session.
+ * The console form: email and password, for a named `ADMIN` or `VIEWER`
+ * account (spec/v3.md §28). Underneath it is an ordinary Supabase password
+ * sign-in — no bespoke session.
  */
 export function AdminLoginForm({ next }: { next: string | null }) {
-  const [state, formAction] = useActionState(signInAdmin, NO_STATE);
+  const [state, formAction] = useActionState(signInConsole, NO_STATE);
+  const describedBy = state.error ? 'login-error' : undefined;
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
       {next && <input type="hidden" name="next" value={next} />}
 
       <Field>
-        <FieldLabel htmlFor="code">Admin code</FieldLabel>
+        <FieldLabel htmlFor="email">Email</FieldLabel>
         <Input
-          id="code"
-          name="code"
-          type="password"
-          autoComplete="current-password"
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="username"
           autoFocus
           required
-          // The committee pastes a long generated passphrase; a browser that
-          // "helpfully" capitalises or corrects it makes the code wrong.
+          aria-invalid={state.error ? true : undefined}
+          aria-describedby={describedBy}
+        />
+      </Field>
+
+      <Field>
+        <FieldLabel htmlFor="password">Password</FieldLabel>
+        <Input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          // Passwords are generated and pasted; a browser that "helpfully"
+          // capitalises or corrects one makes it wrong.
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
           aria-invalid={state.error ? true : undefined}
-          aria-describedby={state.error ? 'login-error' : undefined}
+          aria-describedby={describedBy}
         />
       </Field>
 

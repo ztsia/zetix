@@ -15,7 +15,7 @@ import { getDb } from '@/db/client';
  * **The grouped-by-player view is admin-only, always** (decision 6), whatever
  * `portal.public_wall_visibility` says. It is how the orchestra prepares what
  * goes back to players, and no setting opens it to anybody else — which is why
- * it is computed here, behind `requireAdmin`, and has no counterpart under
+ * it is computed here, behind `requireRole`, and has no counterpart under
  * `lib/portal/`.
  */
 

@@ -26,6 +26,9 @@ export type OperatorAuthAdmin = {
   deleteUser(userId: string): Promise<void>;
 };
 
+/** The same port for console accounts (`src/lib/people/provision.ts`). */
+export type AuthAdmin = OperatorAuthAdmin;
+
 /**
  * The real port, over the service-role client.
  *
@@ -36,6 +39,24 @@ export type OperatorAuthAdmin = {
  * operator is created, looks correct in every list, and simply cannot sign in.
  */
 export function createOperatorAuthAdmin(): OperatorAuthAdmin {
+  return createAuthAdmin({ noun: 'operator', secret: 'code' });
+}
+
+/**
+ * The same three calls for any population. Settings › People uses it for named
+ * console accounts (spec/v3.md §28), whose addresses are real — `email_confirm`
+ * is still set, because the admin hands the password over in person and no
+ * confirmation mail should stand between a new account and its first sign-in.
+ */
+export function createAuthAdmin({
+  noun,
+  secret,
+}: {
+  /** What the account is, in an error message: `operator`, `account`. */
+  noun: string;
+  /** What its password is called on screen: `code`, `password`. */
+  secret: string;
+}): OperatorAuthAdmin {
   const supabase = createSupabaseAdminClient();
 
   return {
@@ -45,14 +66,14 @@ export function createOperatorAuthAdmin(): OperatorAuthAdmin {
         password,
         email_confirm: true,
       });
-      if (error) throw new Error(`Supabase Auth refused the new operator: ${error.message}`);
-      if (!data.user) throw new Error('Supabase Auth returned no user for the new operator.');
+      if (error) throw new Error(`Supabase Auth refused the new ${noun}: ${error.message}`);
+      if (!data.user) throw new Error(`Supabase Auth returned no user for the new ${noun}.`);
       return { id: data.user.id };
     },
 
     async updatePassword(userId, password) {
       const { error } = await supabase.auth.admin.updateUserById(userId, { password });
-      if (error) throw new Error(`Supabase Auth refused the new code: ${error.message}`);
+      if (error) throw new Error(`Supabase Auth refused the new ${secret}: ${error.message}`);
     },
 
     async deleteUser(userId) {

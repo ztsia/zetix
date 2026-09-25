@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { addressIssue } from '@/lib/email/address';
 import { resolveSetting } from '@/db/settings';
 import { confirmsOverCapacity } from '@/lib/registrations/confirmation';
@@ -211,7 +211,7 @@ export async function createRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = registrationSchema.safeParse({
     segmentId: formData.get('segmentId') ?? '',
@@ -295,7 +295,7 @@ export async function updateRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = detailsSchema.safeParse({
     contactName: formData.get('contactName') ?? '',
@@ -376,7 +376,7 @@ export async function addAttendeesAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = addSeatsSchema.safeParse({
     seats: formData.get('seats') ?? '',
@@ -434,7 +434,7 @@ export async function renameAttendeeAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({ fullName: z.preprocess(blankToNull, z.string().trim().max(200).nullable()) })

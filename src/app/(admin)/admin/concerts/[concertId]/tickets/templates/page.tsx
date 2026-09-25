@@ -6,10 +6,11 @@ import { ArrowLeft } from 'lucide-react';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
 import { Button } from '@/components/ui/button';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { ensureConcertTemplates } from '@/lib/tickets/seed-templates';
 import { listTemplates } from '@/lib/tickets/templates';
 import { TemplateList } from './template-list';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Ticket templates' };
 
@@ -32,7 +33,7 @@ export default async function TicketTemplatesPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: raw } = await params;
   const concertId = Number(raw);
@@ -70,7 +71,7 @@ export default async function TicketTemplatesPage({
         </Button>
       </div>
 
-      <TemplateList concertId={concertId} templates={templates} />
+      <TemplateList concertId={concertId} templates={maskForRole(user.role, templates)} />
     </div>
   );
 }

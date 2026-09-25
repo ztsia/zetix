@@ -104,10 +104,24 @@ function trashRows(kind: TrashKind, concertId: number): SQL {
 export const likePattern = (search: string) =>
   `%${search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-const searchClause = (search: string): SQL =>
-  search.trim()
-    ? sql`where t.label ilike ${likePattern(search)} or t.detail ilike ${likePattern(search)}`
-    : sql``;
+/**
+ * `labelOnly` is the viewer's search (spec/v3.md §28). `detail` carries
+ * addresses the viewer sees masked, and a substring match on the unmasked
+ * column is an oracle: a row that appears for one guess and not the next
+ * spells the address out a character at a time. Labels are names and
+ * subjects, which the viewer already reads in full — except a subject that
+ * quotes an address, so a message is searched by id instead.
+ */
+const searchClause = (search: string, labelOnly: boolean, kind?: TrashKind): SQL =>
+  !search.trim()
+    ? sql``
+    : labelOnly && kind === 'message'
+      ? // A message's label is its subject, which is free text and can itself
+        // hold an address the viewer sees masked. By id only.
+        sql`where t.id::text = ${search.trim()}`
+      : labelOnly
+        ? sql`where t.label ilike ${likePattern(search)}`
+        : sql`where t.label ilike ${likePattern(search)} or t.detail ilike ${likePattern(search)}`;
 
 type Row = { id: string; label: string; detail: string | null; deleted_at: string };
 
@@ -125,9 +139,10 @@ export async function matchTrash(
   concertId: number,
   filter: TrashFilter,
 ): Promise<number[]> {
+  // `false`: this is a command's match, and commands are ADMIN only.
   const rows = await tx.execute<{ id: string }>(sql`
     select t.id from (${trashRows(kind, concertId)}) t
-    ${searchClause(filter.search)}
+    ${searchClause(filter.search, false)}
     order by t.deleted_at desc, t.id
   `);
   return rows.map((row) => Number(row.id));
@@ -153,14 +168,14 @@ export async function trashRowsFor(
 export async function listTrash(
   concertId: number,
   kind: TrashKind,
-  options: { search: string; pageIndex: number; pageSize: number },
+  options: { search: string; pageIndex: number; pageSize: number; labelOnly?: boolean },
 ): Promise<TrashPage> {
   const db = getDb();
   const rows = await db.execute<Row & { total: number }>(sql`
     select t.id, t.label, t.detail, to_json(t.deleted_at) #>> '{}' as deleted_at,
            count(*) over ()::int as total
       from (${trashRows(kind, concertId)}) t
-    ${searchClause(options.search)}
+    ${searchClause(options.search, options.labelOnly ?? false, kind)}
      order by t.deleted_at desc, t.id
      limit ${options.pageSize} offset ${options.pageIndex * options.pageSize}
   `);

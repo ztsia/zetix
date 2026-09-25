@@ -9,6 +9,9 @@ import { getConcertHeader } from '../shows/queries';
 import { PlayerImportDialog } from './import-dialog';
 import { PlayerFormDialog } from './player-form-dialog';
 import { PlayersTable, type PlayerRow } from './players-table';
+import { AdminOnly } from '@/components/auth/role';
+import { maskForRole } from '@/lib/auth/mask';
+import { requireRole } from '@/lib/auth/guards';
 
 export const metadata: Metadata = { title: 'Players' };
 
@@ -26,11 +29,8 @@ export const runtime = 'nodejs';
  * one holds is an entitlement to invite guests, which is what the base quota
  * counts and what the §7.4 guard protects.
  */
-export default async function PlayersPage({
-  params,
-}: {
-  params: Promise<{ concertId: string }>;
-}) {
+export default async function PlayersPage({ params }: { params: Promise<{ concertId: string }> }) {
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -65,29 +65,31 @@ export default async function PlayersPage({
               : `${rows.length} player${rows.length === 1 ? '' : 's'}, ${active} active — each active one is entitled to the base quota of every player-invited segment.`}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <PlayerImportDialog
-            concertId={concertId}
-            trigger={
-              <Button variant="outline">
-                <FileSpreadsheet />
-                Import CSV
-              </Button>
-            }
-          />
-          <PlayerFormDialog
-            concertId={concertId}
-            trigger={
-              <Button>
-                <Plus />
-                New player
-              </Button>
-            }
-          />
-        </div>
+        <AdminOnly>
+          <div className="flex flex-wrap gap-2">
+            <PlayerImportDialog
+              concertId={concertId}
+              trigger={
+                <Button variant="outline">
+                  <FileSpreadsheet />
+                  Import CSV
+                </Button>
+              }
+            />
+            <PlayerFormDialog
+              concertId={concertId}
+              trigger={
+                <Button>
+                  <Plus />
+                  New player
+                </Button>
+              }
+            />
+          </div>
+        </AdminOnly>
       </div>
 
-      <PlayersTable concertId={concertId} players={rows} />
+      <PlayersTable concertId={concertId} players={maskForRole(user.role, rows)} />
     </div>
   );
 }

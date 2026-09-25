@@ -3,9 +3,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 import { audienceOptions } from '@/lib/audience/queries';
-import { loadPartyRecord } from '@/lib/audience/record';
+import { loadPartyRecord, type PartyRecord as PartyRecordData } from '@/lib/audience/record';
 import { Button } from '@/components/ui/button';
 import {
   Empty,
@@ -30,7 +31,7 @@ export default async function PartyRecordPage({
 }: {
   params: Promise<{ concertId: string; registrationId: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: rawConcert, registrationId: rawParty } = await params;
   const concertId = Number(rawConcert);
   const registrationId = Number(rawParty);
@@ -91,10 +92,30 @@ export default async function PartyRecordPage({
       <PartyRecord
         concertId={concertId}
         timeZone={concert.timezone ?? 'UTC'}
-        record={record}
+        record={maskForRole(user.role, forViewer(record, masksContacts(user.role)))}
         segments={segments}
         players={players}
       />
     </CommandHost>
   );
+}
+
+/**
+ * What a viewer's record leaves out before the mask (spec/v3.md §28).
+ *
+ * The mask finds addresses anywhere and phones under phone-named keys, but a
+ * form response is keyed by the form's block ids, so a phone answer there is
+ * under a key the mask cannot read as a phone. The raw answers and the kept
+ * custom answers are withheld from a viewer instead; the record says so.
+ */
+function forViewer(record: PartyRecordData, viewer: boolean): PartyRecordData {
+  if (!viewer) return record;
+  return {
+    ...record,
+    responses: record.responses.map((response) => ({ ...response, raw: null })),
+    import: record.import
+      ? { ...record.import, rows: record.import.rows.map((row) => ({ ...row, raw: null })) }
+      : null,
+    custom: null,
+  };
 }

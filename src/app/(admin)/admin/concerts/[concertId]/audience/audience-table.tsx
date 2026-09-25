@@ -17,6 +17,7 @@ import {
   type DataTableColumn,
   type UrlTableState,
 } from '@/components/data-table';
+import { useCanEdit } from '@/components/auth/role';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -106,6 +107,9 @@ export function AudienceTable({
 }) {
   const router = useRouter();
   const runCommand = useRunCommand();
+  // A viewer reads the table; every action on it is a command, and commands
+  // are an admin's (spec/v3.md §28).
+  const canEdit = useCanEdit();
   const { server, setExtra, navigate, isPending } = useUrlTableState(state, page.total);
 
   const { selection, count, clear, tableProps } = useTableSelection({
@@ -471,7 +475,7 @@ export function AudienceTable({
             Seats
           </ToggleGroupItem>
         </ToggleGroup>
-        {actions}
+        {canEdit && actions}
       </div>
 
       <DataTableSavedViews

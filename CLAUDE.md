@@ -79,9 +79,19 @@ refuses a non-local hostname outright (`docs/local.md` §6.1).
 
 - **A registration is a party of N, in both audiences.** One email, N `qr_token`s, N PDFs. An attendee
   with no name is not an error — it tickets as a placeholder (`docs/spec/v2.md` §8.2.1).
-- **Asymmetric auth.** One shared `ADMIN` account behind a single code; many `OPERATOR` accounts scoped
-  to assigned shows. The check-in manifest endpoint must verify assignment before returning data — it
-  is the full attendee roster (`docs/spec/checkin.md` §12.3, §14.3).
+- **Asymmetric auth.** Named `ADMIN` and read-only `VIEWER` console accounts (email and password,
+  `docs/spec/v3.md` §28); many `OPERATOR` accounts scoped to assigned shows. The check-in manifest
+  endpoint must verify assignment before returning data — it is the full attendee roster
+  (`docs/spec/checkin.md` §12.3, §14.3).
+- **Every admin screen is readable by a viewer, and nothing on it is changeable by one.** Mutations,
+  commands and exports call `requireRole('ADMIN')`; pages and reads call `requireRole('ADMIN', 'VIEWER')`
+  and pass what they hand the browser through `maskForRole()` (`src/lib/auth/mask.ts`). Hide mutating
+  controls with `<AdminOnly>` / `useCanEdit()` (`src/components/auth/role.tsx`); `ActionDialog`,
+  `DeleteButton`, `CommandDialog` and the `DataTable` export already do. A server-side search a viewer
+  can run must not match a column they see masked — a hit-or-miss answer spells the value out a
+  character at a time. `tests/auth/viewer-denial.test.ts`, `viewer-routes.test.ts` and
+  `viewer-pages.test.ts` call every action, every `/api` route and every page as a viewer; add a new
+  page to the last one's list.
 
 ## Scope: V1 ships this concert
 

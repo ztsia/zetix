@@ -248,7 +248,7 @@ export async function listPlayerOptions(concertId: number): Promise<PlayerOption
 /**
  * Whether a registration belongs to the concert in the URL.
  *
- * Ids reach the Server Actions from the browser, and `requireAdmin()` says the
+ * Ids reach the Server Actions from the browser, and `requireRole()` says the
  * caller may act on *this* console — not that this id is one of its rows. The
  * one shared ADMIN account can reach every concert anyway, so this is about a
  * mistyped or stale id editing something on another concert's screen, which is

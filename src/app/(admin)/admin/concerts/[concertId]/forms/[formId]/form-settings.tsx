@@ -16,6 +16,7 @@ import {
   SettingsGroup,
   SettingsSubheading,
 } from './settings/settings-layout';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The form's own settings — its window, its limits and its copy (spec/v2.md
@@ -285,13 +286,15 @@ export function FormSettings({
               {message}
             </p>
           )}
-          <Button
-            type="submit"
-            disabled={isPending}
-          >
-            {isPending ? <Spinner /> : <Save />}
-            {isPending ? 'Saving…' : 'Save settings'}
-          </Button>
+          <AdminOnly>
+            <Button
+              type="submit"
+              disabled={isPending}
+            >
+              {isPending ? <Spinner /> : <Save />}
+              {isPending ? 'Saving…' : 'Save settings'}
+            </Button>
+          </AdminOnly>
         </div>
       </SettingsCard>
     </form>

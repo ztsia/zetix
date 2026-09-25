@@ -15,6 +15,7 @@ import {
   Send,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useCanEdit } from '@/components/auth/role';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -82,6 +83,8 @@ export function PartyRecord({
 }) {
   const { party, seats } = record;
   const runCommand = useRunCommand();
+  // A viewer reads the record; every control on it changes something (§28).
+  const canEdit = useCanEdit();
   const format = React.useMemo(() => formatter(timeZone), [timeZone]);
   const [notice, setNotice] = React.useState<string | null>(null);
 
@@ -218,67 +221,69 @@ export function PartyRecord({
             )}
           </div>
 
-          <ButtonGroup>
-            {primary.map((action) =>
-              action.href ? (
-                <Button key={action.label} size="sm" nativeButton={false} render={<Link href={action.href} />}>
-                  {action.icon}
-                  {action.label}
-                </Button>
-              ) : (
-                <Button key={action.label} size="sm" onClick={action.onClick}>
-                  {action.label}
-                </Button>
-              ),
-            )}
-            <RegistrationFormDialog
-              concertId={concertId}
-              timeZone={timeZone}
-              segments={segments}
-              players={players}
-              registration={asRow}
-              onSuccess={(result) => setNotice(result.message ?? null)}
-              trigger={
-                <Button size="sm" variant="outline">
-                  <Pencil data-icon="inline-start" />
-                  Edit
-                </Button>
-              }
-            />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="sm" variant="outline" aria-label="More actions">
-                    <MoreHorizontal />
+          {canEdit && (
+            <ButtonGroup>
+              {primary.map((action) =>
+                action.href ? (
+                  <Button key={action.label} size="sm" nativeButton={false} render={<Link href={action.href} />}>
+                    {action.icon}
+                    {action.label}
+                  </Button>
+                ) : (
+                  <Button key={action.label} size="sm" onClick={action.onClick}>
+                    {action.label}
+                  </Button>
+                ),
+              )}
+              <RegistrationFormDialog
+                concertId={concertId}
+                timeZone={timeZone}
+                segments={segments}
+                players={players}
+                registration={asRow}
+                onSuccess={(result) => setNotice(result.message ?? null)}
+                trigger={
+                  <Button size="sm" variant="outline">
+                    <Pencil data-icon="inline-start" />
+                    Edit
                   </Button>
                 }
               />
-              <DropdownMenuContent align="end" className="w-64">
-                {groups.map((group, index) => (
-                  <React.Fragment key={group}>
-                    {index > 0 && <DropdownMenuSeparator />}
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>{group}</DropdownMenuLabel>
-                      {partyCommands
-                        .filter((e) => e.group === group)
-                        .map((e) => (
-                          <DropdownMenuItem
-                            key={e.command}
-                            variant={e.destructive ? 'destructive' : 'default'}
-                            onClick={() =>
-                              partyRun(e.command, e.command === 'audience.approve' ? { includeFlagged: true } : undefined)
-                            }
-                          >
-                            <e.icon />
-                            {e.label}
-                          </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuGroup>
-                  </React.Fragment>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </ButtonGroup>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button size="sm" variant="outline" aria-label="More actions">
+                      <MoreHorizontal />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end" className="w-64">
+                  {groups.map((group, index) => (
+                    <React.Fragment key={group}>
+                      {index > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>{group}</DropdownMenuLabel>
+                        {partyCommands
+                          .filter((e) => e.group === group)
+                          .map((e) => (
+                            <DropdownMenuItem
+                              key={e.command}
+                              variant={e.destructive ? 'destructive' : 'default'}
+                              onClick={() =>
+                                partyRun(e.command, e.command === 'audience.approve' ? { includeFlagged: true } : undefined)
+                              }
+                            >
+                              <e.icon />
+                              {e.label}
+                            </DropdownMenuItem>
+                          ))}
+                      </DropdownMenuGroup>
+                    </React.Fragment>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
+          )}
         </div>
 
         {notice && (
@@ -294,14 +299,16 @@ export function PartyRecord({
             <AlertDescription>
               <p>{party.emailIssue}</p>
               <p>Send tickets skips this party until the address is fixed, or accepted as it is.</p>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => partyRun('audience.check_address')}>
-                  Check again
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => partyRun('audience.accept_address')}>
-                  The address is right
-                </Button>
-              </div>
+              {canEdit && (
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => partyRun('audience.check_address')}>
+                    Check again
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => partyRun('audience.accept_address')}>
+                    The address is right
+                  </Button>
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -316,38 +323,40 @@ export function PartyRecord({
               {party.seats.admitted} in
             </span>
           </h2>
-          <ButtonGroup>
-            <AddSeats
-              concertId={concertId}
-              registrationId={party.id}
-              contactName={party.contactName}
-              playerInvited={party.audienceMode === 'PLAYER_INVITED'}
-              maxSeats={segment?.maxTicketsPerResponse ?? null}
-              onDone={setNotice}
-            />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="sm" variant="outline" disabled={liveSeatIds.length === 0}>
-                    All seats
-                    <ChevronDown data-icon="inline-end" />
-                  </Button>
-                }
+          {canEdit && (
+            <ButtonGroup>
+              <AddSeats
+                concertId={concertId}
+                registrationId={party.id}
+                contactName={party.contactName}
+                playerInvited={party.audienceMode === 'PLAYER_INVITED'}
+                maxSeats={segment?.maxTicketsPerResponse ?? null}
+                onDone={setNotice}
               />
-              <DropdownMenuContent align="end" className="w-56">
-                {COMMAND_ENTRIES.filter((e) => e.grain === 'seats').map((e) => (
-                  <DropdownMenuItem
-                    key={e.command}
-                    variant={e.destructive ? 'destructive' : 'default'}
-                    onClick={() => seatRun(e.command, liveSeatIds)}
-                  >
-                    <e.icon />
-                    {e.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </ButtonGroup>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button size="sm" variant="outline" disabled={liveSeatIds.length === 0}>
+                      All seats
+                      <ChevronDown data-icon="inline-end" />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end" className="w-56">
+                  {COMMAND_ENTRIES.filter((e) => e.grain === 'seats').map((e) => (
+                    <DropdownMenuItem
+                      key={e.command}
+                      variant={e.destructive ? 'destructive' : 'default'}
+                      onClick={() => seatRun(e.command, liveSeatIds)}
+                    >
+                      <e.icon />
+                      {e.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
+          )}
         </div>
         <div className="rounded-lg border">
           <Table>
@@ -374,6 +383,7 @@ export function PartyRecord({
               {seats.map((seat) => (
                 <SeatRow
                   key={seat.id}
+                  canEdit={canEdit}
                   concertId={concertId}
                   seat={seat}
                   format={format}
@@ -416,11 +426,13 @@ export function PartyRecord({
 }
 
 function SeatRow({
+  canEdit,
   concertId,
   seat,
   format,
   onCommand,
 }: {
+  canEdit: boolean;
   concertId: number;
   seat: RecordSeat;
   format: Intl.DateTimeFormat;
@@ -453,7 +465,11 @@ function SeatRow({
   return (
     <TableRow className={cancelled ? 'opacity-60' : undefined}>
       <TableCell>
-        {editing ? (
+        {!canEdit ? (
+          <span className={seat.placeholder ? 'text-muted-foreground italic' : 'font-medium'}>
+            {seat.fullName}
+          </span>
+        ) : editing ? (
           <form
             className="flex items-center gap-2"
             onSubmit={(event) => {
@@ -538,40 +554,42 @@ function SeatRow({
         )}
       </TableCell>
       <TableCell>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for ${seat.fullName}`} />}
-          >
-            <MoreHorizontal />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            {seat.issued && (
-              <>
-                <DropdownMenuItem
-                  render={<a href={`/api/tickets/${seat.id}/pdf?download=1`} />}
-                >
-                  <Download />
-                  Download PDF
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            <DropdownMenuItem onClick={() => setEditing(true)}>
-              <Pencil />
-              Rename
-            </DropdownMenuItem>
-            {actions.map((e) => (
-              <DropdownMenuItem
-                key={e.command}
-                variant={e.destructive ? 'destructive' : 'default'}
-                onClick={() => onCommand(e.command)}
-              >
-                <e.icon />
-                {entry(e.command).label}
+        {canEdit && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for ${seat.fullName}`} />}
+            >
+              <MoreHorizontal />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {seat.issued && (
+                <>
+                  <DropdownMenuItem
+                    render={<a href={`/api/tickets/${seat.id}/pdf?download=1`} />}
+                  >
+                    <Download />
+                    Download PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem onClick={() => setEditing(true)}>
+                <Pencil />
+                Rename
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {actions.map((e) => (
+                <DropdownMenuItem
+                  key={e.command}
+                  variant={e.destructive ? 'destructive' : 'default'}
+                  onClick={() => onCommand(e.command)}
+                >
+                  <e.icon />
+                  {entry(e.command).label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -728,9 +746,13 @@ function Responses({ record, format }: { record: Record_; format: Intl.DateTimeF
               Submitted {format.format(new Date(response.submittedAt))}
             </span>
           </div>
-          <pre className="bg-muted/50 max-h-72 overflow-auto rounded-md p-2 text-xs">
-            {JSON.stringify(response.raw, null, 2)}
-          </pre>
+          {response.raw === null ? (
+            <p className="text-muted-foreground text-sm">The answers are hidden from read-only accounts.</p>
+          ) : (
+            <pre className="bg-muted/50 max-h-72 overflow-auto rounded-md p-2 text-xs">
+              {JSON.stringify(response.raw, null, 2)}
+            </pre>
+          )}
         </div>
       ))}
       {record.import && (
@@ -745,9 +767,13 @@ function Responses({ record, format }: { record: Record_; format: Intl.DateTimeF
                 Row {row.rowNumber}
                 {row.seatIndex > 0 ? `, seat ${row.seatIndex + 1}` : ''}
               </span>
-              <pre className="bg-muted/50 max-h-48 overflow-auto rounded-md p-2 text-xs">
-                {JSON.stringify(row.raw, null, 2)}
-              </pre>
+              {row.raw === null ? (
+                <p className="text-muted-foreground text-sm">The row is hidden from read-only accounts.</p>
+              ) : (
+                <pre className="bg-muted/50 max-h-48 overflow-auto rounded-md p-2 text-xs">
+                  {JSON.stringify(row.raw, null, 2)}
+                </pre>
+              )}
             </div>
           ))}
         </div>

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * The authorization boundary (decision 20, spec/admin.md §14.3, spec/checkin.md §12.3).
  *
- * These exist because an independent QA pass broke `requireAdmin()` — letting an
+ * These exist because an independent QA pass broke the admin guard — letting an
  * operator into the admin console — and broke the scanner's assignment check —
  * letting any operator reach any show's roster — and **the entire suite stayed
  * green**. Both behaviours were correct; nothing would have said when they
@@ -32,11 +32,20 @@ vi.mock('next/navigation', () => ({
 const getSessionUser = vi.fn();
 vi.mock('@/lib/auth/session', () => ({ getSessionUser: () => getSessionUser() }));
 
-const { requireAdmin, requireScannerUser, requireUser, hasRole, ADMIN_LOGIN_PATH, SCANNER_LOGIN_PATH } =
-  await import('@/lib/auth/guards');
+const {
+  requireRole,
+  requireScannerUser,
+  requireUser,
+  hasRole,
+  ReadOnlyAccountError,
+  ADMIN_LOGIN_PATH,
+  SCANNER_LOGIN_PATH,
+} = await import('@/lib/auth/guards');
+const { READ_ONLY_DIGEST } = await import('@/lib/auth/read-only');
 
 const admin = { id: 'a1', email: 'admin@x', displayName: 'Committee', role: 'ADMIN' as const };
 const operator = { id: 'o1', email: 'o@operators.invalid', displayName: 'Wei Ling', role: 'OPERATOR' as const };
+const viewer = { id: 'v1', email: 'viewer@x', displayName: 'Mei', role: 'VIEWER' as const };
 
 /** Runs `fn` and reports where it redirected, or `null` if it returned. */
 async function redirectedTo(fn: () => Promise<unknown>): Promise<string | null> {
@@ -51,8 +60,10 @@ async function redirectedTo(fn: () => Promise<unknown>): Promise<string | null> 
 
 beforeEach(() => getSessionUser.mockReset());
 
-describe('requireAdmin', () => {
-  it('lets the shared committee account through', async () => {
+describe("requireRole('ADMIN') — every mutation", () => {
+  const requireAdmin = () => requireRole('ADMIN');
+
+  it('lets an admin through', async () => {
     getSessionUser.mockResolvedValue(admin);
     await expect(requireAdmin()).resolves.toEqual(admin);
   });
@@ -62,6 +73,16 @@ describe('requireAdmin', () => {
     // unreachable let an usher into every attendee's name and email.
     getSessionUser.mockResolvedValue(operator);
     expect(await redirectedTo(requireAdmin)).toBe('/scan');
+  });
+
+  it('refuses a VIEWER with the read-only error, not a redirect (spec/v3.md §28)', async () => {
+    // A viewer is on a screen they may read; bouncing them off it would hide
+    // what happened. The error carries a digest that survives a production
+    // build, which is how the console's error boundary recognises it.
+    getSessionUser.mockResolvedValue(viewer);
+    const refusal = requireAdmin();
+    await expect(refusal).rejects.toBeInstanceOf(ReadOnlyAccountError);
+    await expect(refusal).rejects.toMatchObject({ digest: READ_ONLY_DIGEST });
   });
 
   it('sends a signed-out visitor to the admin login', async () => {
@@ -77,6 +98,27 @@ describe('requireAdmin', () => {
   });
 });
 
+describe("requireRole('ADMIN', 'VIEWER') — every read", () => {
+  const requireReader = () => requireRole('ADMIN', 'VIEWER');
+
+  it('lets an admin and a viewer through', async () => {
+    getSessionUser.mockResolvedValue(admin);
+    await expect(requireReader()).resolves.toEqual(admin);
+    getSessionUser.mockResolvedValue(viewer);
+    await expect(requireReader()).resolves.toEqual(viewer);
+  });
+
+  it('still refuses an OPERATOR', async () => {
+    getSessionUser.mockResolvedValue(operator);
+    expect(await redirectedTo(requireReader)).toBe('/scan');
+  });
+
+  it('sends a signed-out visitor to the admin login', async () => {
+    getSessionUser.mockResolvedValue(null);
+    expect(await redirectedTo(requireReader)).toBe(ADMIN_LOGIN_PATH);
+  });
+});
+
 describe('requireScannerUser', () => {
   it('admits an OPERATOR', async () => {
     getSessionUser.mockResolvedValue(operator);
@@ -86,6 +128,11 @@ describe('requireScannerUser', () => {
   it('admits an ADMIN too — an admin is allowed at the door', async () => {
     getSessionUser.mockResolvedValue(admin);
     await expect(requireScannerUser()).resolves.toEqual(admin);
+  });
+
+  it('refuses a VIEWER — reading the console is not admitting people', async () => {
+    getSessionUser.mockResolvedValue(viewer);
+    expect(await redirectedTo(requireScannerUser)).toBe('/admin');
   });
 
   it('sends a signed-out visitor to the scanner login, not the admin one', async () => {
@@ -110,5 +157,7 @@ describe('hasRole', () => {
     expect(hasRole(operator, 'ADMIN')).toBe(false);
     expect(hasRole(operator, 'OPERATOR')).toBe(true);
     expect(hasRole(admin, 'ADMIN', 'OPERATOR')).toBe(true);
+    expect(hasRole(viewer, 'ADMIN')).toBe(false);
+    expect(hasRole(viewer, 'ADMIN', 'VIEWER')).toBe(true);
   });
 });

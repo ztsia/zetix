@@ -52,6 +52,7 @@ import type { PreviewOption, PreviewSubject } from '@/lib/tickets/preview';
 import type { TemplateDetail } from '@/lib/tickets/templates';
 import { ElementProperties } from './element-properties';
 import { saveTemplateAction } from '../actions';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The canvas editor (spec/tickets.md §10.3).
@@ -388,14 +389,16 @@ export function TemplateEditor({
               {template.issuedCount} issued — saving makes v{template.version + 1}
             </Badge>
           )}
-          <Button variant="outline" onClick={previewPdf} disabled={working}>
-            <FileText />
-            Preview PDF
-          </Button>
-          <Button onClick={save} disabled={working || !dirty}>
-            <Save />
-            Save
-          </Button>
+          <AdminOnly>
+            <Button variant="outline" onClick={previewPdf} disabled={working}>
+              <FileText />
+              Preview PDF
+            </Button>
+            <Button onClick={save} disabled={working || !dirty}>
+              <Save />
+              Save
+            </Button>
+          </AdminOnly>
         </div>
       </div>
 
@@ -434,15 +437,18 @@ export function TemplateEditor({
                 <QrCode />
                 QR
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={working}
-                onClick={() => imageRef.current?.click()}
-              >
-                <ImageIcon />
-                Image
-              </Button>
+              {/* Uploads are writes; a viewer is refused by the route (spec/v3.md §28). */}
+              <AdminOnly>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={working}
+                  onClick={() => imageRef.current?.click()}
+                >
+                  <ImageIcon />
+                  Image
+                </Button>
+              </AdminOnly>
               <Button variant="outline" size="sm" onClick={() => addElement({ type: 'RECT' })}>
                 <Square />
                 Shape
@@ -562,6 +568,7 @@ export function TemplateEditor({
                   </AlertDescription>
                 </Alert>
               )}
+              <AdminOnly>
               <ButtonGroup>
                 <Button
                   variant="outline"
@@ -583,6 +590,7 @@ export function TemplateEditor({
                   </Button>
                 )}
               </ButtonGroup>
+              </AdminOnly>
               <FieldDescription>
                 PNG, JPEG or a PDF whose page 1 is the ticket, up to{' '}
                 {formatBytes(MAX_ASSET_BYTES)}. Artwork above that has to be exported smaller —

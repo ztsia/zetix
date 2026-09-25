@@ -7,7 +7,7 @@ import { getDb } from '@/db/client';
 import { dbErrorMessage, pgError } from '@/db/errors';
 import { concerts } from '@/db/schema/concerts';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { slugify, type FormState } from './form-state';
 
 /**
@@ -16,7 +16,7 @@ import { slugify, type FormState } from './form-state';
  *
  * `F2` shipped the list; these are the two mutations module `A` adds to it.
  *
- * **Each action re-checks `requireAdmin()` itself.** A Server Action is its own
+ * **Each action re-checks `requireRole('ADMIN')` itself.** A Server Action is its own
  * POST entry point, so the page's guard does not cover it and `src/proxy.ts`
  * never reads a role (modules.md §5.2.1). Rendering a form behind an
  * authenticated page is not an authorization boundary.
@@ -89,7 +89,7 @@ export async function createConcertAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const name = String(formData.get('name') ?? '').trim();
   // A blank slug field means "derive it", which is what the form previews. The
@@ -160,7 +160,7 @@ export async function setConcertArchivedAction(
   concertId: number,
   archived: boolean,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = z
     .object({ concertId: z.number().int().positive(), archived: z.boolean() })

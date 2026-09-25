@@ -65,7 +65,7 @@ function bodyOf(source: string, name: string): string {
 }
 
 describe("module B's Server Actions", () => {
-  it('all sit behind requireAdmin()', async () => {
+  it("all sit behind requireRole('ADMIN')", async () => {
     const files = await actionFiles();
     expect(files.length).toBeGreaterThan(0);
 
@@ -75,7 +75,7 @@ describe("module B's Server Actions", () => {
       expect(source, `${file} should be a 'use server' file`).toMatch(/^'use server'/);
 
       for (const action of exportedActions(source)) {
-        if (!/requireAdmin\(\)/.test(bodyOf(source, action))) {
+        if (!/requireRole\('ADMIN'\)/.test(bodyOf(source, action))) {
           unguarded.push(`${file} → ${action}()`);
         }
       }
@@ -84,13 +84,13 @@ describe("module B's Server Actions", () => {
     expect(
       unguarded,
       'Every Server Action is reachable from a browser by name. One without ' +
-        'requireAdmin() is an open mutation (CLAUDE.md, spec/admin.md §14.3).',
+        "requireRole('ADMIN') is an open mutation (CLAUDE.md, spec/v3.md §28).",
     ).toEqual([]);
   });
 
   /**
    * The second half of the same question: an id from a request body is not
-   * evidence that it belongs to the concert whose screen sent it. `requireAdmin`
+   * evidence that it belongs to the concert whose screen sent it. `requireRole`
    * says the caller may act on this console, never that this row is one of its
    * rows.
    */

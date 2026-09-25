@@ -109,14 +109,19 @@ export const likePattern = (search: string) =>
  * addresses the viewer sees masked, and a substring match on the unmasked
  * column is an oracle: a row that appears for one guess and not the next
  * spells the address out a character at a time. Labels are names and
- * subjects, which the viewer already reads in full.
+ * subjects, which the viewer already reads in full — except a subject that
+ * quotes an address, so a message is searched by id instead.
  */
-const searchClause = (search: string, labelOnly: boolean): SQL =>
+const searchClause = (search: string, labelOnly: boolean, kind?: TrashKind): SQL =>
   !search.trim()
     ? sql``
-    : labelOnly
-      ? sql`where t.label ilike ${likePattern(search)}`
-      : sql`where t.label ilike ${likePattern(search)} or t.detail ilike ${likePattern(search)}`;
+    : labelOnly && kind === 'message'
+      ? // A message's label is its subject, which is free text and can itself
+        // hold an address the viewer sees masked. By id only.
+        sql`where t.id::text = ${search.trim()}`
+      : labelOnly
+        ? sql`where t.label ilike ${likePattern(search)}`
+        : sql`where t.label ilike ${likePattern(search)} or t.detail ilike ${likePattern(search)}`;
 
 type Row = { id: string; label: string; detail: string | null; deleted_at: string };
 
@@ -170,7 +175,7 @@ export async function listTrash(
     select t.id, t.label, t.detail, to_json(t.deleted_at) #>> '{}' as deleted_at,
            count(*) over ()::int as total
       from (${trashRows(kind, concertId)}) t
-    ${searchClause(options.search, options.labelOnly ?? false)}
+    ${searchClause(options.search, options.labelOnly ?? false, kind)}
      order by t.deleted_at desc, t.id
      limit ${options.pageSize} offset ${options.pageIndex * options.pageSize}
   `);

@@ -60,10 +60,12 @@ test('viewer rebuilds a phone number and confirms an email via responses search'
   await page.goto(`/admin/concerts/1/forms/1/responses?q=${encodeURIComponent(known.slice(0, -1) + '9')}`);
   await page.screenshot({ path: `${SHOTS}/FLOW-14-step-2-viewer-search-miss.png`, fullPage: true });
 
-  expect(emailYes).toBe(true);
+  // Re-verified after 4d57f23: a viewer's search matches the response number only.
+  expect(emailYes).toBe(false);
   expect(emailNo).toBe(false);
-  // The finding: this should NOT be recoverable by a viewer.
-  expect.soft(known, 'viewer rebuilt a phone number the screen never shows').not.toBe('+60 17-313 1313');
+  expect(known).toBe('+60 17-');
+  // Search still works for a viewer, by number.
+  expect(await hit(r, '1')).toBe(true);
 });
 
 test('viewer confirms masked addresses through Trash and Activity search', async ({ page }) => {
@@ -82,6 +84,25 @@ test('viewer confirms masked addresses through Trash and Activity search', async
   ];
   console.log(lines.join('\n'));
   writeFileSync(`${OUT}/search-oracle-2.txt`, lines.join('\n') + '\n');
+  const residual = [
+    `trash message q=daniel.subject@example.test (subject label) -> ${await probe('/admin/concerts/1/trash?kind=message&q=daniel.subject%40example.test', 'Re:')}`,
+    `trash message q=daniel.subject@example.tesx -> ${await probe('/admin/concerts/1/trash?kind=message&q=daniel.subject%40example.tesx', 'Re:')}`,
+    `trash player q=Player 80 (label) -> ${await probe('/admin/concerts/1/trash?kind=player&q=Player%2080', 'Player 80')}`,
+  ];
+  console.log(residual.join('\n'));
+  writeFileSync(`${OUT}/search-oracle-3.txt`, residual.join('\n') + '\n');
+  expect(lines.every((l) => l.endsWith('false'))).toBe(true);
   await page.goto('/admin/concerts/1/trash?kind=player&q=player80%40example.test');
-  await page.screenshot({ path: `${SHOTS}/FLOW-14-step-3-trash-search-hit.png`, fullPage: true });
+  await page.screenshot({ path: `${SHOTS}/FLOW-14-step-3-trash-search-no-hit.png`, fullPage: true });
+});
+
+test('admin twin: the admin search still matches answers and addresses', async ({ page }) => {
+  await page.context().setExtraHTTPHeaders({ 'x-real-ip': '198.51.100.203' });
+  await page.goto('/login');
+  await page.locator('input[name="email"]').fill('committee@example.test');
+  await page.locator('input[name="password"]').fill('qa-admin-pass');
+  await Promise.all([page.waitForURL((u) => !u.pathname.startsWith('/login')), page.locator('button[type="submit"]').click()]);
+  expect(await hit(page.request, 'farah.form@example.test')).toBe(true);
+  expect(await hit(page.request, '+60 17-313 1313')).toBe(true);
+  expect((await (await page.request.get('/admin/concerts/1/trash?kind=player&q=player80%40example.test')).text()).includes('Player 80')).toBe(true);
 });

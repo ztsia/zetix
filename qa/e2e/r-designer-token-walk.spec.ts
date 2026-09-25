@@ -1,30 +1,38 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Module R — FLOW-17: a VIEWER opens the ticket designer, the QR on the canvas
- * is a real attendee's, and the token it carries opens that attendee's ticket
- * page. (Seed: the first attendee of show 1 holds QRSECRET00000000000001.)
+ * Module R — FLOW-17 (re-verification of 4d57f23): a VIEWER opening the ticket
+ * designer on a show with issued tickets is offered the sample attendee only,
+ * and no real token reaches the browser. An ADMIN still previews a real one.
+ * (Seed: the first attendee of show 1 holds QRSECRET00000000000001.)
  */
-test('FLOW-17 viewer takes a real attendee token from the ticket designer', async ({ page }) => {
-  await page.context().setExtraHTTPHeaders({ 'x-real-ip': '198.51.100.249' });
+async function signIn(page: Page, email: string, password: string, ip: string) {
+  await page.context().setExtraHTTPHeaders({ 'x-real-ip': ip });
   await page.goto('/login');
-  await page.locator('input[name="email"]').fill('mei@example.test');
-  await page.locator('input[name="password"]').fill('qa-viewer-pass');
+  await page.locator('input[name="email"]').fill(email);
+  await page.locator('input[name="password"]').fill(password);
   await Promise.all([page.waitForURL((u) => !u.pathname.startsWith('/login')), page.locator('button[type="submit"]').click()]);
-  await expect(page.getByText('Read-only access.')).toBeVisible();
+}
 
+test('FLOW-17 viewer gets the sample attendee only in the ticket designer', async ({ page }) => {
+  await signIn(page, 'mei@example.test', 'qa-viewer-pass', '198.51.100.249');
+  await expect(page.getByText('Read-only access.')).toBeVisible();
+  const res = await page.goto('/admin/concerts/1/tickets/templates/2?show=1');
+  expect(res?.status()).toBe(200);
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByText('Classic Landscape').first()).toBeVisible();
+  const html = await page.content();
+  expect(html).not.toContain('QRSECRET');
+  await expect(page.getByText('A real attendee')).toHaveCount(0);
+  await expect(page.getByText('Sample data').first()).toBeVisible(); // the only preview subject offered
+  await page.screenshot({ path: 'qa-artifacts/claude-R-roles-accounts/screens/FLOW-17-step-1-viewer-designer-sample-only.png', fullPage: true });
+});
+
+test('FLOW-17 twin: an admin still previews a real attendee', async ({ page }) => {
+  await signIn(page, 'committee@example.test', 'qa-admin-pass', '198.51.100.248');
   await page.goto('/admin/concerts/1/tickets/templates/2?show=1');
   await page.waitForLoadState('networkidle');
-  await expect(page.getByText('A real attendee')).toBeVisible();
-  const html = await page.content();
-  const inDom = html.includes('QRSECRET00000000000001');
-  const flight = await page.evaluate(() => JSON.stringify((self as unknown as { __next_f?: unknown[] }).__next_f ?? []).includes('QRSECRET00000000000001'));
-  console.log('token in DOM html:', inDom, '| token in RSC flight data held by the browser:', flight);
-  expect(flight || inDom).toBe(true);
-  await page.screenshot({ path: 'qa-artifacts/claude-R-roles-accounts/screens/FLOW-17-step-1-viewer-designer-real-qr.png', fullPage: true });
-
-  const res = await page.goto('/t/QRSECRET00000000000001');
-  console.log('ticket page status:', res?.status());
-  await expect(page.getByText('Player 1').first()).toBeVisible();
-  await page.screenshot({ path: 'qa-artifacts/claude-R-roles-accounts/screens/FLOW-17-step-2-ticket-page-opened-with-token.png', fullPage: true });
+  await expect(page.getByText('A real attendee').first()).toBeVisible();
+  expect(await page.content()).toContain('QRSECRET00000000000001');
+  await page.screenshot({ path: 'qa-artifacts/claude-R-roles-accounts/screens/FLOW-17-step-2-admin-designer-real-attendee.png', fullPage: true });
 });

@@ -6,12 +6,14 @@ import {
   FileSpreadsheet,
   FileText,
   Gauge,
+  History,
   Mail,
   MessageSquareQuote,
   ScanLine,
   Settings,
   Smartphone,
   Ticket,
+  Trash2,
   UserCog,
   Users,
   UsersRound,
@@ -180,6 +182,27 @@ export const CONCERT_NAV: NavGroup[] = [
         icon: Download,
         description: 'CSV or XLSX of any table view.',
         module: 'F2',
+      },
+    ],
+  },
+  {
+    // V3's record-keeping screens (spec/v3.md §23.1, §23.6). `W` folds the nav
+    // into its seven areas (§29.1); until then they sit together here.
+    label: 'Records',
+    items: [
+      {
+        slug: 'activity',
+        label: 'Activity',
+        icon: History,
+        description: 'Every change and every bulk command, with its report.',
+        module: 'Q',
+      },
+      {
+        slug: 'trash',
+        label: 'Trash',
+        icon: Trash2,
+        description: 'Deleted rows: restore them, or delete them permanently.',
+        module: 'Q',
       },
     ],
   },

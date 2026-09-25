@@ -9,3 +9,7 @@ export { DataTableViewOptions } from './view-options';
 export { DataTableExportMenu, type DataTableExport } from './export-menu';
 export { selectionColumn } from './selection-column';
 export { dataTableFeatures, type DataTableColumn, type DataTableFeatures } from './features';
+export { useTableSelection } from './use-selection';
+export { useUrlTableState } from './use-url-state';
+export { parseTableState, tableStateToQuery, filterKeyOf, type UrlTableState } from './url-state';
+export { DataTableSavedViews, type BuiltInView } from './saved-views';

@@ -198,6 +198,8 @@ function messageOf(error: unknown): string {
 
 /** Re-render the screen after a mutation so the counts are current. */
 export async function refreshTickets(concertId: number): Promise<void> {
+  // Only a cache refresh, but still reachable by name from any browser.
+  await requireAdmin();
   revalidatePath(`/admin/concerts/${concertId}/tickets`);
 }
 

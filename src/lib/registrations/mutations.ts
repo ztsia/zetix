@@ -133,7 +133,7 @@ async function segmentContext(
  * booking, not a summary of its seats, and the cascade has already set every
  * seat to match.
  */
-async function recomputeStatus(tx: Executor, registrationId: number): Promise<void> {
+export async function recomputeStatus(tx: Executor, registrationId: number): Promise<void> {
   await tx.execute(sql`
     update registrations r
        set status = case

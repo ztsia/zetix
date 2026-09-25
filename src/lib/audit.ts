@@ -40,6 +40,14 @@ export type AuditEntry = {
   reason?: string | null;
   /** Defaults to the signed-in user. Pass explicitly from a script or a cron. */
   actorId?: string | null;
+  /**
+   * The concert the change belongs to (`0201`). Optional: the database derives
+   * it from `entityType` / `entityId` when it is left out, so pass it only where
+   * that cannot work — an entity with no id, or one about to be deleted.
+   */
+  concertId?: number | null;
+  /** The command run this change is part of (spec/v3.md §23.1). */
+  commandRunId?: number | null;
 };
 
 /**
@@ -91,6 +99,8 @@ export async function writeAuditLog(entry: AuditEntry, tx?: Tx): Promise<void> {
     before: entry.before ?? null,
     after: entry.after ?? null,
     reason: entry.reason ?? null,
+    concertId: entry.concertId ?? null,
+    commandRunId: entry.commandRunId ?? null,
   };
 
   const db: Db | Tx = tx ?? getDb();

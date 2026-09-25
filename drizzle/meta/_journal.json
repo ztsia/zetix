@@ -64,6 +64,13 @@
       "when": 1790332127880,
       "tag": "0200_v3_schema_delta",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1790346250853,
+      "tag": "0201_audit_concert_scope",
+      "breakpoints": true
     }
   ]
 }

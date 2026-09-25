@@ -64,13 +64,19 @@ export function partyWhere(
     const contacts = searchContacts
       ? sql`or p.contact_email::text ilike ${like} or p.contact_phone ilike ${like}`
       : sql``;
+    // A name that is itself an address is shown masked to a viewer, so it is
+    // not searchable by them either.
+    const name = (column: SQL) =>
+      searchContacts
+        ? sql`${column} ilike ${like}`
+        : sql`(${column} ilike ${like} and strpos(${column}, '@') = 0)`;
     clauses.push(sql`(
-      p.contact_name ilike ${like}
+      ${name(sql`p.contact_name`)}
       ${contacts}
       or exists (select 1 from attendees s
                   where s.registration_id = p.registration_id
                     and s.deleted_at is null
-                    and (s.full_name ilike ${like} or s.ticket_code ilike ${like})))`);
+                    and (${name(sql`s.full_name`)} or s.ticket_code ilike ${like})))`);
   }
   return sql.join(clauses, sql` and `);
 }

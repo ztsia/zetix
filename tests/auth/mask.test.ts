@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maskContacts, maskEmail, maskForRole, maskPhone } from '@/lib/auth/mask';
+import { maskContacts, maskEmail, maskForRole, maskPhone, maskPhonesInText } from '@/lib/auth/mask';
 
 /**
  * The viewer's mask (spec/v3.md §28). What must never survive it is a whole
@@ -79,5 +79,34 @@ describe('maskForRole', () => {
     const data = { email: 'a@b.co' };
     expect(maskForRole('VIEWER', data).email).not.toBe('a@b.co');
     expect(maskForRole('ADMIN', data)).toBe(data);
+  });
+});
+
+describe('free text a record shows a viewer (module S QA)', () => {
+  it('masks an address whose domain has no dot', () => {
+    const masked = maskContacts({ lastError: '550 no such user alice@examplecom' });
+    expect(masked.lastError).not.toContain('alice@examplecom');
+  });
+
+  it('withholds every credential link the system mails out, not only /t/', () => {
+    const masked = maskContacts({
+      text: [
+        '> Change your answers: https://x.test/f/round-2/edit?r=EDITSECRET000000000001',
+        '> Confirm your address: https://x.test/f/verify?t=VERSECRET000000000001',
+        '> Your invite: https://x.test/f/players?k=seedtoken0000000000001&x=1',
+        '> Update: https://x.test/p?update_token=UPDSECRET01',
+      ].join('\n'),
+    });
+    for (const secret of ['EDITSECRET000000000001', 'VERSECRET000000000001', 'seedtoken0000000000001', 'UPDSECRET01']) {
+      expect(masked.text).not.toContain(secret);
+    }
+    expect(masked.text).toContain('&x=1');
+  });
+
+  it('maskPhonesInText masks phone numbers in prose and leaves short numbers alone', () => {
+    const text = maskPhonesInText('Call +60 17-313 1313 about the 2 seats in row 14');
+    expect(text).not.toContain('313 1313');
+    expect(text).toContain('•••13');
+    expect(text).toContain('2 seats in row 14');
   });
 });

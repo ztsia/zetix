@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { requireRole } from '@/lib/auth/guards';
-import { maskForRole, masksContacts } from '@/lib/auth/mask';
+import { maskForRole, maskPhonesInText, masksContacts } from '@/lib/auth/mask';
 import { audienceOptions } from '@/lib/audience/queries';
 import { loadPartyRecord, type PartyRecord as PartyRecordData } from '@/lib/audience/record';
 import { Button } from '@/components/ui/button';
@@ -106,7 +106,10 @@ export default async function PartyRecordPage({
  * The mask finds addresses anywhere and phones under phone-named keys, but a
  * form response is keyed by the form's block ids, so a phone answer there is
  * under a key the mask cannot read as a phone. The raw answers and the kept
- * custom answers are withheld from a viewer instead; the record says so.
+ * custom answers are withheld from a viewer instead; the record says so. The
+ * prose fields — a reply's body, a bounce's diagnostic, an error, an audit
+ * reason — have their phone numbers masked here, since the default walk leaves
+ * digit runs alone.
  */
 function forViewer(record: PartyRecordData, viewer: boolean): PartyRecordData {
   if (!viewer) return record;
@@ -117,5 +120,15 @@ function forViewer(record: PartyRecordData, viewer: boolean): PartyRecordData {
       ? { ...record.import, rows: record.import.rows.map((row) => ({ ...row, raw: null })) }
       : null,
     custom: null,
+    messages: record.messages.map((message) => ({
+      ...message,
+      subject: prose(message.subject),
+      text: prose(message.text),
+      lastError: prose(message.lastError),
+      bounce: prose(message.bounce),
+    })),
+    activity: record.activity.map((row) => ({ ...row, reason: prose(row.reason) })),
   };
 }
+
+const prose = (value: string | null) => (value === null ? null : maskPhonesInText(value));

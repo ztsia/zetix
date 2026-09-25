@@ -36,13 +36,30 @@ import type { Role } from './session';
 
 const MASK = '•••';
 
-/** Deliberately loose: anything a person would read as an address. */
-const EMAIL_IN_TEXT = /[^\s@<>()[\]"',;:]+@[^\s@<>()[\]"',;:]+\.[^\s@<>()[\]"',;:]+/g;
+/**
+ * Deliberately loose: anything a person would read as an address — including
+ * one whose domain lost its dot (`alice@examplecom`), which is exactly the
+ * mistyped address a failed send quotes back (spec/v3.md §28, module `S` QA).
+ */
+const EMAIL_IN_TEXT = /[^\s@<>()[\]"',;:]+@[^\s@<>()[\]"',;:]+/g;
 const EMAIL_KEY = /email$/i;
 const PHONE_KEY = /phone|mobile/i;
 const TOKEN_KEY = /token$/i;
 /** The ticket page's path (`src/app/(portal)/t/[token]`), as `ticketUrl()` builds it. */
 const TICKET_LINK = /\/t\/[A-Za-z0-9_-]+/g;
+/**
+ * The other credential links the system mails out, quoted back in a guest's
+ * reply: the form edit link (`?r=`), the verification link (`?t=`), the player
+ * invite (`?k=`), and any `token=` parameter. Each is somebody's key.
+ */
+const CREDENTIAL_PARAM = /([?&](?:r|t|k|token|[a-z_]*_token)=)[^&#\s"'<>)\]]+/gi;
+/**
+ * A phone number in free text: at least eight digits with the separators people
+ * type. Used only by {@link maskPhonesInText}, which a screen applies to fields
+ * it knows are prose — never by the default walk, where a digit run is as often
+ * an id or a count.
+ */
+const PHONE_IN_TEXT = /\+?\d(?:[\s().-]*\d){7,}/g;
 
 /** `zhong@example.com` → `z•••@e•••.com`: enough to tell two rows apart, not to write. */
 export function maskEmail(email: string): string {
@@ -63,7 +80,19 @@ export function maskPhone(phone: string): string {
 }
 
 function maskText(text: string): string {
-  return text.replace(EMAIL_IN_TEXT, (match) => maskEmail(match)).replace(TICKET_LINK, `/t/${MASK}`);
+  return text
+    .replace(EMAIL_IN_TEXT, (match) => maskEmail(match))
+    .replace(TICKET_LINK, `/t/${MASK}`)
+    .replace(CREDENTIAL_PARAM, `$1${MASK}`);
+}
+
+/**
+ * Phone numbers inside prose — a reply's body, a bounce's diagnostic, an audit
+ * reason — for a screen that shows such fields to a viewer. `+60 17-313 1313`
+ * → `•••13`, as {@link maskPhone} masks a phone-named field.
+ */
+export function maskPhonesInText(text: string): string {
+  return text.replace(PHONE_IN_TEXT, (match) => maskPhone(match));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

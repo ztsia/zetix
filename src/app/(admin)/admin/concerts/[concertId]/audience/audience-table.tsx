@@ -110,6 +110,10 @@ export function AudienceTable({
   // A viewer reads the table; every action on it is a command, and commands
   // are an admin's (spec/v3.md §28).
   const canEdit = useCanEdit();
+  // A viewer's search does not match addresses or phones (`ReadOptions`).
+  const searchPlaceholder = canEdit
+    ? 'Search name, email, phone, guest or ticket code…'
+    : 'Search name, guest or ticket code…';
   const { server, setExtra, navigate, isPending } = useUrlTableState(state, page.total);
 
   const { selection, count, clear, tableProps } = useTableSelection({
@@ -499,7 +503,7 @@ export function AudienceTable({
           onRowClick={(row) => router.push(recordHref(row.id))}
           isLoading={isPending}
           toolbar={toolbar}
-          searchPlaceholder="Search name, email, phone, guest or ticket code…"
+          searchPlaceholder={searchPlaceholder}
           emptyTitle="No parties here"
           emptyDescription="Parties arrive from the forms, from an import, or from New party."
           emptyFilteredDescription="Nothing matches this view and these filters."
@@ -535,7 +539,7 @@ export function AudienceTable({
           onRowClick={(row) => router.push(recordHref(row.registrationId))}
           isLoading={isPending}
           toolbar={toolbar}
-          searchPlaceholder="Search name, email, phone, guest or ticket code…"
+          searchPlaceholder={searchPlaceholder}
           emptyTitle="No seats here"
           emptyDescription="Seats arrive with their parties."
           emptyFilteredDescription="Nothing matches this view and these filters."

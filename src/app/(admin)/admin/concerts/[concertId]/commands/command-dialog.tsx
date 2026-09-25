@@ -36,6 +36,7 @@ import {
 } from './actions';
 import { RunReportView } from './run-report';
 import { useCanEdit } from '@/components/auth/role';
+import { READ_ONLY_DIGEST, READ_ONLY_MESSAGE } from '@/lib/auth/read-only';
 
 /**
  * Preview → run → report, for any command over any selection
@@ -115,7 +116,15 @@ export function CommandDialog({
       setStage({ kind: 'loading' });
       setRunError(null);
       setPhrase('');
-      const result = await previewCommandAction(command, { concertId, selection, params: withParams });
+      let result: Awaited<ReturnType<typeof previewCommandAction>>;
+      try {
+        result = await previewCommandAction(command, { concertId, selection, params: withParams });
+      } catch (error) {
+        // The guard throws before the action's own error handling — a session
+        // whose role changed since the page loaded (spec/v3.md §28) — or the
+        // network failed. Either way the dialog must say so, not spin.
+        result = { ok: false, error: thrownMessage(error) };
+      }
       if (!alive.current) return;
       setStage(result.ok ? { kind: 'preview', preview: result.value } : { kind: 'error', message: result.error });
     },
@@ -180,13 +189,18 @@ export function CommandDialog({
     if (!selection) return;
     setRunError(null);
     setStage({ kind: 'running', preview, report: null });
-    const result = await runCommandAction(command, {
-      concertId,
-      selection,
-      params,
-      reason: reason.trim() || null,
-      confirmPhrase: preview.confirmation.required ? phrase : null,
-    });
+    let result: Awaited<ReturnType<typeof runCommandAction>>;
+    try {
+      result = await runCommandAction(command, {
+        concertId,
+        selection,
+        params,
+        reason: reason.trim() || null,
+        confirmPhrase: preview.confirmation.required ? phrase : null,
+      });
+    } catch (error) {
+      result = { ok: false, error: thrownMessage(error) };
+    }
     if (!result.ok) {
       setRunError(result.error);
       setStage({ kind: 'preview', preview });
@@ -325,6 +339,15 @@ function CommandOptions({
   onChange: (next: unknown) => void;
 }) {
   return <>{render(params, onChange)}</>;
+}
+
+/** A thrown Server Action error, in words: a refused role reads as itself. */
+function thrownMessage(error: unknown): string {
+  // A production build redacts a thrown message but keeps its digest.
+  if ((error as { digest?: unknown } | null)?.digest === READ_ONLY_DIGEST) return READ_ONLY_MESSAGE;
+  return error instanceof Error && error.message
+    ? error.message
+    : 'The request did not go through. Reload the page and try again.';
 }
 
 const normalise = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { dbErrorMessage } from '@/db/errors';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { createOperatorAuthAdmin } from '@/lib/operators/auth-admin';
 import {
   createOperator,
@@ -17,7 +17,7 @@ import type { OperatorFormState } from './form-state';
 /**
  * Operator provisioning actions (spec/admin.md §14.3, spec/checkin.md §12.1).
  *
- * **Every action re-checks `requireAdmin()` itself.** A Server Action is its own
+ * **Every action re-checks `requireRole('ADMIN')` itself.** A Server Action is its own
  * POST entry point, so the page's guard does not cover it and `src/proxy.ts`
  * never reads a role (modules.md §5.2.1). These actions create Supabase Auth
  * users and hand out the credential that reaches an attendee roster, so the one
@@ -65,7 +65,7 @@ export async function createOperatorAction(
   _prev: OperatorFormState,
   formData: FormData,
 ): Promise<OperatorFormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = displayNameSchema.safeParse(formData.get('displayName') ?? '');
   if (!parsed.success) {
@@ -99,7 +99,7 @@ export async function regenerateAccessCodeAction(
   userId: string,
   concertId: number,
 ): Promise<OperatorFormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({ userId: userIdSchema, concertId: z.number().int().positive() })
@@ -131,7 +131,7 @@ export async function setOperatorActiveAction(
   isActive: boolean,
   concertId: number,
 ): Promise<OperatorFormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({
@@ -166,7 +166,7 @@ export async function setShowAssignmentsAction(
   concertId: number,
   showIds: number[],
 ): Promise<OperatorFormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({

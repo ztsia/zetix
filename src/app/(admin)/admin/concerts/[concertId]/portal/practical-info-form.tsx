@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { NO_FORM_STATE } from '../../form-state';
 import { savePracticalInfoAction } from './actions';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * §13.3 item 5 — the concert's practical info: parking, latecomers, the interval.
@@ -48,10 +49,12 @@ export function PracticalInfoForm({
         </Field>
 
         <Field orientation="horizontal">
-          <Button type="submit" disabled={pending}>
-            {pending ? <Spinner data-icon="inline-start" /> : null}
-            Save
-          </Button>
+          <AdminOnly>
+            <Button type="submit" disabled={pending}>
+              {pending ? <Spinner data-icon="inline-start" /> : null}
+              Save
+            </Button>
+          </AdminOnly>
           {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
           {state.message ? <p className="text-sm text-muted-foreground">{state.message}</p> : null}
         </Field>

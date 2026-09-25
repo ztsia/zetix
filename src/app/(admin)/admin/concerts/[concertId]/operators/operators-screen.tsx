@@ -21,6 +21,7 @@ import { createOperatorAction } from './actions';
 import type { IssuedCode, OperatorFormState } from './form-state';
 import { AccessCodeDialog } from './access-code-dialog';
 import { OperatorRowActions } from './operator-row-actions';
+import { AdminOnly } from '@/components/auth/role';
 
 export type ShowOption = { id: number; name: string; startsAt: string | null };
 
@@ -275,12 +276,14 @@ function OperatorsTable({
         meta: { label: 'Actions' },
         header: '',
         cell: ({ row }) => (
-          <OperatorRowActions
-            concertId={concertId}
-            operator={row.original}
-            shows={shows}
-            onIssued={onIssued}
-          />
+          <AdminOnly>
+            <OperatorRowActions
+              concertId={concertId}
+              operator={row.original}
+              shows={shows}
+              onIssued={onIssued}
+            />
+          </AdminOnly>
         ),
       },
     ],

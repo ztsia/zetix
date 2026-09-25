@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { dbErrorMessage } from '@/db/errors';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
+import { maskForRole } from '@/lib/auth/mask';
 import { getCommand } from '@/lib/commands/registry';
 import {
   CommandInputError,
@@ -26,8 +27,9 @@ import { idSchema } from '@/lib/commands/selection';
  * own schemas validate the selection and parameters inside the runner; this
  * layer validates only the name and the ids it is handed directly.
  *
- * `requireAdmin()` is the guard until `R` replaces it with `requireRole()`
- * (spec/v3.md §28): a viewer must never reach a command.
+ * Every action here is `requireRole('ADMIN')` except {@link readRunAction}: a
+ * viewer must never reach a command (spec/v3.md §28), but may read a run's
+ * report, masked like every other screen they see.
  */
 
 /**
@@ -60,7 +62,7 @@ export async function previewCommandAction(
   name: string,
   input: CommandInput,
 ): Promise<ActionResult<Preview>> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   try {
     return { ok: true, value: await previewCommand(commandFor(name), input, user.id) };
   } catch (error) {
@@ -72,7 +74,7 @@ export async function runCommandAction(
   name: string,
   input: CommandInput,
 ): Promise<ActionResult<RunReport>> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   try {
     const report = await startCommand(commandFor(name), input, {
       actorId: user.id,
@@ -98,7 +100,7 @@ export async function continueRunAction(
   concertId: number,
   runId: number,
 ): Promise<ActionResult<RunReport>> {
-  await requireAdmin();
+  await requireRole('ADMIN');
   try {
     const ref = runRef(concertId, runId);
     const current = await readRun(ref.runId, ref.concertId);
@@ -120,7 +122,7 @@ export async function cancelRunAction(
   concertId: number,
   runId: number,
 ): Promise<ActionResult<RunReport>> {
-  await requireAdmin();
+  await requireRole('ADMIN');
   try {
     const ref = runRef(concertId, runId);
     const report = await cancelRun(ref.runId, ref.concertId);
@@ -135,10 +137,12 @@ export async function readRunAction(
   concertId: number,
   runId: number,
 ): Promise<ActionResult<RunReport>> {
-  await requireAdmin();
+  // Open to a viewer (spec/v3.md §28): a report is rows and outcomes, and the
+  // row labels are masked like every other screen a viewer reads.
+  const user = await requireRole('ADMIN', 'VIEWER');
   try {
     const ref = runRef(concertId, runId);
-    return { ok: true, value: await readRun(ref.runId, ref.concertId) };
+    return { ok: true, value: maskForRole(user.role, await readRun(ref.runId, ref.concertId)) };
   } catch (error) {
     return failure(error);
   }

@@ -17,7 +17,8 @@ import type { SessionUser } from './session';
  * implementations of one authorization rule drift apart, and the second one
  * drifts silently.
  *
- * `ADMIN` ignores assignments entirely and sees every show. An operator with no
+ * `ADMIN` ignores assignments entirely and sees every show; `VIEWER` sees none.
+ * An operator with no
  * assignments is refused everything, which is correct for a provisioned-but-not-
  * rostered account rather than an error.
  */
@@ -27,6 +28,10 @@ export async function canAccessShow(
 ): Promise<boolean> {
   if (!Number.isInteger(showId) || showId <= 0) return false;
   if (user.role === 'ADMIN') return true;
+  // A viewer reads the console, never a door roster (spec/v3.md §28). They hold
+  // no assignments, so the query below would refuse them too; saying so here
+  // keeps that true if someone ever assigns one.
+  if (user.role !== 'OPERATOR') return false;
 
   const rows = await getDb()
     .select({ id: operatorShowAssignments.id })

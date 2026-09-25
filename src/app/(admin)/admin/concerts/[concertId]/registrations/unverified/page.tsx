@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import { MailWarningIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { unverifiedRegistrations } from './queries';
 import { UnverifiedTable } from './unverified-table';
+import { maskForRole } from '@/lib/auth/mask';
 
 /**
  * **Registrations → Unverified** (spec/v2.md §8.1.4).
@@ -33,7 +34,7 @@ export default async function UnverifiedPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId } = await params;
   const id = Number(concertId);
 
@@ -81,7 +82,7 @@ export default async function UnverifiedPage({
             </Alert>
           ) : null}
 
-          <UnverifiedTable concertId={id} rows={rows} />
+          <UnverifiedTable concertId={id} rows={maskForRole(user.role, rows)} />
         </>
       )}
     </div>

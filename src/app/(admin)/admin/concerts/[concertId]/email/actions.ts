@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { queueBlast } from '@/lib/email/queue';
 import {
   clearDeliveryForResend,
@@ -23,7 +23,7 @@ import type { FormState } from '../../../concerts/form-state';
  * anything external calls; the dispatcher is the exception and is a Route
  * Handler for exactly that reason (CLAUDE.md conventions).
  *
- * **Each re-checks `requireAdmin()` itself.** A Server Action is its own entry
+ * **Each re-checks `requireRole('ADMIN')` itself.** A Server Action is its own entry
  * point, so the page's guard does not cover it and the proxy never reads a role
  * (modules.md §5.2.1). `tests/email/action-guards.test.ts` fails if one of
  * these calls is deleted — the failure an independent pass found in `D` and
@@ -45,7 +45,7 @@ function fail(error: unknown): FormState {
 }
 
 export async function prepareBlastAction(input: z.infer<typeof target>): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
   const parsed = target.safeParse(input);
   if (!parsed.success) return { error: 'Malformed request.' };
 
@@ -73,7 +73,7 @@ export async function prepareBlastAction(input: z.infer<typeof target>): Promise
 }
 
 export async function confirmBatchAction(input: z.infer<typeof target>): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = target.safeParse(input);
   if (!parsed.success) return { error: 'Malformed request.' };
 
@@ -87,7 +87,7 @@ export async function confirmBatchAction(input: z.infer<typeof target>): Promise
 }
 
 export async function discardDraftsAction(input: z.infer<typeof target>): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = target.safeParse(input);
   if (!parsed.success) return { error: 'Malformed request.' };
 
@@ -107,7 +107,7 @@ const messageEdit = z.object({
 });
 
 export async function editMessageAction(formData: FormData): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = messageEdit.safeParse({
     outboxId: Number(formData.get('outboxId')),
     subject: String(formData.get('subject') ?? ''),
@@ -133,7 +133,7 @@ const templateEdit = z.object({
 });
 
 export async function editTemplateAction(formData: FormData): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = templateEdit.safeParse({
     templateKey: String(formData.get('templateKey') ?? ''),
     subject: String(formData.get('subject') ?? ''),
@@ -178,7 +178,7 @@ function parseIds(raw: FormDataEntryValue | null): unknown {
 }
 
 export async function markDeliveredAction(formData: FormData): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = delivery.safeParse({
     attendeeIds: parseIds(formData.get('attendeeIds')),
     reason: String(formData.get('reason') ?? ''),
@@ -206,7 +206,7 @@ export async function markDeliveredAction(formData: FormData): Promise<FormState
 const resend = delivery.extend({ confirmation: z.string() });
 
 export async function resendTicketsAction(formData: FormData): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
   const parsed = resend.safeParse({
     attendeeIds: parseIds(formData.get('attendeeIds')),
     reason: String(formData.get('reason') ?? ''),

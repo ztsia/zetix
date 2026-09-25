@@ -5,6 +5,7 @@ import { concerts } from '@/db/schema/concerts';
 import { shows } from '@/db/schema/shows';
 import { ConcertsTable, type ConcertRow } from './concerts-table';
 import { ConcertCreateDialog } from './concert-create-dialog';
+import { AdminOnly } from '@/components/auth/role';
 
 export const metadata: Metadata = { title: 'Concerts' };
 
@@ -114,7 +115,9 @@ export default async function ConcertsPage({
             Choose a concert to open its console.
           </p>
         </div>
-        <ConcertCreateDialog />
+        <AdminOnly>
+          <ConcertCreateDialog />
+        </AdminOnly>
       </div>
       <ConcertsTable
         concerts={data}

@@ -8,7 +8,7 @@ import { dbErrorMessage } from '@/db/errors';
 import { booklets } from '@/db/schema/booklets';
 import { concerts } from '@/db/schema/concerts';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import type { FormState } from '../../form-state';
 
 /**
@@ -37,7 +37,7 @@ export async function savePracticalInfoAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = practicalSchema.safeParse({
     practicalInfoMd: formData.get('practicalInfoMd') ?? '',
@@ -88,7 +88,7 @@ export async function setBookletPublishedAction(
   bookletId: number,
   published: boolean,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();
@@ -117,7 +117,7 @@ export async function deleteBookletAction(
   concertId: number,
   bookletId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();

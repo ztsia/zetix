@@ -6,7 +6,7 @@ import { concerts } from '@/db/schema/concerts';
 import { feedbackResponses } from '@/db/schema/feedback';
 import { attendees, registrationForms } from '@/db/schema/registrations';
 import { shows, showSegments } from '@/db/schema/shows';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { buildExportTable, type ExportableResponse, type ExportTable } from '@/lib/forms/export';
 import { parseFormSchema, type FormSchema } from '@/lib/forms/schema';
 import { formatInZone } from '@/lib/export';
@@ -61,7 +61,7 @@ export async function buildFormExportAction(
   concertId: number,
   formId: number,
 ): Promise<{ error: string; data: null } | { error: null; data: FormExport }> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const form = await loadForm(concertId, formId);
   if (!form) return { error: 'That form no longer exists.', data: null };

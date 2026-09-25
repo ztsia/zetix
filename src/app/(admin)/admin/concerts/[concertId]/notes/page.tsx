@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { NotesBoard } from './notes-board';
 import { PlayerGroups } from './player-groups';
 import { loadNotesScreen } from './queries';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Notes' };
 
@@ -18,7 +19,7 @@ export const metadata: Metadata = { title: 'Notes' };
  * constantly, and the second is only meaningful once the first has been done.
  *
  * **The grouped view is admin-only, always** (decision 6). It is here, behind
- * `requireAdmin`, and nowhere under `(portal)`; no value of
+ * `requireRole`, and nowhere under `(portal)`; no value of
  * `portal.public_wall_visibility` reveals it, because there is no code path
  * that could.
  */
@@ -27,14 +28,15 @@ export default async function NotesPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
 
-  const screen = await loadNotesScreen(concertId);
-  if (!screen) notFound();
+  const loaded = await loadNotesScreen(concertId);
+  if (!loaded) notFound();
+  const screen = maskForRole(user.role, loaded);
 
   const waiting = screen.notes.filter((n) => n.moderationStatus === 'PENDING').length;
 

@@ -235,7 +235,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
   {
     title: 'Sign-in and platform',
     blurb:
-      'The admin code is the entire security boundary for every attendee’s name and email, so the lockout settings are not cosmetic.',
+      'A console password is the entire security boundary for every attendee’s name and email, so the lockout settings are not cosmetic. They apply per IP and per account.',
     settings: [
       {
         key: 'auth.admin_max_attempts',

@@ -5,9 +5,10 @@ import { authFailures } from '@/db/schema/auth';
 import { requireSetting } from '@/db/settings';
 
 /**
- * The admin login throttle (spec/admin.md §14.3, spec/README.md §4.2).
+ * The console login throttle (spec/admin.md §14.3, spec/v3.md §28).
  *
- * `auth.admin_max_attempts` failures per IP inside `auth.admin_lockout_window_min`,
+ * `auth.admin_max_attempts` failures per bucket — per IP, and per account since
+ * V3's named accounts ({@link accountBucket}) — inside `auth.admin_lockout_window_min`,
  * then a lockout that grows with each further failure. **Both numbers come from
  * the cascade** — they are seeded system values, not literals, and changing the
  * policy is an admin edit rather than a deploy (`CLAUDE.md`).
@@ -33,7 +34,7 @@ import { requireSetting } from '@/db/settings';
  * - `spec/README.md` §4.2 scopes V1 throttling to the admin credential.
  * - An usher locked out of the door app mid-queue is a worse failure on the
  *   night than the one throttling would prevent.
- * - An operator's blast radius is one show's roster; the admin code is
+ * - An operator's blast radius is one show's roster; a console password is
  *   everything.
  *
  * **Do not assume the platform covers the gap.** An independent QA pass fired 60
@@ -51,6 +52,25 @@ export type RateLimitVerdict =
 /** `<surface>:<ip>` — see `auth_failures.bucket`. */
 export function adminBucket(ip: string): string {
   return `admin:${ip}`;
+}
+
+/**
+ * `account:<email>` — the second bucket every console sign-in counts against
+ * (spec/v3.md §28: "per account as well as per IP").
+ *
+ * The IP bucket alone lets an attacker who rotates addresses guess one
+ * account's password indefinitely; this one caps the guesses at an account
+ * whoever is guessing. The cost is stated plainly: anyone who knows an admin's
+ * address can lock that account out by failing on purpose. The lockout expires
+ * on the same curve, and another admin — or `scripts/bootstrap-admin.ts` — can
+ * still get in, which is the better failure than an account that can be
+ * guessed at forever.
+ *
+ * Case-folded, because Supabase Auth treats addresses case-insensitively and
+ * `Admin@x` must not be a fresh bucket for `admin@x`.
+ */
+export function accountBucket(email: string): string {
+  return `account:${email.trim().toLowerCase()}`;
 }
 
 /**

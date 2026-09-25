@@ -52,6 +52,7 @@ import type { PreviewOption, PreviewSubject } from '@/lib/tickets/preview';
 import type { TemplateDetail } from '@/lib/tickets/templates';
 import { ElementProperties } from './element-properties';
 import { saveTemplateAction } from '../actions';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The canvas editor (spec/tickets.md §10.3).
@@ -388,14 +389,16 @@ export function TemplateEditor({
               {template.issuedCount} issued — saving makes v{template.version + 1}
             </Badge>
           )}
-          <Button variant="outline" onClick={previewPdf} disabled={working}>
-            <FileText />
-            Preview PDF
-          </Button>
-          <Button onClick={save} disabled={working || !dirty}>
-            <Save />
-            Save
-          </Button>
+          <AdminOnly>
+            <Button variant="outline" onClick={previewPdf} disabled={working}>
+              <FileText />
+              Preview PDF
+            </Button>
+            <Button onClick={save} disabled={working || !dirty}>
+              <Save />
+              Save
+            </Button>
+          </AdminOnly>
         </div>
       </div>
 

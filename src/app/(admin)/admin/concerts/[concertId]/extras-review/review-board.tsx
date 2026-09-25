@@ -26,6 +26,7 @@ import { ActionDialog } from '../../action-dialog';
 import { commitReviewAction } from './actions';
 import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import type { ReviewBoardData, ReviewRow, ReviewSegmentOption } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The extras review screen (spec/allocation.md §7.5).
@@ -306,58 +307,60 @@ export function ReviewBoard({
             </Alert>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!touched || isPending}
-              onClick={() =>
-                startTransition(() => {
-                  setGranted(fromPreselection(data));
-                  setTouched(false);
-                })
-              }
-            >
-              <RotateCcw /> Reset to FCFS
-            </Button>
-
-            {pastCapacity ? (
-              <ActionDialog
-                trigger={
-                  <Button variant="destructive" disabled={isPending}>
-                    Commit {selectedSeats} seat{selectedSeats === 1 ? '' : 's'} over
-                    capacity
-                  </Button>
-                }
-                title="Commit past capacity?"
-                description={`This grants ${selectedSeats} seats where ${Math.max(0, openSeats)} are free. More people will hold a ticket than the segment has room for, and the override is written to the audit log.`}
-                submitLabel="Commit over capacity"
-                pendingLabel="Committing…"
-                submitVariant="destructive"
-                action={(formData) =>
-                  commit(String(formData.get('confirmation') ?? ''), true)
-                }
-              >
-                <Field>
-                  <FieldLabel htmlFor="confirmation">
-                    Type {OVERSELL_PHRASE} to confirm
-                  </FieldLabel>
-                  <Input id="confirmation" name="confirmation" autoComplete="off" autoFocus />
-                  <FieldDescription>
-                    §7.5 asks for a typed confirmation, and records it with the commit.
-                  </FieldDescription>
-                </Field>
-              </ActionDialog>
-            ) : (
+          <AdminOnly>
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <Button
-                disabled={isPending}
-                onClick={() => startTransition(() => void commit('', false))}
+                variant="outline"
+                size="sm"
+                disabled={!touched || isPending}
+                onClick={() =>
+                  startTransition(() => {
+                    setGranted(fromPreselection(data));
+                    setTouched(false);
+                  })
+                }
               >
-                {isPending && <Spinner />}
-                Commit {selectedSeats} seat{selectedSeats === 1 ? '' : 's'}
+                <RotateCcw /> Reset to FCFS
               </Button>
-            )}
-          </div>
+
+              {pastCapacity ? (
+                <ActionDialog
+                  trigger={
+                    <Button variant="destructive" disabled={isPending}>
+                      Commit {selectedSeats} seat{selectedSeats === 1 ? '' : 's'} over
+                      capacity
+                    </Button>
+                  }
+                  title="Commit past capacity?"
+                  description={`This grants ${selectedSeats} seats where ${Math.max(0, openSeats)} are free. More people will hold a ticket than the segment has room for, and the override is written to the audit log.`}
+                  submitLabel="Commit over capacity"
+                  pendingLabel="Committing…"
+                  submitVariant="destructive"
+                  action={(formData) =>
+                    commit(String(formData.get('confirmation') ?? ''), true)
+                  }
+                >
+                  <Field>
+                    <FieldLabel htmlFor="confirmation">
+                      Type {OVERSELL_PHRASE} to confirm
+                    </FieldLabel>
+                    <Input id="confirmation" name="confirmation" autoComplete="off" autoFocus />
+                    <FieldDescription>
+                      §7.5 asks for a typed confirmation, and records it with the commit.
+                    </FieldDescription>
+                  </Field>
+                </ActionDialog>
+              ) : (
+                <Button
+                  disabled={isPending}
+                  onClick={() => startTransition(() => void commit('', false))}
+                >
+                  {isPending && <Spinner />}
+                  Commit {selectedSeats} seat{selectedSeats === 1 ? '' : 's'}
+                </Button>
+              )}
+            </div>
+          </AdminOnly>
 
           <p className="text-muted-foreground text-sm">
             Committing confirms the granted seats and waitlists the rest of the parties

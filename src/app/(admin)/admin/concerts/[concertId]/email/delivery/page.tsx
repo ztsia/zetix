@@ -3,9 +3,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { Button } from '@/components/ui/button';
 import { DeliveryTable, type DeliveryRow } from './delivery-table';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Ticket delivery' };
 
@@ -18,7 +19,7 @@ export const metadata: Metadata = { title: 'Ticket delivery' };
  * screen belongs to another module (modules.md §4).
  */
 export default async function DeliveryPage({ params }: { params: Promise<{ concertId: string }> }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcertId } = await params;
   const concertId = Number(rawConcertId);
@@ -81,7 +82,7 @@ export default async function DeliveryPage({ params }: { params: Promise<{ conce
         </Button>
       </header>
 
-      <DeliveryTable rows={data} timezone={concerts[0].timezone} />
+      <DeliveryTable rows={maskForRole(user.role, data)} timezone={concerts[0].timezone} />
     </div>
   );
 }

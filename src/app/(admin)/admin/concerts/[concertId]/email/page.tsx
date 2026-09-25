@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { blastSplit } from '@/lib/email/queue';
 import { TEMPLATE_KEYS, carriesTickets } from '@/lib/email/templates';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -13,6 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { BlastControls } from './blast-controls';
 import { OutboxTable, type OutboxRow } from './outbox-table';
+import { maskForRole } from '@/lib/auth/mask';
+import { AdminOnly } from '@/components/auth/role';
 
 export const metadata: Metadata = { title: 'Email' };
 
@@ -24,7 +26,7 @@ export const metadata: Metadata = { title: 'Email' };
  * eligibility predicate, so an admin who confirms against these figures is
  * confirming against the real set.
  *
- * **The page guards itself with `requireAdmin()`.** The layout above does too,
+ * **The page guards itself with `requireRole()`.** The layout above does too,
  * but a page that relies on an ancestor breaks silently when the ancestor
  * changes (decision 20, modules.md §5.2.1).
  */
@@ -37,7 +39,7 @@ export default async function EmailPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Search>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcertId } = await params;
   const concertId = Number(rawConcertId);
@@ -273,13 +275,15 @@ export default async function EmailPage({
             </Alert>
           ) : null}
 
-          <BlastControls
-            segmentId={Number(segment.id)}
-            templateKey={templateKey}
-            drafts={drafts}
-            queued={queued}
-            pendingRegistrations={split.pendingRegistrations}
-          />
+          <AdminOnly>
+            <BlastControls
+              segmentId={Number(segment.id)}
+              templateKey={templateKey}
+              drafts={drafts}
+              queued={queued}
+              pendingRegistrations={split.pendingRegistrations}
+            />
+          </AdminOnly>
         </CardContent>
       </Card>
 
@@ -288,7 +292,7 @@ export default async function EmailPage({
         <p className="text-muted-foreground text-sm">
           Every message is shown as it will be sent. The dispatcher sends this text verbatim.
         </p>
-        <OutboxTable rows={rows} timezone={concert.timezone} />
+        <OutboxTable rows={maskForRole(user.role, rows)} timezone={concert.timezone} />
       </section>
     </div>
   );

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { previewOptions, previewTicketData } from '@/lib/tickets/preview';
 import { loadTemplate, previewShows } from '@/lib/tickets/templates';
 import { TemplateEditor } from './template-editor';
@@ -31,7 +31,7 @@ export default async function TemplateEditorPage({
   params: Promise<{ concertId: string; templateId: string }>;
   searchParams: Promise<{ show?: string; saved?: string }>;
 }) {
-  await requireAdmin();
+  await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcert, templateId: rawTemplate } = await params;
   const concertId = Number(rawConcert);

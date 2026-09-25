@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import type { FormState } from '../../../form-state';
 import { registrationInConcert } from '../queries';
 
@@ -36,7 +36,7 @@ export async function overrideVerificationAction(
   concertId: number,
   registrationId: number,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');

@@ -15,6 +15,7 @@ import {
   Ticket,
   Trash2,
   UserCog,
+  UserRoundCog,
   Users,
   UsersRound,
   MailWarning,
@@ -216,6 +217,19 @@ export const SETTINGS_ITEM: NavItem = {
   icon: Settings,
   description: 'Users, roles, system defaults, SMTP test, audit log.',
   module: 'A',
+};
+
+/**
+ * Settings › People (spec/v3.md §28, module `R`). Beside Settings in the
+ * sidebar footer rather than in a concert's groups: accounts belong to the
+ * console, not to a concert. `W` folds both into its seven areas (§29.1).
+ */
+export const PEOPLE_ITEM: NavItem = {
+  slug: 'settings/people',
+  label: 'People',
+  icon: UserRoundCog,
+  description: 'Named console accounts: admins and read-only viewers.',
+  module: 'R',
 };
 
 export function findNavItem(slug: string): NavItem | undefined {

@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookletManager } from './booklet-manager';
 import { PracticalInfoForm } from './practical-info-form';
 import { loadPortalScreen } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 export const metadata: Metadata = { title: 'Portal' };
 
@@ -24,7 +25,7 @@ export default async function PortalPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
-  await requireAdmin();
+  await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: raw } = await params;
   const concertId = Number(raw);
@@ -51,11 +52,30 @@ export default async function PortalPage({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <BookletManager
-            concertId={concertId}
-            booklets={screen.booklets}
-            shows={screen.shows}
-          />
+          <AdminOnly
+            fallback={
+              screen.booklets.length === 0 ? (
+                <p className="text-muted-foreground text-sm">No booklet uploaded.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {screen.booklets.map((b) => (
+                    <li key={b.id}>
+                      {b.title}{' '}
+                      <span className="text-muted-foreground">
+                        — {b.published ? 'published' : 'not published'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+          >
+            <BookletManager
+              concertId={concertId}
+              booklets={screen.booklets}
+              shows={screen.shows}
+            />
+          </AdminOnly>
         </CardContent>
       </Card>
 
@@ -65,7 +85,17 @@ export default async function PortalPage({
           <CardDescription>Parking, latecomers, the interval.</CardDescription>
         </CardHeader>
         <CardContent>
-          <PracticalInfoForm concertId={concertId} value={screen.practicalInfoMd} />
+          <AdminOnly
+            fallback={
+              <p className="text-sm whitespace-pre-wrap">
+                {screen.practicalInfoMd || (
+                  <span className="text-muted-foreground">Nothing written yet.</span>
+                )}
+              </p>
+            }
+          >
+            <PracticalInfoForm concertId={concertId} value={screen.practicalInfoMd} />
+          </AdminOnly>
         </CardContent>
       </Card>
     </div>

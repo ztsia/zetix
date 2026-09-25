@@ -15,6 +15,7 @@ import { SegmentFormDialog } from './segment-form-dialog';
 import { GenerateFeedbackButton } from './generate-feedback-button';
 import { ShowFormDialog } from './show-form-dialog';
 import type { SegmentView, ShowView } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 const STATUS_VARIANT: Record<ShowView['status'], 'default' | 'secondary' | 'outline'> = {
   OPEN: 'default',
@@ -113,7 +114,9 @@ export function ShowCard({
           * appears with the status that says so (spec/v2.md §13.5.3).
           */}
         {show.status === 'COMPLETED' ? (
-          <GenerateFeedbackButton concertId={concertId} showId={show.id} />
+          <AdminOnly>
+            <GenerateFeedbackButton concertId={concertId} showId={show.id} />
+          </AdminOnly>
         ) : null}
 
         <CapacityBar show={show} hallOrigin={hall} />

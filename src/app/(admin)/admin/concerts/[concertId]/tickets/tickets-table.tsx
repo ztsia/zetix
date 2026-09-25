@@ -27,6 +27,7 @@ import {
   ticketSearchParams,
   type TicketFilters,
 } from './filters';
+import { AdminOnly } from '@/components/auth/role';
 
 export type TicketRow = {
   id: number;
@@ -156,28 +157,30 @@ function columnsFor(timeZone: string): DataTableColumn<TicketRow>[] {
         // the way an admin expects from a PDF.
         const linkClass = buttonVariants({ variant: 'ghost', size: 'icon' });
         return (
-          <div className="flex justify-end gap-1">
-            <a
-              className={linkClass}
-              href={ticketUrl(t.id)}
-              target="_blank"
-              rel="noreferrer"
-              title="Preview"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <Eye className="size-4" aria-hidden />
-              <span className="sr-only">Preview {t.fullName}&rsquo;s ticket</span>
-            </a>
-            <a
-              className={linkClass}
-              href={ticketUrl(t.id, true)}
-              title="Download"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <Download className="size-4" aria-hidden />
-              <span className="sr-only">Download {t.fullName}&rsquo;s ticket</span>
-            </a>
-          </div>
+          <AdminOnly>
+            <div className="flex justify-end gap-1">
+              <a
+                className={linkClass}
+                href={ticketUrl(t.id)}
+                target="_blank"
+                rel="noreferrer"
+                title="Preview"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Eye className="size-4" aria-hidden />
+                <span className="sr-only">Preview {t.fullName}&rsquo;s ticket</span>
+              </a>
+              <a
+                className={linkClass}
+                href={ticketUrl(t.id, true)}
+                title="Download"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Download className="size-4" aria-hidden />
+                <span className="sr-only">Download {t.fullName}&rsquo;s ticket</span>
+              </a>
+            </div>
+          </AdminOnly>
         );
       },
     },
@@ -371,29 +374,31 @@ export function TicketsTable({
             <Palette />
             Templates
           </Button>
-          <Button onClick={() => run(issueTicketsAction, 'issue')} disabled={isPending}>
-            <Ticket className="size-4" aria-hidden />
-            {targetCount > 0
-              ? `Issue ${targetCount} ticket${targetCount === 1 ? '' : 's'}`
-              : 'Issue tickets'}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() =>
-              run(
-                reissueTicketsAction,
-                'reissue',
-                `Reissue ${
-                  targetCount > 0 ? `${targetCount} selected ticket(s)` : 'this show'
-                } against the current template?\n\nEvery ticket this touches will be ` +
-                  're-rendered and queued to be emailed again.',
-              )
-            }
-            disabled={isPending}
-          >
-            <RefreshCw className="size-4" aria-hidden />
-            Reissue with current template
-          </Button>
+          <AdminOnly>
+            <Button onClick={() => run(issueTicketsAction, 'issue')} disabled={isPending}>
+              <Ticket className="size-4" aria-hidden />
+              {targetCount > 0
+                ? `Issue ${targetCount} ticket${targetCount === 1 ? '' : 's'}`
+                : 'Issue tickets'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                run(
+                  reissueTicketsAction,
+                  'reissue',
+                  `Reissue ${
+                    targetCount > 0 ? `${targetCount} selected ticket(s)` : 'this show'
+                  } against the current template?\n\nEvery ticket this touches will be ` +
+                    're-rendered and queued to be emailed again.',
+                )
+              }
+              disabled={isPending}
+            >
+              <RefreshCw className="size-4" aria-hidden />
+              Reissue with current template
+            </Button>
+          </AdminOnly>
         </div>
       </header>
 
@@ -415,21 +420,23 @@ export function TicketsTable({
             show a second email, and the count stands until people stop reading
             it.
           */}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={isPending}
-            onClick={() =>
-              run(
-                dismissReissueAction,
-                'dismiss',
-                'Dismiss these as cosmetic?\n\nNothing is re-rendered and nobody ' +
-                  'is emailed. The tickets people hold stay exactly as sent.',
-              )
-            }
-          >
-            Dismiss as cosmetic
-          </Button>
+          <AdminOnly>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isPending}
+              onClick={() =>
+                run(
+                  dismissReissueAction,
+                  'dismiss',
+                  'Dismiss these as cosmetic?\n\nNothing is re-rendered and nobody ' +
+                    'is emailed. The tickets people hold stay exactly as sent.',
+                )
+              }
+            >
+              Dismiss as cosmetic
+            </Button>
+          </AdminOnly>
         </div>
       )}
 

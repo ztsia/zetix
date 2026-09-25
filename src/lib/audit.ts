@@ -14,10 +14,9 @@ import { getSessionUser } from '@/lib/auth/session';
  * `before` and `after` hold the row on either side of the change, so a record
  * stands on its own months later without having to replay the rest of the log.
  *
- * **Attribution stops at the account, not the person.** There is one shared
- * `ADMIN`, so every admin action is attributed to it (decision 19). That is a
- * known and accepted cost, written down here so the next reader does not mistake
- * it for a bug.
+ * **Attribution names a person.** Console accounts are named since V3
+ * (spec/v3.md §28, decision 50), so `actor_id` is whoever was signed in. Rows
+ * written before then name V1's shared committee account.
  */
 
 type Db = ReturnType<typeof getDb>;
@@ -71,7 +70,7 @@ export type AuditEntry = {
  * and CI already runs `tsc`. The runtime check below covers the paths types do
  * not reach, and fails loudly instead of hanging.
  *
- * Callers already have the value: `requireAdmin()` returns the user.
+ * Callers already have the value: `requireRole()` returns the user.
  */
 export async function writeAuditLog(entry: AuditEntry): Promise<void>;
 export async function writeAuditLog(
@@ -84,7 +83,7 @@ export async function writeAuditLog(entry: AuditEntry, tx?: Tx): Promise<void> {
       'writeAuditLog was given a transaction but no actorId. Resolving the ' +
         'actor needs a second connection, and the pool holds one — this would ' +
         'deadlock against the transaction rather than fail. Pass the user ' +
-        'requireAdmin() returned.',
+        'requireRole() returned.',
     );
   }
 

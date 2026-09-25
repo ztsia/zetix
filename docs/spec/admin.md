@@ -65,6 +65,9 @@ Players and audience members never have accounts — they hold unguessable token
 
 ### The shared admin account
 
+> **Superseded in V3** by named `ADMIN` and `VIEWER` accounts with email and password
+> (`v3.md` §28, decision 50). This section describes V1 and V2.
+
 The committee shares one login. This removes admin user management entirely, at two costs worth stating
 plainly:
 

@@ -6,6 +6,8 @@ import { concerts } from '@/db/schema/concerts';
 import { players } from '@/db/schema/people';
 import { shows, showSegments } from '@/db/schema/shows';
 import { ImportFlow, type SegmentOption } from './import-flow';
+import { ReadOnlyNotice } from '@/components/auth/read-only-notice';
+import { requireRole } from '@/lib/auth/guards';
 
 export const metadata: Metadata = { title: 'Spreadsheet import' };
 
@@ -25,9 +27,20 @@ export default async function ImportPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId } = await params;
   const id = Number(concertId);
   if (!Number.isInteger(id) || id <= 0) notFound();
+
+  // Import is one long mutation, from upload to commit (spec/v3.md §28).
+  if (user.role === 'VIEWER') {
+    return (
+      <ReadOnlyNotice
+        title="Import is for admins"
+        description="Importing a spreadsheet adds registrations and claims seats. The rows it added appear on the Registrations screen, which you can read."
+      />
+    );
+  }
 
   const db = getDb();
 

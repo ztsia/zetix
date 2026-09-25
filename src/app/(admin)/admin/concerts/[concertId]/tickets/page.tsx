@@ -5,7 +5,7 @@ import { getDb } from '@/db/client';
 import { attendees, registrations } from '@/db/schema/registrations';
 import { concerts } from '@/db/schema/concerts';
 import { showSegments, shows } from '@/db/schema/shows';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { parseTicketFilters, ticketWhere, type TicketQuery } from './filters';
 import { TicketsTable, type TicketRow } from './tickets-table';
 
@@ -18,7 +18,7 @@ export const metadata: Metadata = { title: 'Tickets' };
  * show can hold several hundred attendees, and a browser-paged table would
  * search only the rows on screen.
  *
- * **The page guards itself with `requireAdmin()`.** The layout above it does
+ * **The page guards itself with `requireRole()`.** The layout above it does
  * too, but the guard is cheap and a page that relies on an ancestor is a page
  * that breaks silently when the ancestor changes (decision 20).
  */
@@ -46,7 +46,7 @@ export default async function TicketsPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Search>;
 }) {
-  await requireAdmin();
+  await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcertId } = await params;
   const concertId = Number(rawConcertId);

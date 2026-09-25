@@ -6,10 +6,10 @@ import { appUsers } from '@/db/schema/people';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 /**
- * `VIEWER` arrived with the V3 schema (`0200`, spec/v3.md §28). Until module `R`
- * lands `requireRole()`, every guard checks for `ADMIN` or `OPERATOR` by name, so
- * a viewer is refused everywhere — the safe side of a role nobody can yet be
- * given through the UI.
+ * The three roles (spec/v3.md §28). `ADMIN` and `VIEWER` are named console
+ * accounts; `VIEWER` reads every admin screen, masked, and changes nothing.
+ * `OPERATOR` is the usher at the door. A fourth role is a new enum value and a
+ * guard (`requireRole()` in `./guards.ts`), not a framework.
  */
 export type Role = 'ADMIN' | 'OPERATOR' | 'VIEWER';
 

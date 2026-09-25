@@ -52,6 +52,7 @@ import type {
   RegistrationRow,
   SegmentOption,
 } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * One party, and everything §7.6 allows an admin to do to it.
@@ -204,72 +205,74 @@ export function RegistrationSheet({
           </section>
         </div>
 
-        <SheetFooter className="flex-row flex-wrap gap-2 border-t">
-          <RegistrationFormDialog
-            concertId={concertId}
-            timeZone={timeZone}
-            segments={segments}
-            players={players}
-            registration={registration}
-            trigger={
-              <Button variant="outline" size="sm">
-                <Pencil /> Edit details
-              </Button>
-            }
-          />
-
-          <MoveDialog
-            concertId={concertId}
-            registration={registration}
-            segments={segments}
-            onDone={run}
-          />
-
-          {cancelled ? (
-            <RestoreButton concertId={concertId} registrationId={registration.id} onDone={run} />
-          ) : (
-            <CancelButton
-              contactName={registration.contactName}
-              onConfirm={() =>
-                run(() => cancelRegistrationAction(concertId, registration.id))
+        <AdminOnly>
+          <SheetFooter className="flex-row flex-wrap gap-2 border-t">
+            <RegistrationFormDialog
+              concertId={concertId}
+              timeZone={timeZone}
+              segments={segments}
+              players={players}
+              registration={registration}
+              trigger={
+                <Button variant="outline" size="sm">
+                  <Pencil /> Edit details
+                </Button>
               }
             />
-          )}
 
-          {/*
-            Delete sits apart from cancel because they are different facts, and
-            the wording is the only thing stopping an admin reaching for the
-            wrong one: cancelling says a real booking is not coming and keeps
-            the record, deleting says the row should never have existed.
+            <MoveDialog
+              concertId={concertId}
+              registration={registration}
+              segments={segments}
+              onDone={run}
+            />
 
-            `DeleteButton` keeps a refusal inside the dialog, which is what
-            this needs — a party that has already been admitted is refused with
-            a sentence naming how many, and closing the dialog would take the
-            explanation with it.
-          */}
-          <DeleteButton
-            trigger={
-              <Button variant="ghost" size="sm" className="text-destructive ml-auto">
-                <Trash2 /> Delete
-              </Button>
-            }
-            title={`Delete ${registration.contactName}'s registration?`}
-            description={
-              <>
-                This removes the booking and all {attendees.length} of its seat
-                {attendees.length === 1 ? '' : 's'} from every screen, frees the seats, and
-                withdraws any email still queued for it. Nothing in the admin console lists
-                deleted registrations afterwards.
-                <br />
-                <br />
-                If this is a real booking that is simply not coming, cancel it instead — a
-                cancellation keeps the record and can be restored.
-              </>
-            }
-            confirmLabel="Delete registration"
-            action={() => deleteRegistrationAction(concertId, registration.id)}
-          />
-        </SheetFooter>
+            {cancelled ? (
+              <RestoreButton concertId={concertId} registrationId={registration.id} onDone={run} />
+            ) : (
+              <CancelButton
+                contactName={registration.contactName}
+                onConfirm={() =>
+                  run(() => cancelRegistrationAction(concertId, registration.id))
+                }
+              />
+            )}
+
+            {/*
+              Delete sits apart from cancel because they are different facts, and
+              the wording is the only thing stopping an admin reaching for the
+              wrong one: cancelling says a real booking is not coming and keeps
+              the record, deleting says the row should never have existed.
+
+              `DeleteButton` keeps a refusal inside the dialog, which is what
+              this needs — a party that has already been admitted is refused with
+              a sentence naming how many, and closing the dialog would take the
+              explanation with it.
+            */}
+            <DeleteButton
+              trigger={
+                <Button variant="ghost" size="sm" className="text-destructive ml-auto">
+                  <Trash2 /> Delete
+                </Button>
+              }
+              title={`Delete ${registration.contactName}'s registration?`}
+              description={
+                <>
+                  This removes the booking and all {attendees.length} of its seat
+                  {attendees.length === 1 ? '' : 's'} from every screen, frees the seats, and
+                  withdraws any email still queued for it. Nothing in the admin console lists
+                  deleted registrations afterwards.
+                  <br />
+                  <br />
+                  If this is a real booking that is simply not coming, cancel it instead — a
+                  cancellation keeps the record and can be restored.
+                </>
+              }
+              confirmLabel="Delete registration"
+              action={() => deleteRegistrationAction(concertId, registration.id)}
+            />
+          </SheetFooter>
+        </AdminOnly>
       </SheetContent>
     </Sheet>
   );
@@ -422,14 +425,16 @@ function SeatRow({
           {attendee.needsReissue && <Badge variant="destructive">reissue</Badge>}
           {!disabled && (
             <>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setEditing(true)}
-                aria-label={`Rename ${attendee.fullName}`}
-              >
-                <Pencil />
-              </Button>
+              <AdminOnly>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setEditing(true)}
+                  aria-label={`Rename ${attendee.fullName}`}
+                >
+                  <Pencil />
+                </Button>
+              </AdminOnly>
               <DeleteButton
                 trigger={
                   <Button size="sm" variant="ghost" aria-label={`Remove ${attendee.fullName}`}>

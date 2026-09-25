@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { resolveSetting } from '@/db/settings';
 import {
   confirmsOverCapacity,
@@ -213,7 +213,7 @@ export async function createRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = registrationSchema.safeParse({
     segmentId: formData.get('segmentId') ?? '',
@@ -297,7 +297,7 @@ export async function updateRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = detailsSchema.safeParse({
     contactName: formData.get('contactName') ?? '',
@@ -339,7 +339,7 @@ export async function addAttendeesAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = addSeatsSchema.safeParse({
     seats: formData.get('seats') ?? '',
@@ -397,7 +397,7 @@ export async function renameAttendeeAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = z
     .object({ fullName: z.preprocess(blankToNull, z.string().trim().max(200).nullable()) })
@@ -421,7 +421,7 @@ export async function removeAttendeeAction(
   concertId: number,
   attendeeId: number,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   if (!(await attendeeInConcert(concertId, attendeeId))) {
     return fail('That seat does not belong to this concert.');
@@ -453,7 +453,7 @@ export async function moveRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = moveSchema.safeParse({
     segmentId: formData.get('segmentId') ?? '',
@@ -500,7 +500,7 @@ export async function cancelRegistrationAction(
   concertId: number,
   registrationId: number,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');
@@ -543,7 +543,7 @@ export async function deleteRegistrationAction(
   concertId: number,
   registrationId: number,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');
@@ -579,7 +579,7 @@ export async function restoreRegistrationAction(
   registrationId: number,
   options: { override?: boolean } = {},
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   if (!(await registrationInConcert(concertId, registrationId))) {
     return fail('That registration does not belong to this concert.');

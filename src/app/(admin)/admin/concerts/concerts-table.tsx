@@ -13,6 +13,7 @@ import {
 } from '@/components/data-table';
 import type { ExportColumn } from '@/lib/export';
 import { ConcertRowActions } from './concert-row-actions';
+import { AdminOnly } from '@/components/auth/role';
 
 export type ConcertRow = {
   id: number;
@@ -90,11 +91,13 @@ const columns: DataTableColumn<ConcertRow>[] = [
     meta: { label: 'Actions' },
     header: () => <span className="sr-only">Actions</span>,
     cell: ({ row }) => (
-      <ConcertRowActions
-        concertId={row.original.id}
-        name={row.original.name}
-        status={row.original.status}
-      />
+      <AdminOnly>
+        <ConcertRowActions
+          concertId={row.original.id}
+          name={row.original.name}
+          status={row.original.status}
+        />
+      </AdminOnly>
     ),
   },
 ];

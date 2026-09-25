@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { queueNotesDigest } from '@/lib/email/notes-digest';
 import type { FormState } from '../../form-state';
 
@@ -16,7 +16,7 @@ import type { FormState } from '../../form-state';
  * **Every one of these is scoped to the concert in the URL**, not merely to the
  * ids posted. A note id is a number in a form post; without the concert
  * predicate an admin on one concert's screen could moderate or publish another
- * concert's notes by editing it. The screen is behind `requireAdmin` and an
+ * concert's notes by editing it. The screen is behind `requireRole` and an
  * admin may legitimately reach every concert, so this is not an authorization
  * boundary — it is the guarantee that a button does what the screen it is on
  * says it does.
@@ -58,7 +58,7 @@ export async function moderateNotesAction(
   noteIds: number[],
   status: 'APPROVED' | 'HIDDEN' | 'PENDING',
 ): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireRole('ADMIN');
 
   const parsed = ids.safeParse(noteIds);
   if (!parsed.success) return { error: idProblem(noteIds.length, 'note') };
@@ -126,7 +126,7 @@ export async function setNotesOnWallAction(
   noteIds: number[],
   published: boolean,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = ids.safeParse(noteIds);
   if (!parsed.success) return { error: idProblem(noteIds.length, 'note') };
@@ -225,7 +225,7 @@ export async function queueDigestAction(
   concertId: number,
   playerIds: number[],
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = ids.safeParse(playerIds);
   if (!parsed.success) return { error: idProblem(playerIds.length, 'player') };

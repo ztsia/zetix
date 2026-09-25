@@ -9,7 +9,7 @@ import { dbErrorMessage } from '@/db/errors';
 import { concerts } from '@/db/schema/concerts';
 import { shows, showSegments } from '@/db/schema/shows';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { FEEDBACK_TEMPLATE_KEY, queueFeedbackBlast } from '@/lib/email/feedback-blast';
 import type { FormState } from '../../form-state';
 
@@ -144,7 +144,7 @@ export async function createShowAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readShowForm(formData);
   if (!parsed.success) {
@@ -193,7 +193,7 @@ export async function updateShowAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readShowForm(formData);
   if (!parsed.success) {
@@ -329,7 +329,7 @@ export async function createSegmentAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readSegmentForm(formData);
   if (!parsed.success) {
@@ -393,7 +393,7 @@ export async function updateSegmentAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readSegmentForm(formData);
   if (!parsed.success) {
@@ -516,7 +516,7 @@ export async function moveCapacityAction(
   // one. `src/db/client.ts` is `max: 1`, so that nested query waits for the
   // single connection the transaction is already holding, and the request
   // deadlocks against itself. Passing `actorId` is what stops it.
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({
@@ -617,7 +617,7 @@ export async function deleteSegmentAction(
   concertId: number,
   segmentId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();
@@ -659,7 +659,7 @@ export async function deleteShowAction(
   concertId: number,
   showId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();
@@ -722,7 +722,7 @@ export async function generateFeedbackEmailsAction(
   concertId: number,
   showId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const { queued, requeued, alreadySent } = await queueFeedbackBlast({ showId });
@@ -807,7 +807,7 @@ export async function sendFeedbackNowAction(
   concertId: number,
   showId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const rows = await getDb().execute<{ id: string }>(sql`

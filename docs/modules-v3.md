@@ -30,7 +30,8 @@ P schema delta ──► Q platform kernel ──┬──► S audience workspa
 | 4 | `W` | after `S`, `T`, `U`, `V` |
 | 5 | `X` | last |
 
-**Integration branch: `v3`.** Every module PR targets `v3`, which merges to `main` once, as V2 did.
+**No integration branch.** Unlike V2, every module opens its PR straight to `main`. All nine branches
+are cut from `main` up front; each is rebased onto `main` when its session starts (§3).
 
 ---
 
@@ -122,7 +123,45 @@ deployment, README with screenshots.
 
 ---
 
-## 3. Separate sessions, not modules
+## 3. How a module session runs
+
+### 3.1 Starting
+
+1. **Rebase onto `main`** before anything else — the branch was cut early and is behind:
+
+   ```bash
+   git fetch origin main && git rebase origin/main
+   ```
+
+2. **Read your handoff on `main`:** `docs/handoff/<letter>-*.md` for your letter — `W` may find
+   several, one from each module it depends on. **If there is none, a module you depend on has not
+   merged yet: stop and tell the owner.** Do not start from the spec alone.
+3. Archive the handoff in the same commit as your first real change (`CLAUDE.md`, session rotation).
+
+### 3.2 Finishing
+
+1. Run the `qa` skill.
+2. **Write the handoff for whoever starts next**, per `docs/handoff/README.md`, in the same PR:
+
+   | When this merges | Write |
+   |---|---|
+   | `P` | `Q-*.md` |
+   | `Q` | `R-*.md`, `S-*.md`, `U-*.md`, `V-*.md` — all four start from the same point |
+   | `S` | `T-*.md`, and `W-from-S.md` |
+   | `T`, `U`, `V` | `W-from-T.md`, `W-from-U.md`, `W-from-V.md` — one file each, so parallel PRs never conflict |
+   | `R` | nothing, unless `W` needs to know something — then `W-from-R.md` |
+   | `W` | `X-*.md` |
+
+3. **Open the PR to `main`.**
+
+### 3.3 `main` must keep working after every merge
+
+`main` deploys to production and there is no integration branch to absorb a half-finished state. So a
+module never removes an old screen before its replacement is merged, and every migration is additive
+until the code that used the old shape is gone. The migration itself is applied to Supabase by hand
+after merge (`local.md` §4, §16).
+
+## 4. Separate sessions, not modules
 
 - **Extracting `src/lib/mail/` into its own package**, with further provider adapters. `U` keeps it
   liftable; the extraction is its own project.

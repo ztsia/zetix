@@ -97,6 +97,11 @@ const cancelled = await party({
 });
 await sql`update registrations set approved_at = now(), status = 'CANCELLED' where id = ${cancelled}`;
 
+// A read-only account (spec/v3.md §28), as module R's seed has it.
+await sql`insert into app_users (id, email, display_name, role)
+          values ('33333333-3333-4333-8333-333333333333'::uuid, 'mei@example.test', 'Mei Viewer', 'VIEWER')
+          on conflict (id) do nothing`;
+
 await sql`insert into email_templates (key, name, subject, body_md) values
   ('public_verify', 'Verify', 'Please confirm your email', 'Click {{verify_url}}')
   on conflict (key) do nothing`;

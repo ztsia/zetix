@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seeds zetix_qa for module S, starts the stub GoTrue and `next dev` on :3100.
+# Seeds zetix_qa for module S (admin committee@example.test / qa-admin-pass, viewer mei@example.test / qa-viewer-pass), starts the stub GoTrue and `next dev` on :3100.
 # Same shape as start-a.sh; the seed and the warmed routes are what differ.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -12,12 +12,14 @@ SEED_JSON="$(QA_DATABASE_URL="$QA_DATABASE_URL" QA_ADMIN_EMAIL="$QA_ADMIN_EMAIL"
 echo "seed: $SEED_JSON"
 
 export STUB_USERS='[
-  {"id":"11111111-1111-4111-8111-111111111111","email":"committee@example.test","password":"qa-admin-code"},
+  {"id":"11111111-1111-4111-8111-111111111111","email":"committee@example.test","password":"qa-admin-pass"},
+  {"id":"33333333-3333-4333-8333-333333333333","email":"mei@example.test","password":"qa-viewer-pass"},
   {"id":"22222222-2222-4222-8222-222222222222","email":"wei-ling@operators.invalid","password":"qa-op-code"}
 ]'
 
 export NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:${STUB_PORT}"
 export NEXT_PUBLIC_SUPABASE_ANON_KEY="qa-anon-key"
+export SUPABASE_SERVICE_ROLE_KEY="qa-service-role-key"
 export ADMIN_EMAIL="$QA_ADMIN_EMAIL"
 export APP_URL="http://localhost:3100"
 export CRON_SECRET="qa-cron-secret"

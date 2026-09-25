@@ -184,7 +184,8 @@ export type CommitResult = {
  * shape that module `F` owns (`modules.md` §3). Writing half of that here would
  * mean either an outbox row with no rendered body, which the dispatcher cannot
  * send, or a second renderer for `F` to reconcile with. The outbox is keyed on
- * `(registration_id, template_key)` and this transaction leaves that key intact,
+ * `(registration_id, purpose)` (V3, spec/v3.md §24.2) and this transaction
+ * leaves that key intact,
  * so `F` queues from the committed state with the filtered insert of §11.4 and
  * nothing here has to be undone.
  */

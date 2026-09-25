@@ -208,15 +208,17 @@ claim_seats(p_segment_id bigint, p_registration_id bigint, p_requests jsonb,
 ```
 
 - `p_requests` is the party: one object per seat, `{"full_name": …, "email": …,
-  "allocation_type": "BASE"|"EXTRA"|"HELD"|"COMP"}`. Every field is validated; a missing or unknown
-  `allocation_type` is an error rather than a default.
+  "allocation_type": "BASE"|"EXTRA"|"HELD"|"COMP", "requested_at": …}`. Every field is validated; a
+  missing or unknown `allocation_type` is an error rather than a default. `requested_at` is optional
+  (V3, `v3.md` §21.3): absent, the seat takes its registration's time.
 - `p_override` is the deliberate admin escape hatch of §7.6. It relaxes the **capacity ceilings** —
-  the segment's and the hall's — and nothing else. It does not grant a player more base seats than
-  their quota, because decision 17 is explicit that base entitlement has no opt-out. The caller owns
-  the typed confirmation and the `audit_log` row.
+  the segment's and the hall's — and, **since V3, the player's base quota** (`v3.md` §23.5, decision 47,
+  which reverses 17). It never relaxes the review itself: an EXTRA request in a `REVIEW` segment is held
+  as `PENDING_REVIEW` however it arrives. Every seat the override was needed for is marked
+  `over_capacity_at`. The caller owns the typed confirmation and the `audit_log` row.
 - The return carries a fifth key, `granted_other`, counting granted `HELD` and `COMP` seats. Those
   are granted by this function but do not come out of the extras pool, so neither `granted_extra` nor
-  silence would describe them honestly.
+  silence would describe them honestly. V3 adds a sixth, `over_capacity`, counting the marked seats.
 
 **A registration must be live.** Claiming against a `CANCELLED` or soft-deleted registration is
 refused, and the registration row is locked for the duration — cancellation touches `registrations`

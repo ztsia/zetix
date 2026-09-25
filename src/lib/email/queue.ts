@@ -5,7 +5,7 @@ import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { toNameCase } from '../names';
 import { escapeMergeValues, renderTemplate, type MergeContext } from './render';
-import { carriesTickets } from './templates';
+import { carriesTickets, purposeFor } from './templates';
 
 /**
  * Queueing a blast, and the three mechanisms that make pressing Send twice
@@ -19,9 +19,11 @@ import { carriesTickets } from './templates';
  *    *registrations that still hold an undelivered seat*, because a message is
  *    addressed to a registrant and carries the whole party's outstanding
  *    tickets (decision 22).
- * 3. **The partial unique index** on `(registration_id, template_key) where
+ * 3. **The partial unique index** on `(registration_id, purpose) where
  *    status in ('DRAFT','QUEUED','SENDING')` is what makes the
- *    `on conflict do nothing` mean anything.
+ *    `on conflict do nothing` mean anything. V3 keyed it on the purpose rather
+ *    than the template (spec/v3.md §24.2), so a party with a pending
+ *    `extras_granted` draft is refused an `extras_declined` one too.
  *
  * `tests/email/idempotency.test.ts` was written before this file and is the
  * primary test case `CLAUDE.md` names.
@@ -490,7 +492,8 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
      * recipients and inserting, a concurrent dispatch may have delivered one of
      * them. `on conflict do nothing` then covers the remaining race — two
      * simultaneous presses both reach this statement and the index lets exactly
-     * one row through per (registration, template).
+     * one row through per (registration, purpose) — V3 keys it on the purpose,
+     * not the template (`TEMPLATE_PURPOSE`, spec/v3.md §24.2).
      *
      * **Be honest about what is proved.** Deleting the second `exists` leaves
      * every test in `idempotency.test.ts` green, because `loadRecipients()`
@@ -504,9 +507,11 @@ export async function queueBlast(target: BlastTarget): Promise<{ queued: number;
      */
     const inserted = await db.execute<{ id: string }>(sql`
       insert into email_outbox (
-        registration_id, template_key, to_email, to_name, subject, body_md, context, status
+        registration_id, purpose, template_key, to_email, to_name, subject, body_md, context,
+        status
       )
-      select r.id, ${target.templateKey}, r.contact_email, v.to_name,
+      select r.id, ${purposeFor(target.templateKey)}::message_purpose,
+             ${target.templateKey}, r.contact_email, v.to_name,
              v.subject, v.body_md, v.context, 'DRAFT'
         from (values ${values}) as v(registration_id, subject, body_md, context, to_name)
         join registrations r on r.id = v.registration_id

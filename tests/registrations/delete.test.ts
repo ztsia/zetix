@@ -160,9 +160,12 @@ describe('queued mail is withdrawn', () => {
       seats: guests(1),
     });
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-      values (${registrationId}, 'public_ticket', 'mail@example.test', 'Your tickets', 'Body', 'DRAFT'),
-             (${registrationId}, 'reminder', 'mail@example.test', 'Reminder', 'Body', 'QUEUED')
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status)
+      values (${registrationId}, 'TICKETS', 'public_ticket', 'mail@example.test', 'Your tickets',
+              'Body', 'DRAFT'),
+             (${registrationId}, 'REMINDER', 'reminder', 'mail@example.test', 'Reminder', 'Body',
+              'QUEUED')
     `;
 
     const result = await deleteRegistration(registrationId);
@@ -184,8 +187,10 @@ describe('queued mail is withdrawn', () => {
       seats: guests(1),
     });
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status, sent_at)
-      values (${registrationId}, 'public_ticket', 'sent@example.test', 'Your tickets', 'Body', 'SENT', now())
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status, sent_at)
+      values (${registrationId}, 'TICKETS', 'public_ticket', 'sent@example.test', 'Your tickets',
+              'Body', 'SENT', now())
     `;
 
     const result = await deleteRegistration(registrationId);

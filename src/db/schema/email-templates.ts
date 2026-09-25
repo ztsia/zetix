@@ -1,4 +1,7 @@
-import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { messagePurpose } from './enums';
+import { showSegments } from './shows';
+import { fk, pk, timestamps } from './columns';
 
 /**
  * `email_templates` — the eight message types of spec/email.md §11.3, as
@@ -47,4 +50,40 @@ export const emailTemplates = pgTable('email_templates', {
 
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid('updated_by'),
+
+  /** V3: templates are listed in the Trash and restorable from it (spec/v3.md §23.6). */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
+
+/**
+ * `segment_message_defaults` — which template words each purpose for a segment
+ * (spec/v3.md §24.2).
+ *
+ * The Send tickets wizard defaults its Email step from here and the admin may
+ * override per send. A table rather than a jsonb bag on `show_segments` so that
+ * the purpose is a real enum value and the template a real foreign key: a bag
+ * would accept a misspelt purpose and point at a template that no longer
+ * exists, and both would surface only when a send picked the wrong wording.
+ *
+ * No row for a purpose means "the purpose's built-in default by audience" —
+ * the table in §24.2. Choosing wording is not an operational value, so none of
+ * this is a settings key.
+ */
+export const segmentMessageDefaults = pgTable(
+  'segment_message_defaults',
+  {
+    id: pk(),
+    segmentId: fk('segment_id')
+      .notNull()
+      .references(() => showSegments.id, { onDelete: 'cascade' }),
+    purpose: messagePurpose('purpose').notNull(),
+    templateKey: text('template_key')
+      .notNull()
+      .references(() => emailTemplates.key, { onDelete: 'restrict', onUpdate: 'cascade' }),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('segment_message_defaults_segment_purpose_key').on(t.segmentId, t.purpose),
+    index('segment_message_defaults_template_idx').on(t.templateKey),
+  ],
+);

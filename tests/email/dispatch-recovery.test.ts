@@ -232,8 +232,9 @@ describe('the daily cap is counted in the concert timezone', () => {
     await seedWorld(1);
 
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status, sent_at)
-      select registration_id, 'reminder', to_email, 's', 'b', 'SENT',
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status, sent_at)
+      select registration_id, 'REMINDER', 'reminder', to_email, 's', 'b', 'SENT',
              (date_trunc('day', now() at time zone 'Asia/Singapore') at time zone 'Asia/Singapore')
                + interval '1 hour'
         from email_outbox limit 1
@@ -251,8 +252,9 @@ describe('the daily cap is counted in the concert timezone', () => {
     await seedWorld(1);
 
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status, sent_at)
-      select registration_id, 'reminder', to_email, 's', 'b', 'SENT',
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status, sent_at)
+      select registration_id, 'REMINDER', 'reminder', to_email, 's', 'b', 'SENT',
              (date_trunc('day', now() at time zone 'Asia/Singapore') at time zone 'Asia/Singapore')
                - interval '1 hour'
         from email_outbox limit 1

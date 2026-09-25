@@ -40,8 +40,9 @@ describe('outbox idempotency', () => {
   });
 
   const queue = (id: number, status = 'DRAFT') => sql`
-    insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-    values (${id}::bigint, 'public_ticket', 'to@example.test', 'Your ticket', 'body',
+    insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                              status)
+    values (${id}::bigint, 'TICKETS', 'public_ticket', 'to@example.test', 'Your ticket', 'body',
             ${status}::outbox_status)
     on conflict do nothing
     returning id
@@ -94,8 +95,9 @@ describe('outbox idempotency', () => {
     // property it defends is the same one.
     await expect(
       sql`
-        insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-        values (null, 'public_ticket', 'to@example.test', 's', 'b', 'DRAFT')
+        insert into email_outbox (registration_id, purpose, template_key, to_email, subject,
+                                  body_md, status)
+        values (null, 'TICKETS', 'public_ticket', 'to@example.test', 's', 'b', 'DRAFT')
       `,
     ).rejects.toThrow(/email_outbox_one_addressee/);
   });
@@ -130,8 +132,9 @@ describe('the player-addressed digest keeps both keys total', () => {
   });
 
   const queueDigest = (id: number, status = 'QUEUED') => sql`
-    insert into email_outbox (player_id, template_key, to_email, subject, body_md, status)
-    values (${id}::bigint, 'player_notes_digest', 'player@example.test', 'Your notes', 'body',
+    insert into email_outbox (player_id, purpose, template_key, to_email, subject, body_md, status)
+    values (${id}::bigint, 'NOTES_DIGEST', 'player_notes_digest', 'player@example.test',
+            'Your notes', 'body',
             ${status}::outbox_status)
     on conflict do nothing
     returning id
@@ -142,8 +145,8 @@ describe('the player-addressed digest keeps both keys total', () => {
     // neither conflicts with the other, and the digest goes out twice.
     await expect(
       sql`
-        insert into email_outbox (template_key, to_email, subject, body_md, status)
-        values ('player_notes_digest', 'p@example.test', 's', 'b', 'QUEUED')
+        insert into email_outbox (purpose, template_key, to_email, subject, body_md, status)
+        values ('NOTES_DIGEST', 'player_notes_digest', 'p@example.test', 's', 'b', 'QUEUED')
       `,
     ).rejects.toThrow(/email_outbox_one_addressee/);
   });
@@ -153,9 +156,9 @@ describe('the player-addressed digest keeps both keys total', () => {
     // deduplicated by two indexes with two different opinions about it.
     await expect(
       sql`
-        insert into email_outbox (registration_id, player_id, template_key, to_email,
+        insert into email_outbox (registration_id, player_id, purpose, template_key, to_email,
                                   subject, body_md, status)
-        values (${registrationId}::bigint, ${playerId}::bigint, 'player_notes_digest',
+        values (${registrationId}::bigint, ${playerId}::bigint, 'NOTES_DIGEST', 'player_notes_digest',
                 'p@example.test', 's', 'b', 'QUEUED')
       `,
     ).rejects.toThrow(/email_outbox_one_addressee/);
@@ -201,8 +204,9 @@ describe('the player-addressed digest keeps both keys total', () => {
     await queueDigest(playerId);
 
     const queueTicket = () => sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-      values (${registrationId}::bigint, 'player_confirmation', 'to@example.test', 's', 'b',
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status)
+      values (${registrationId}::bigint, 'TICKETS', 'player_confirmation', 'to@example.test', 's', 'b',
               'DRAFT')
       on conflict do nothing
       returning id

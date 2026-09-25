@@ -57,6 +57,13 @@
       "when": 1789293131994,
       "tag": "0100_v2_schema_delta",
       "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1790332127880,
+      "tag": "0200_v3_schema_delta",
+      "breakpoints": true
     }
   ]
 }

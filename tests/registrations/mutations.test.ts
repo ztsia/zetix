@@ -7,6 +7,7 @@ import {
   createShow,
 } from '../helpers/fixtures';
 import { ensureConcertTemplates, resolveTemplateForShow } from '@/lib/tickets/seed-templates';
+import { purposeFor } from '@/lib/email/templates';
 import {
   addAttendees,
   cancelRegistration,
@@ -632,13 +633,17 @@ describe('cancelRegistration', () => {
       ['reminder', 'SENT'],
     ] as const) {
       await sql`
-        insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-        values (${registrationId}, ${key}, 'alice@example.test', 'Subject', 'Body', ${status})
+        insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                  status)
+        values (${registrationId}, ${purposeFor(key)}::message_purpose, ${key},
+                'alice@example.test', 'Subject', 'Body', ${status})
       `;
     }
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-      values (${other.registrationId}, 'public_ticket', 'other@example.test', 'S', 'B', 'QUEUED')
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status)
+      values (${other.registrationId}, 'TICKETS', 'public_ticket', 'other@example.test', 'S', 'B',
+              'QUEUED')
     `;
 
     const result = await cancelRegistration(registrationId);

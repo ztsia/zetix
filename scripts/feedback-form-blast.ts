@@ -295,10 +295,10 @@ async function record(
 ) {
   await getSql()`
     insert into email_outbox (
-      registration_id, template_key, to_email, to_name, subject, body_md, context,
+      registration_id, purpose, template_key, to_email, to_name, subject, body_md, context,
       status, attempts, last_error, sent_at
     ) values (
-      ${recipient.representativeId}, ${TEMPLATE_KEY}, ${recipient.email},
+      ${recipient.representativeId}, 'FEEDBACK', ${TEMPLATE_KEY}, ${recipient.email},
       ${recipient.name}, ${subject}, ${bodyMd},
       ${JSON.stringify({
         form_url: formUrl,

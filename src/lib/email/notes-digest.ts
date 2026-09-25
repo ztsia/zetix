@@ -209,9 +209,9 @@ export async function queueNotesDigest(input: {
    */
   const inserted = await db.execute<{ id: string }>(sql`
     insert into email_outbox (
-      player_id, template_key, to_email, to_name, subject, body_md, context, status
+      player_id, purpose, template_key, to_email, to_name, subject, body_md, context, status
     )
-    select v.player_id, ${DIGEST_TEMPLATE_KEY}, v.to_email, v.to_name,
+    select v.player_id, 'NOTES_DIGEST', ${DIGEST_TEMPLATE_KEY}, v.to_email, v.to_name,
            v.subject, v.body_md, v.context, 'DRAFT'
       from (values ${values}) as v(player_id, to_email, to_name, subject, body_md, context)
     on conflict do nothing

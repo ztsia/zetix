@@ -120,13 +120,12 @@ export async function createPlayers(concertId: number, count: number): Promise<n
 /**
  * A strictly increasing default `requested_at`.
  *
- * `registrations_no_duplicate_import` is unique on
- * `(segment_id, contact_email, requested_at) where deleted_at is null`
- * (spec/import.md §9.2), and this helper writes one constant email. Two calls in
- * the same millisecond would therefore collide — rarely, and only on a fast
- * machine, which is the worst way for a suite to fail. Monotonic here also
- * matches what the column means: `requested_at` is the FCFS ordering key
- * (spec/allocation.md §7.4), so parties created in order should sort in order.
+ * Written when `registrations_no_duplicate_import` was unique on
+ * `(segment_id, contact_email, requested_at)` and this helper's one constant
+ * email could collide within a millisecond. V3 dropped that index
+ * (spec/v3.md §30.1); monotonic is kept because it matches what the column
+ * means: `requested_at` is the FCFS ordering key (spec/allocation.md §7.4), so
+ * parties created in order should sort in order.
  */
 let lastRequestedAt = 0;
 function nextRequestedAt(): string {

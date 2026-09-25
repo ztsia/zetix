@@ -50,6 +50,8 @@ concert
 `ticket_template_id` resolves like any other cascading value: **show → concert
 (`ticket.default_template_id`) → the seeded global default**. It is nullable precisely so a concert can
 set one template for all its shows and a single show can override it. Never read the column directly.
+V3 puts a segment level in front (`show_segments.default_ticket_template_id`, `v3.md` §24.2); null on a
+segment changes nothing.
 
 The show owns the **physical hall**: one capacity number and the door. It carries no audience mode —
 see segments below.
@@ -74,6 +76,8 @@ as unallocated. One number is easier to reason about at 9pm on a concert night t
 `base_claim_deadline` (nullable),
 `extras_policy` (REVIEW | AUTO_FCFS),
 `allow_partial_grant`, `max_tickets_per_response` (nullable),
+`default_ticket_template_id` (nullable — V3, the segment level of `ticket.default_template_id`),
+`auto_approve_clean` (nullable — V3, the segment level of `review.auto_approve_clean`),
 `display_order`, `created_at`, `updated_at`
 Unique: `(show_id, audience_mode)` — at most one segment per mode per show
 Unique: `(id, show_id)` — exists only so child tables can carry a composite foreign key (§5.2)
@@ -111,6 +115,7 @@ override column exists because it costs one nullable column and removes a future
 `opens_at`, `closes_at`, `max_responses`,
 `one_response_per_identity`, `max_tickets_per_response` (nullable),
 `auto_close_on_capacity`, `allow_edit_until`, `confirmation_message_md`,
+`theme` (jsonb, nullable — V3, `v3.md` §25.6),
 `status` (DRAFT|OPEN|CLOSED), `created_at`, `updated_at`
 
 A registration form belongs to a segment, and `kind` decides which **system blocks** are pre-built into
@@ -151,7 +156,10 @@ settled from it, so nothing may overwrite it.
 `custom` (jsonb, nullable — answers to `CUSTOM` blocks, `v2.md` §8.2.3),
 `status` (CONFIRMED|PENDING_REVIEW|WAITLIST|CANCELLED),
 `email_verified_at` (nullable), `verification_token` (unique, nullable, unguessable),
-`requested_at` (timestamptz — the FCFS ordering key),
+`requested_at` (timestamptz — the FCFS ordering key; since V3 the party's earliest seat),
+`approved_at`, `approved_by` (V3 review gate, `v3.md` §25.4), `merged_into_id` (§25.5),
+`update_token` (unique, nullable — §25.6),
+`email_issue`, `email_checked_at`, `email_issue_accepted_at` (the stored address check, §24.6),
 `created_by`, `created_at`, `updated_at`, `deleted_at`
 Index: `(segment_id, status, requested_at)`, `(show_id, status)`
 Unique: `(id, segment_id, show_id)` — for the composite foreign key in §5.2
@@ -177,6 +185,9 @@ and exports read (`v2.md` §8.2.3).
 `ticket_issued_at`, `ticket_sent_at`, `ticket_sent_source` (EMAIL|MANUAL, nullable),
 `needs_reissue` (bool — set when a bound field changes after sending, `tickets.md` §10.6),
 `ticket_template_id`, `ticket_template_version` (pinned at issue time — see `tickets.md` §10.5),
+`requested_at` (V3 — this seat's own first-come time, defaulting to its registration's, `v3.md` §21.3),
+`over_capacity_at` (V3 — set when an override granted this seat past a limit, §23.5),
+`import_row_id` (V3 — the staged import row that created it, §25.7),
 `created_at`, `updated_at`, `deleted_at`
 Index: `(segment_id, status)`, `(show_id, status)`; unique on `qr_token`, unique on `ticket_code`
 
@@ -221,29 +232,36 @@ party of four that split up at the interval has four of them. The audience is at
 **`import_batches`**
 `id`, `show_id`, `segment_id`, `filename`, `mapping_profile_id`, `uploaded_by`,
 `row_count`, `created_count`, `skipped_count`, `error_count`,
-`report` (jsonb), `status` (DRY_RUN|COMMITTED), `created_at`
+`report` (jsonb), `status` (DRY_RUN|COMMITTED|STAGED|UNDONE), `queue_receipts` (V3),
+`created_at`, `updated_at`
 
 **`mapping_profiles`**
 `id`, `name`, `show_id` (nullable), `audience`, `config` (jsonb — `import.md` §9.3), `created_at`, `updated_at`
 
 **`email_outbox`** — one row per *message*, and every message has exactly one addressee
-`id`, `registration_id` (nullable), `player_id` (nullable), `template_key`,
+`id`, `registration_id` (nullable), `player_id` (nullable),
+`purpose` (V3 — RECEIPT|VERIFICATION|TICKETS|EXTRAS_DECISION|CANCELLATION|REMINDER|FEEDBACK|
+NOTES_DIGEST|PLAYER_INVITE|REPLY, not null, no default), `template_key` (null only for `REPLY`),
 `to_email`, `to_name`,
 `subject`, `body_md`, `context` (jsonb — the merge values the body was rendered from),
 `attachment_paths` (jsonb array, nullable),
-`status` (DRAFT|QUEUED|SENDING|SENT|FAILED|CANCELLED),
-`attempts`, `last_error`, `scheduled_for`, `sent_at`, `created_at`, `updated_at`
-Index: `(status, scheduled_for)`, `(registration_id)`
+`status` (DRAFT|QUEUED|SENDING|SENT|FAILED|CANCELLED|BOUNCED),
+`attempts`, `last_error`, `scheduled_for`, `sent_at`,
+`message_id`, `superseded_by_id`, `bounced_at`, `bounce_code`, `bounce_detail`,
+`in_reply_to_message_id` (V3, `v3.md` §24, §26), `created_at`, `updated_at`
+Index: `(status, scheduled_for)`, `(registration_id)`; unique on `message_id`
 
 ```sql
+-- V3 keys both on purpose, not template (v3.md §24.2, decision 52), and leaves
+-- REPLY out: two replies a person wrote are two messages.
 create unique index outbox_no_duplicate_pending
-  on email_outbox (registration_id, template_key)
-  where status in ('DRAFT', 'QUEUED', 'SENDING');
+  on email_outbox (registration_id, purpose)
+  where status in ('DRAFT', 'QUEUED', 'SENDING') and purpose <> 'REPLY';
 
 -- V2, for the one player-addressed template. Both keys stay total:
 create unique index outbox_no_duplicate_pending_player
-  on email_outbox (player_id, template_key)
-  where status in ('DRAFT', 'QUEUED', 'SENDING');
+  on email_outbox (player_id, purpose)
+  where status in ('DRAFT', 'QUEUED', 'SENDING') and purpose <> 'REPLY';
 
 alter table email_outbox
   add constraint email_outbox_one_addressee
@@ -274,7 +292,7 @@ nothing, `on conflict do nothing` silently does nothing, and a double-queued dig
 error anywhere. `tests/schema/outbox.test.ts` proves both halves.
 
 **`app_users`** — backed by Supabase Auth
-`id` (= `auth.users.id`), `email`, `display_name`, `role` (ADMIN | OPERATOR),
+`id` (= `auth.users.id`), `email`, `display_name`, `role` (ADMIN | OPERATOR | VIEWER — V3, `v3.md` §28),
 `is_active`, `last_login_at`, `created_at`, `deleted_at`
 
 Two very different populations share this table:
@@ -295,6 +313,11 @@ attendee data. This is the correct behaviour for an account created but not yet 
 a `scripts/bootstrap-admin.ts` that creates its Supabase Auth user and `app_users` row from environment
 variables, idempotently, and document it as a one-time step. Operators are created from inside the app
 thereafter.
+
+**V3 tables** — `segment_message_defaults`, `email_threads`, `email_messages`, `mail_sync_state`,
+`import_rows`, `duplicate_candidates`, `command_runs`, `command_run_items`, `scheduler_heartbeat`, and the
+view `party_pipeline`. Their columns and reasons are in `v3.md` §30.1 and the schema files
+(`src/db/schema/`); they are not restated here.
 
 **`audit_log`**
 `id`, `actor_id`, `action`, `entity_type`, `entity_id`, `before` (jsonb), `after` (jsonb),
@@ -405,6 +428,15 @@ cascade, and their seeds are `v2.md` §13.2.1's and §13.5.2's own worked figure
 | `checkin.scan_debounce_ms` | system | 1500 | |
 | `import.fuzzy_match_threshold` | system | 0.85 | Below this, a player match needs confirmation |
 | `keepalive.enabled` | system | true | Daily DB ping that defeats the Supabase idle pause (`platform.md` §17.1) |
+| `email.receipt_hold_minutes` | concert | 10 | V3. Hold before a receipt is due; repeat submissions inside it collapse (`v3.md` §25.3) |
+| `review.auto_approve_clean` | segment | false | V3. Approve a party with no flags at submit (`v3.md` §25.4). Segment level is `show_segments.auto_approve_clean` |
+| `review.duplicate_name_similarity` | system | 0.8 | V3. `pg_trgm` similarity at which names are a duplicate candidate (`v3.md` §25.5) |
+| `delivery.review_single_party` | system | false | V3. Whether a one-party resend must pass the wizard's review steps (`v3.md` §24.1) |
+| `admin.typed_confirm_above` | system | 20 | V3. Rows above which an irreversible command needs a typed phrase (`v3.md` §23.3) |
+| `scheduler.tick_minutes` | system | 10 | V3. `pg_cron` interval for the tick, 1–59 (`v3.md` §27.2) |
+| `scheduler.history_days` | system | 7 | V3. Retention for `pg_cron` and `pg_net` history (`v3.md` §27.2) |
+| `inbox.match_fallback_days` | system | 30 | V3. Window for matching a reply by sender alone (`v3.md` §26.4) |
+| `inbox.sync_budget_seconds` | system | 20 | V3. Share of the tick's time budget spent on inbox sync (`v3.md` §26.3) |
 
 ### 6.1 Time
 

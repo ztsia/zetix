@@ -198,3 +198,38 @@ export async function adviseOnAddress(email: string): Promise<{
     suggestion,
   };
 }
+
+/**
+ * The §24.6 verdict on an address an admin or an import entered: null when it
+ * passes, otherwise the problem in words (spec/v3.md §24.6).
+ *
+ * One function so every entry path — the record's inline edit, a re-check from
+ * the Audience table, and later the import grid and the send wizard — stores the
+ * same answer in `registrations.email_issue`, which `party_pipeline` reads as
+ * `SUSPICIOUS_ADDRESS`. Unlike the public form it only *flags*: an admin can
+ * accept an address the checks dislike (`email_issue_accepted_at`).
+ *
+ * An inconclusive DNS answer is not an issue, for the reason
+ * {@link hasDeliverableDomain} gives: a flaky resolver must not flag real
+ * addresses.
+ */
+export async function addressIssue(email: string): Promise<string | null> {
+  const address = email.trim();
+  if (/\s/.test(address)) return 'The address contains a space.';
+  if (!ADDRESS_SHAPE.test(address) || address.includes('..')) {
+    return 'This is not a valid email address.';
+  }
+  const { blocking, suggestion } = await adviseOnAddress(address);
+  if (blocking) return blocking;
+  if (suggestion) {
+    return `Possible typo: did you mean ${address.slice(0, address.lastIndexOf('@') + 1)}${suggestion}?`;
+  }
+  return null;
+}
+
+/**
+ * Syntax, as strictly as a person would read it: one `@`, a dotted domain, no
+ * empty labels. Deliberately stricter than the V1 import's loose pattern, which
+ * accepted `gmail..com` (§24.6).
+ */
+const ADDRESS_SHAPE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;

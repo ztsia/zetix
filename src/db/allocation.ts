@@ -163,6 +163,11 @@ export type PromoteOutcome = {
   skipped: number;
   refused: boolean;
   reason: string | null;
+  /**
+   * Seats the override was actually needed for, and so flagged
+   * `attendees.over_capacity_at` (spec/v3.md §23.5, `0200`).
+   */
+  over_capacity?: number;
 };
 
 /**

@@ -2,6 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
+import type { Tx } from '@/db/tx';
 import {
   claimSeats,
   lockShowForClaim,
@@ -43,6 +44,23 @@ export type Override = {
   /** True once the admin has typed the confirmation (§7.5, §7.6). */
   override?: boolean;
 };
+
+export type { Tx };
+
+/**
+ * Where a mutation runs: the caller's transaction, or its own.
+ *
+ * V3's commands (spec/v3.md §23.1) work one row per transaction the runner
+ * opens, so every mutation here can join that transaction instead of opening a
+ * second one — which on the `max: 1` pool would wait for the connection the
+ * runner's transaction holds and deadlock against it. A Server Action that
+ * calls a mutation on its own still gets a transaction of its own.
+ */
+export type InTx = { executor?: Tx };
+
+function within<T>(executor: Tx | undefined, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return executor ? fn(executor) : getDb().transaction(fn);
+}
 
 export type NewSeat = {
   fullName?: string | null;
@@ -171,13 +189,14 @@ export async function recomputeStatus(tx: Executor, registrationId: number): Pro
  */
 export async function createRegistration(
   input: CreateRegistrationInput,
+  options: InTx = {},
 ): Promise<CreateRegistrationResult> {
   if (input.seats.length === 0) {
     throw new Error('A registration needs at least one seat.');
   }
 
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const { showId } = await segmentContext(tx, input.segmentId);
 
       /**
@@ -200,7 +219,7 @@ export async function createRegistration(
         insert into registrations (
           show_id, segment_id, round_label, player_id, source,
           contact_name, contact_email, contact_phone, status, requested_at,
-          created_by
+          created_by, approved_at, approved_by
         ) values (
           ${showId}, ${input.segmentId}, ${input.roundLabel ?? null},
           ${input.playerId ?? null}, 'ADMIN',
@@ -213,7 +232,10 @@ export async function createRegistration(
           -- party recorded as confirmed with no seats.
           'WAITLIST',
           ${(input.requestedAt ?? new Date()).toISOString()}::timestamptz,
-          ${input.createdBy ?? null}
+          ${input.createdBy ?? null},
+          -- Admin-created parties are approved on creation (spec/v3.md §25.4):
+          -- the person entering them is the reviewer.
+          now(), ${input.createdBy ?? null}
         )
         returning id
       `);
@@ -251,6 +273,24 @@ export type RegistrationDetails = {
   playerId?: number | null;
   roundLabel?: string | null;
   requestedAt?: Date | null;
+  /**
+   * The §24.6 verdict on `contactEmail` (`addressIssue()`), checked by the
+   * caller before the transaction, since the MX lookup is a network call.
+   * Stored only when the address actually changed.
+   */
+  emailIssue?: string | null;
+};
+
+export type DetailsResult = {
+  emailChanged: boolean;
+  /** Pending messages moved to the new address (spec/v3.md §24.3). */
+  readdressed: number;
+  /** Pending messages withdrawn because the address was cleared and they have nowhere to go. */
+  withdrawn: number;
+  /** Seats whose tickets already went to the old address — the record's resend question. */
+  deliveredToOld: number;
+  /** The contact as it was, for the caller's audit row. */
+  before: { contactName: string; contactEmail: string | null } | null;
 };
 
 /**
@@ -262,43 +302,110 @@ export type RegistrationDetails = {
  * `registration.contact_name` is a ticket binding — it is what a placeholder
  * seat prints as "Guest of {contact_name}" (decision 32) — so correcting it
  * after tickets have gone out flags those seats for reissue (§10.6).
+ *
+ * **A changed contact email re-addresses the party's pending messages in the
+ * same transaction** (spec/v3.md §24.3): a draft or queued message would
+ * otherwise go to the address the admin just corrected. A cleared email
+ * withdraws them instead — there is nowhere left to send them. A `SENDING` message is
+ * the dispatcher's and a `SENT` one is history; neither is rewritten. The
+ * address check's result is stored with it, so `SUSPICIOUS_ADDRESS` follows the
+ * new address (§24.6).
  */
 export async function updateRegistrationDetails(
   registrationId: number,
   details: RegistrationDetails,
-): Promise<void> {
+  options: InTx = {},
+): Promise<DetailsResult> {
   try {
-    const before = await getDb().execute<{ contact_name: string }>(sql`
-      select contact_name from registrations where id = ${registrationId}
-    `);
+    return await within(options.executor, async (db) => {
+      const before = await db.execute<{ contact_name: string; contact_email: string | null }>(sql`
+        select contact_name, contact_email::text as contact_email
+          from registrations where id = ${registrationId} for update
+      `);
+      const newEmail = details.contactEmail ?? null;
+      const emailChanged =
+        before.length > 0 &&
+        (before[0].contact_email ?? '').toLowerCase() !== (newEmail ?? '').toLowerCase();
 
-    await getDb().execute(sql`
-      update registrations
-         set contact_name  = ${details.contactName},
-             contact_email = ${details.contactEmail ?? null},
-             contact_phone = ${details.contactPhone ?? null},
-             player_id     = ${details.playerId ?? null},
-             round_label   = ${details.roundLabel ?? null},
-             requested_at  = coalesce(
-               ${details.requestedAt ? details.requestedAt.toISOString() : null}::timestamptz,
-               requested_at)
-       where id = ${registrationId}
-         and deleted_at is null
-    `);
+      await db.execute(sql`
+        update registrations
+           set contact_name  = ${details.contactName},
+               contact_email = ${newEmail},
+               contact_phone = ${details.contactPhone ?? null},
+               player_id     = ${details.playerId ?? null},
+               round_label   = ${details.roundLabel ?? null},
+               requested_at  = coalesce(
+                 ${details.requestedAt ? details.requestedAt.toISOString() : null}::timestamptz,
+                 requested_at)
+         where id = ${registrationId}
+           and deleted_at is null
+      `);
 
-    if (before.length > 0 && before[0].contact_name !== details.contactName) {
-      await flagReissueForChangedFields(
-        await attendeeIdsOf(registrationId),
-        ['registration.contact_name'],
-      );
-    }
+      let readdressed = 0;
+      let withdrawn = 0;
+      let deliveredToOld = 0;
+      if (emailChanged) {
+        await db.execute(sql`
+          update registrations
+             set email_issue = ${newEmail ? (details.emailIssue ?? null) : null},
+                 email_checked_at = ${newEmail && details.emailIssue !== undefined ? sql`now()` : sql`null`},
+                 email_issue_accepted_at = null
+           where id = ${registrationId}
+        `);
+        if (newEmail) {
+          const moved = await db.execute<{ id: string }>(sql`
+            update email_outbox set to_email = ${newEmail}
+             where registration_id = ${registrationId}
+               and status in ('DRAFT', 'QUEUED')
+            returning id
+          `);
+          readdressed = moved.length;
+        } else {
+          // Cleared: a pending message has no address left to go to, and must
+          // not go to the old one the admin just removed.
+          const cancelled = await db.execute<{ id: string }>(sql`
+            update email_outbox set status = 'CANCELLED'
+             where registration_id = ${registrationId}
+               and status in ('DRAFT', 'QUEUED')
+            returning id
+          `);
+          withdrawn = cancelled.length;
+        }
+        const [delivered] = await db.execute<{ n: number }>(sql`
+          select count(*)::int as n from attendees
+           where registration_id = ${registrationId} and deleted_at is null
+             and status = 'CONFIRMED' and ticket_sent_at is not null
+        `);
+        deliveredToOld = delivered?.n ?? 0;
+      }
+
+      if (before.length > 0 && before[0].contact_name !== details.contactName) {
+        await flagReissueForChangedFields(
+          await attendeeIdsOf(registrationId, db),
+          ['registration.contact_name'],
+          db,
+        );
+      }
+      return {
+        emailChanged,
+        readdressed,
+        withdrawn,
+        deliveredToOld,
+        before: before[0]
+          ? { contactName: before[0].contact_name, contactEmail: before[0].contact_email }
+          : null,
+      };
+    });
   } catch (error) {
     rethrowDbError(error);
   }
 }
 
-async function attendeeIdsOf(registrationId: number): Promise<number[]> {
-  const rows = await getDb().execute<{ id: string }>(sql`
+async function attendeeIdsOf(
+  registrationId: number,
+  executor: Executor = getDb(),
+): Promise<number[]> {
+  const rows = await executor.execute<{ id: string }>(sql`
     select id from attendees
      where registration_id = ${registrationId} and deleted_at is null
   `);
@@ -319,12 +426,12 @@ async function attendeeIdsOf(registrationId: number): Promise<number[]> {
 export async function addAttendees(
   registrationId: number,
   seats: NewSeat[],
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<{ confirmed: number; pending: number; waitlisted: number }> {
   if (seats.length === 0) throw new Error('Add at least one seat.');
 
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string; status: string }>(sql`
         select segment_id, status from registrations
          where id = ${registrationId} and deleted_at is null
@@ -369,28 +476,36 @@ export async function addAttendees(
 export async function renameAttendee(
   attendeeId: number,
   fullName: string | null,
-): Promise<void> {
+  options: InTx = {},
+): Promise<{ before: string | null }> {
   const trimmed = (fullName ?? '').trim();
 
   try {
-    await getDb().execute(sql`
-      update attendees a
-         set full_name = coalesce(
-               nullif(${trimmed}, ''),
-               'Guest of ' || r.contact_name),
-             name_source = case
-               when nullif(${trimmed}, '') is null then 'PLACEHOLDER'
-               else 'PROVIDED' end::name_source
-        from registrations r
-       where r.id = a.registration_id
-         and a.id = ${attendeeId}
-         and a.deleted_at is null
-    `);
+    // One transaction: the rename and its reissue flag land together or not at
+    // all, so a name can never change on a delivered ticket unflagged.
+    return await within(options.executor, async (db) => {
+      const [previous] = await db.execute<{ full_name: string }>(sql`
+        select full_name from attendees where id = ${attendeeId} and deleted_at is null for update
+      `);
+      await db.execute(sql`
+        update attendees a
+           set full_name = coalesce(
+                 nullif(${trimmed}, ''),
+                 'Guest of ' || r.contact_name),
+               name_source = case
+                 when nullif(${trimmed}, '') is null then 'PLACEHOLDER'
+                 else 'PROVIDED' end::name_source
+          from registrations r
+         where r.id = a.registration_id
+           and a.id = ${attendeeId}
+           and a.deleted_at is null
+      `);
+      await flagReissueForChangedFields([attendeeId], ['attendee.full_name'], db);
+      return { before: previous?.full_name ?? null };
+    });
   } catch (error) {
     rethrowDbError(error);
   }
-
-  await flagReissueForChangedFields([attendeeId], ['attendee.full_name']);
 }
 
 /**
@@ -402,9 +517,9 @@ export async function renameAttendee(
  * door needs the code to still resolve so it can say "cancelled — refer to
  * desk" rather than "not found" (§7.9, `checkin.md` §12.1).
  */
-export async function removeAttendee(attendeeId: number): Promise<void> {
+export async function removeAttendee(attendeeId: number, options: InTx = {}): Promise<void> {
   try {
-    await getDb().transaction(async (tx) => {
+    await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ registration_id: string }>(sql`
         update attendees
            set status = 'CANCELLED', deleted_at = now()
@@ -456,10 +571,10 @@ export type MoveResult = {
 export async function moveRegistration(
   registrationId: number,
   destinationSegmentId: number,
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<MoveResult> {
   try {
-    const result = await getDb().transaction(async (tx) => {
+    const result = await within(options.executor, async (tx) => {
       const current = await tx.execute<{
         show_id: string;
         segment_id: string;
@@ -529,13 +644,12 @@ export async function moveRegistration(
     });
 
     if (result.showChanged) {
-      await flagReissueForChangedFields(await attendeeIdsOf(registrationId), [
-        'show.name',
-        'show.starts_at',
-        'show.doors_open_at',
-        'show.venue_name',
-        'show.venue_address',
-      ]);
+      const db = options.executor ?? getDb();
+      await flagReissueForChangedFields(
+        await attendeeIdsOf(registrationId, db),
+        ['show.name', 'show.starts_at', 'show.doors_open_at', 'show.venue_name', 'show.venue_address'],
+        db,
+      );
     }
 
     return result;
@@ -578,9 +692,12 @@ export type CancelResult = {
  * entitlement; after it, `unclaimed_base` is zero and the seat lands in the
  * extras pool. Both fall out of the §7.2 formulas.
  */
-export async function cancelRegistration(registrationId: number): Promise<CancelResult> {
+export async function cancelRegistration(
+  registrationId: number,
+  options: InTx = {},
+): Promise<CancelResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string; freed: number }>(sql`
         select r.segment_id,
                (select count(*)::int from attendees a
@@ -685,9 +802,12 @@ export class AdmittedAttendeeError extends Error {
  *
  * @throws AdmittedAttendeeError when a seat holds a live check-in.
  */
-export async function deleteRegistration(registrationId: number): Promise<DeleteResult> {
+export async function deleteRegistration(
+  registrationId: number,
+  options: InTx = {},
+): Promise<DeleteResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ freed: number; admitted: number }>(sql`
         select (select count(*)::int from attendees a
                  where a.registration_id = r.id
@@ -775,10 +895,10 @@ export type RestoreResult = {
  */
 export async function restoreRegistration(
   registrationId: number,
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<RestoreResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string }>(sql`
         select segment_id from registrations
          where id = ${registrationId}

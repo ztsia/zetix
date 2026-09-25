@@ -97,6 +97,15 @@ export type CommandDefinition<F, P> = {
   match: (tx: Tx, ctx: CommandContext<P>, filter: F) => Promise<number[]>;
 
   /**
+   * Working order for hand-ticked ids, which otherwise run in the order they
+   * were ticked. A command whose outcome depends on order — Grant extras
+   * spends a finite pool first come first served (spec/allocation.md §7.4) —
+   * sorts them the way `match` would. Ids it does not recognise must be kept,
+   * so the runner can report them as not found.
+   */
+  order?: (tx: Tx, ctx: CommandContext<P>, ids: number[]) => Promise<number[]>;
+
+  /**
    * The rows behind `ids` **that belong to this concert**, with a skip reason
    * for any that should not run. An id outside the concert, or gone, is simply
    * left out; the runner reports it as not found. `lock` asks for the rows to be

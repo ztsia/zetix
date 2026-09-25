@@ -8,21 +8,13 @@ import { getDb } from '@/db/client';
 import { dbErrorMessage } from '@/db/errors';
 import { writeAuditLog } from '@/lib/audit';
 import { requireRole } from '@/lib/auth/guards';
+import { addressIssue } from '@/lib/email/address';
 import { resolveSetting } from '@/db/settings';
-import {
-  confirmsOverCapacity,
-  OVERSELL_PHRASE,
-} from '@/lib/registrations/confirmation';
+import { confirmsOverCapacity } from '@/lib/registrations/confirmation';
 import {
   addAttendees,
-  AdmittedAttendeeError,
-  cancelRegistration,
   createRegistration,
-  deleteRegistration,
-  moveRegistration,
-  removeAttendee,
   renameAttendee,
-  restoreRegistration,
   updateRegistrationDetails,
   type NewSeat,
 } from '@/lib/registrations/mutations';
@@ -34,7 +26,12 @@ import {
 } from './queries';
 
 /**
- * Manual registration CRUD (spec/allocation.md §7.6, spec/admin.md §14.1).
+ * Manual registration CRUD (spec/allocation.md §7.6, spec/admin.md §14.1):
+ * create, edit details, add seats, rename a seat.
+ *
+ * Moving, cancelling, restoring and deleting are V3 commands now
+ * (`src/lib/audience/commands/`, spec/v3.md §23.2), run from the Audience
+ * workspace through the one command runner.
  *
  * The behaviour lives in `src/lib/registrations/mutations.ts`; these actions
  * are the boundary around it — validate, check the id belongs to this concert,
@@ -103,6 +100,7 @@ const ok = (message?: string): FormState => ({ error: null, message: message ?? 
 const fail = (error: string): FormState => ({ error, message: null });
 
 function refresh(concertId: number): void {
+  revalidatePath(`/admin/concerts/${concertId}/audience`, 'layout');
   revalidatePath(`/admin/concerts/${concertId}/registrations`);
   revalidatePath(`/admin/concerts/${concertId}/extras-review`);
   revalidatePath(`/admin/concerts/${concertId}/overview`);
@@ -297,7 +295,7 @@ export async function updateRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireRole('ADMIN');
+  const admin = await requireRole('ADMIN');
 
   const parsed = detailsSchema.safeParse({
     contactName: formData.get('contactName') ?? '',
@@ -315,12 +313,51 @@ export async function updateRegistrationAction(
 
   try {
     const timeZone = await concertTimeZone(concertId);
-    await updateRegistrationDetails(registrationId, {
+    // The §24.6 checks run before the transaction: the MX lookup is a network
+    // call and must not hold a row lock while DNS answers.
+    const emailIssue = parsed.data.contactEmail ? await addressIssue(parsed.data.contactEmail) : null;
+    const result = await updateRegistrationDetails(registrationId, {
       ...parsed.data,
       requestedAt: toInstant(parsed.data.requestedAt, timeZone),
+      emailIssue,
+    });
+    // The record's Activity (spec/v3.md §22.4). The email edit re-addresses
+    // pending mail, so it is the one edit that must never go unrecorded.
+    await writeAuditLog({
+      action: 'registration.updated',
+      entityType: 'registration',
+      entityId: registrationId,
+      before: result.before,
+      after: {
+        contactName: parsed.data.contactName,
+        contactEmail: parsed.data.contactEmail,
+        ...(result.emailChanged
+          ? { emailIssue, readdressed: result.readdressed, withdrawn: result.withdrawn }
+          : {}),
+      },
+      actorId: admin.id,
     });
     refresh(concertId);
-    return ok('Saved.');
+    if (!result.emailChanged) return ok('Saved.');
+    return ok(
+      [
+        'Saved.',
+        emailIssue ? `The new address looks wrong: ${emailIssue}` : null,
+        result.withdrawn > 0
+          ? `${result.withdrawn} message${result.withdrawn === 1 ? '' : 's'} waiting to be sent ${result.withdrawn === 1 ? 'was' : 'were'} withdrawn: the party has no address now.`
+          : null,
+        result.readdressed > 0
+          ? `${result.readdressed} message${result.readdressed === 1 ? '' : 's'} waiting to be sent will go to the new address.`
+          : null,
+        // §22.4's question. Sending is the send wizard's; until then the
+        // Email screen resends.
+        result.deliveredToOld > 0
+          ? `Tickets were sent to the old address. Resend them to the new one from the Email screen.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
   } catch (error) {
     return fail(dbErrorMessage(error));
   }
@@ -397,7 +434,7 @@ export async function renameAttendeeAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireRole('ADMIN');
+  const admin = await requireRole('ADMIN');
 
   const parsed = z
     .object({ fullName: z.preprocess(blankToNull, z.string().trim().max(200).nullable()) })
@@ -409,210 +446,17 @@ export async function renameAttendeeAction(
   }
 
   try {
-    await renameAttendee(attendeeId, parsed.data.fullName);
-    refresh(concertId);
-    return ok('Renamed.');
-  } catch (error) {
-    return fail(dbErrorMessage(error));
-  }
-}
-
-export async function removeAttendeeAction(
-  concertId: number,
-  attendeeId: number,
-): Promise<FormState> {
-  const admin = await requireRole('ADMIN');
-
-  if (!(await attendeeInConcert(concertId, attendeeId))) {
-    return fail('That seat does not belong to this concert.');
-  }
-
-  try {
-    await removeAttendee(attendeeId);
+    const result = await renameAttendee(attendeeId, parsed.data.fullName);
     await writeAuditLog({
-      action: 'attendee.removed',
+      action: 'attendee.renamed',
       entityType: 'attendee',
       entityId: attendeeId,
+      before: { fullName: result.before },
+      after: { fullName: parsed.data.fullName },
       actorId: admin.id,
     });
     refresh(concertId);
-    return ok('Seat removed.');
-  } catch (error) {
-    return fail(dbErrorMessage(error));
-  }
-}
-
-const moveSchema = z.object({
-  segmentId: z.coerce.number().int().positive('Choose a destination.'),
-  overrideConfirmation: z.string().trim().max(100),
-});
-
-export async function moveRegistrationAction(
-  concertId: number,
-  registrationId: number,
-  _prev: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const admin = await requireRole('ADMIN');
-
-  const parsed = moveSchema.safeParse({
-    segmentId: formData.get('segmentId') ?? '',
-    overrideConfirmation: formData.get('overrideConfirmation') ?? '',
-  });
-  if (!parsed.success) return fail(parsed.error.issues[0].message);
-  const override = confirmsOverCapacity(parsed.data.overrideConfirmation);
-
-  if (!(await registrationInConcert(concertId, registrationId))) {
-    return fail('That registration does not belong to this concert.');
-  }
-  if (!(await segmentInConcert(concertId, parsed.data.segmentId))) {
-    return fail('That segment does not belong to this concert.');
-  }
-
-  try {
-    const result = await moveRegistration(registrationId, parsed.data.segmentId, {
-      override,
-    });
-
-    await writeAuditLog({
-      action: override ? 'registration.moved_over_capacity' : 'registration.moved',
-      entityType: 'registration',
-      entityId: registrationId,
-      after: { segmentId: parsed.data.segmentId, seats: result.movedSeats },
-      reason: override
-        ? `Moved into a segment with no room. Confirmation typed: "${parsed.data.overrideConfirmation}".`
-        : null,
-      actorId: admin.id,
-    });
-
-    refresh(concertId);
-    return ok(
-      result.showChanged
-        ? `Moved with ${result.movedSeats} seat${result.movedSeats === 1 ? '' : 's'}. Delivered tickets for another show are flagged for reissue.`
-        : `Moved with ${result.movedSeats} seat${result.movedSeats === 1 ? '' : 's'}.`,
-    );
-  } catch (error) {
-    return fail(dbErrorMessage(error));
-  }
-}
-
-export async function cancelRegistrationAction(
-  concertId: number,
-  registrationId: number,
-): Promise<FormState> {
-  const admin = await requireRole('ADMIN');
-
-  if (!(await registrationInConcert(concertId, registrationId))) {
-    return fail('That registration does not belong to this concert.');
-  }
-
-  try {
-    const result = await cancelRegistration(registrationId);
-    await writeAuditLog({
-      action: 'registration.cancelled',
-      entityType: 'registration',
-      entityId: registrationId,
-      after: result,
-      actorId: admin.id,
-    });
-    refresh(concertId);
-
-    // §7.9's line, verbatim in shape: "N seats freed, M waiting".
-    return ok(
-      `${result.seatsFreed} seat${result.seatsFreed === 1 ? '' : 's'} freed, ` +
-        `${result.seatsWaiting} waiting.` +
-        (result.outboxCancelled > 0
-          ? ` ${result.outboxCancelled} queued email${result.outboxCancelled === 1 ? '' : 's'} withdrawn.`
-          : ''),
-    );
-  } catch (error) {
-    return fail(dbErrorMessage(error));
-  }
-}
-
-/**
- * Delete a registration outright (§7.6).
- *
- * Distinct from {@link cancelRegistrationAction} on purpose: cancelling says a
- * real booking is not coming and keeps the record, deleting says the row
- * should never have existed. The audit entry carries the party it removed, so
- * a soft-deleted registration can still be identified afterwards from the log
- * alone — nothing in the admin UI lists deleted rows.
- */
-export async function deleteRegistrationAction(
-  concertId: number,
-  registrationId: number,
-): Promise<FormState> {
-  const admin = await requireRole('ADMIN');
-
-  if (!(await registrationInConcert(concertId, registrationId))) {
-    return fail('That registration does not belong to this concert.');
-  }
-
-  try {
-    const result = await deleteRegistration(registrationId);
-    await writeAuditLog({
-      action: 'registration.deleted',
-      entityType: 'registration',
-      entityId: registrationId,
-      after: result,
-      actorId: admin.id,
-    });
-    refresh(concertId);
-
-    return ok(
-      `Registration deleted. ${result.seatsFreed} seat${result.seatsFreed === 1 ? '' : 's'} freed.` +
-        (result.outboxCancelled > 0
-          ? ` ${result.outboxCancelled} queued email${result.outboxCancelled === 1 ? '' : 's'} withdrawn.`
-          : ''),
-    );
-  } catch (error) {
-    // The guard's own sentence names how many are already inside, and the
-    // dialog renders it verbatim as every other guard's message is.
-    if (error instanceof AdmittedAttendeeError) return fail(error.message);
-    return fail(dbErrorMessage(error));
-  }
-}
-
-export async function restoreRegistrationAction(
-  concertId: number,
-  registrationId: number,
-  options: { override?: boolean } = {},
-): Promise<FormState> {
-  const admin = await requireRole('ADMIN');
-
-  if (!(await registrationInConcert(concertId, registrationId))) {
-    return fail('That registration does not belong to this concert.');
-  }
-
-  try {
-    const result = await restoreRegistration(registrationId, options);
-    await writeAuditLog({
-      action: options.override ? 'registration.restored_over_capacity' : 'registration.restored',
-      entityType: 'registration',
-      entityId: registrationId,
-      after: result,
-      reason: options.override ? 'Restored past the ceiling deliberately.' : null,
-      actorId: admin.id,
-    });
-    refresh(concertId);
-
-    if (result.refused) {
-      // Not a failure: the booking is back, the seats are not. The database's
-      // sentence explains which ceiling was in the way.
-      return ok(
-        `Restored, but the room has gone — ${result.waitlisted} seat${result.waitlisted === 1 ? ' is' : 's are'} waiting. ${result.refused}`,
-      );
-    }
-    return ok(
-      [
-        result.confirmed > 0 ? `${result.confirmed} seat${result.confirmed === 1 ? '' : 's'} confirmed` : null,
-        result.pending > 0 ? `${result.pending} back under review` : null,
-        result.waitlisted > 0 ? `${result.waitlisted} waiting` : null,
-      ]
-        .filter(Boolean)
-        .join(', ') || 'Restored.',
-    );
+    return ok('Renamed.');
   } catch (error) {
     return fail(dbErrorMessage(error));
   }

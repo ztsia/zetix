@@ -5,7 +5,7 @@ import { parseTableState } from '@/components/data-table/url-state';
 import { listTrash, trashKindSchema } from '@/lib/trash/queries';
 import { getConcertHeader } from '../shows/queries';
 import { TrashTable } from './trash-table';
-import { maskForRole } from '@/lib/auth/mask';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Trash' };
 
@@ -39,6 +39,7 @@ export default async function TrashPage({
     search: state.search,
     pageIndex: state.pageIndex,
     pageSize: state.pageSize,
+    labelOnly: masksContacts(user.role),
   });
 
   return (

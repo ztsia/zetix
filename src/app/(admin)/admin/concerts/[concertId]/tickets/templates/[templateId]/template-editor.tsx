@@ -437,15 +437,18 @@ export function TemplateEditor({
                 <QrCode />
                 QR
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={working}
-                onClick={() => imageRef.current?.click()}
-              >
-                <ImageIcon />
-                Image
-              </Button>
+              {/* Uploads are writes; a viewer is refused by the route (spec/v3.md §28). */}
+              <AdminOnly>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={working}
+                  onClick={() => imageRef.current?.click()}
+                >
+                  <ImageIcon />
+                  Image
+                </Button>
+              </AdminOnly>
               <Button variant="outline" size="sm" onClick={() => addElement({ type: 'RECT' })}>
                 <Square />
                 Shape
@@ -565,6 +568,7 @@ export function TemplateEditor({
                   </AlertDescription>
                 </Alert>
               )}
+              <AdminOnly>
               <ButtonGroup>
                 <Button
                   variant="outline"
@@ -586,6 +590,7 @@ export function TemplateEditor({
                   </Button>
                 )}
               </ButtonGroup>
+              </AdminOnly>
               <FieldDescription>
                 PNG, JPEG or a PDF whose page 1 is the ticket, up to{' '}
                 {formatBytes(MAX_ASSET_BYTES)}. Artwork above that has to be exported smaller —

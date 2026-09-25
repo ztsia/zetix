@@ -7,6 +7,7 @@ import { requireRole } from '@/lib/auth/guards';
 import { previewOptions, previewTicketData } from '@/lib/tickets/preview';
 import { loadTemplate, previewShows } from '@/lib/tickets/templates';
 import { TemplateEditor } from './template-editor';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Edit ticket template' };
 
@@ -31,7 +32,7 @@ export default async function TemplateEditorPage({
   params: Promise<{ concertId: string; templateId: string }>;
   searchParams: Promise<{ show?: string; saved?: string }>;
 }) {
-  await requireRole('ADMIN', 'VIEWER');
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcert, templateId: rawTemplate } = await params;
   const concertId = Number(rawConcert);
@@ -55,8 +56,17 @@ export default async function TemplateEditorPage({
    * laid out before the hall is booked. The preview then falls back to sample
    * data, and the PDF preview says why it cannot run.
    */
-  const options = showId ? await previewOptions(concertId, showId) : [];
-  const data = showId
+  const allOptions = showId ? await previewOptions(concertId, showId) : [];
+  /**
+   * **A viewer previews the sample attendee only** (spec/v3.md §28). The
+   * designer draws a real attendee's QR, and a QR is that attendee's ticket:
+   * masking the token after loading it would still leave a scannable code for
+   * whatever the canvas drew from it. So a viewer is never offered a real one.
+   */
+  const options = masksContacts(user.role)
+    ? allOptions.filter((option) => option.subject === 'SAMPLE')
+    : allOptions;
+  const loaded = showId
     ? await previewTicketData({
         concertId,
         showId,
@@ -64,6 +74,7 @@ export default async function TemplateEditorPage({
         attendeeId: options[0]?.attendeeId ?? null,
       })
     : null;
+  const data = maskForRole(user.role, loaded);
 
   return (
     <div className="flex flex-col gap-4">
@@ -93,7 +104,7 @@ export default async function TemplateEditorPage({
           template={template}
           shows={shows}
           showId={showId}
-          previewOptions={options}
+          previewOptions={maskForRole(user.role, options)}
           previewData={data}
           // Bounded: it is reflected into an alert, and it arrives in a URL
           // anyone can hand an admin.

@@ -5,7 +5,7 @@ import { parseTableState } from '@/components/data-table/url-state';
 import { listActivity, listRuns } from '@/lib/activity/queries';
 import { getConcertHeader } from '../shows/queries';
 import { ActivityView } from './activity-view';
-import { maskForRole } from '@/lib/auth/mask';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Activity' };
 
@@ -45,6 +45,7 @@ export default async function ActivityPage({
           runId: Number.isInteger(runId) && runId > 0 ? runId : null,
           pageIndex: state.pageIndex,
           pageSize: state.pageSize,
+          withoutReason: masksContacts(user.role),
         })
       : null,
     tab === 'runs' ? listRuns(concertId, { pageIndex: state.pageIndex, pageSize: state.pageSize }) : null,

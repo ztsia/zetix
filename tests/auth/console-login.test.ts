@@ -147,6 +147,21 @@ describe('signInConsole', () => {
     expect(await attempt('mei@example.test', 'viewer-pass')).toMatch(/Too many attempts/);
   });
 
+  it('does not spread one locked account to everyone on its IP', async () => {
+    // Lock ana's account from elsewhere, then let her retry from the office
+    // until well past the threshold. Those retries are refused without
+    // reaching Supabase, so they must not also charge the office IP.
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      ip = `203.0.113.${i + 1}`;
+      await attempt('ana@example.test', `guess-${i}`);
+    }
+    ip = '192.0.2.50';
+    for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
+      expect(await attempt('ana@example.test', 'admin-pass')).toMatch(/Too many attempts/);
+    }
+    expect(await attempt('mei@example.test', 'viewer-pass')).toBe('redirect:/admin');
+  });
+
   it('says "locked out" on the attempt that causes it', async () => {
     for (let i = 0; i < MAX_ATTEMPTS - 1; i++) {
       expect(await attempt('ana@example.test', 'nope')).toMatch(/not recognised/);

@@ -217,6 +217,23 @@ describe('the create dialog’s parent list', () => {
   });
 });
 
+describe('a viewer’s response search (spec/v3.md §28)', () => {
+  it('matches the response number only, never an answer', async () => {
+    const { publicSegment } = await scenario();
+    const formId = await insertForm({ kind: 'PUBLIC', segmentId: publicSegment });
+    const schema = blankFormSchema('PUBLIC');
+    const id = await insertResponse({ formId, schema, raw: publicPayload('Ada', 'ada.hidden@x.test', ['Bo']) });
+    const search = (q: string, idOnly: boolean) =>
+      getResponses(formId, { pageIndex: 0, pageSize: 25, sort: 'identityKey', desc: false, search: q, idOnly });
+
+    expect((await search('ada.hidden', false)).rowCount).toBe(1);
+    // Every answer is what a viewer sees masked; a match on it is an oracle.
+    expect((await search('ada.hidden', true)).rowCount).toBe(0);
+    expect((await search('Ada', true)).rowCount).toBe(0);
+    expect((await search(String(id), true)).rowCount).toBe(1);
+  });
+});
+
 describe('reading a response through its pinned schema', () => {
   it('finds the registrant’s details whatever the block is called', async () => {
     const { publicSegment } = await scenario();

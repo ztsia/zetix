@@ -87,8 +87,11 @@ refuses a non-local hostname outright (`docs/local.md` §6.1).
   commands and exports call `requireRole('ADMIN')`; pages and reads call `requireRole('ADMIN', 'VIEWER')`
   and pass what they hand the browser through `maskForRole()` (`src/lib/auth/mask.ts`). Hide mutating
   controls with `<AdminOnly>` / `useCanEdit()` (`src/components/auth/role.tsx`); `ActionDialog`,
-  `DeleteButton`, `CommandDialog` and the `DataTable` export already do. `tests/auth/viewer-denial.test.ts`
-  calls every Server Action as a viewer and fails on any that lets one through.
+  `DeleteButton`, `CommandDialog` and the `DataTable` export already do. A server-side search a viewer
+  can run must not match a column they see masked — a hit-or-miss answer spells the value out a
+  character at a time. `tests/auth/viewer-denial.test.ts`, `viewer-routes.test.ts` and
+  `viewer-pages.test.ts` call every action, every `/api` route and every page as a viewer; add a new
+  page to the last one's list.
 
 ## Scope: V1 ships this concert
 

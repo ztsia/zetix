@@ -30,6 +30,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { getSql } from '../src/db/client';
 import { appUsers } from '../src/db/schema/people';
+import { accountBucket } from '../src/lib/auth/account-bucket';
 import { createSupabaseAdminClient } from '../src/lib/supabase/admin';
 
 /** Long enough that a leaked password cannot be brute-forced before it is rotated. */
@@ -130,6 +131,11 @@ async function main() {
       .where(eq(appUsers.id, userId));
     console.log('app_users row already present — confirmed ADMIN and active');
   }
+
+  // A restored admin must be able to sign in straight away, so the account's
+  // login lockout goes too (spec/v3.md §28).
+  await sql`delete from auth_failures where bucket = ${accountBucket(email)}`;
+  console.log('Cleared any login lockout on the account');
 
   await sql.end();
   console.log(`\nDone. Sign in at /login with ${email} and that password.`);

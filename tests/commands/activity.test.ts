@@ -57,3 +57,17 @@ describe('listRuns', () => {
     expect(result.rows.map((row) => row.command)).toEqual(['a']);
   });
 });
+
+describe('a viewer’s search (spec/v3.md §28)', () => {
+  it('never matches the free-text reason, which can hold an address', async () => {
+    await sql`insert into audit_log (action, entity_type, entity_id, concert_id, reason) values
+      ('registration.updated', 'registration', '7', ${concertId}, 'asked by farah@example.test')`;
+    // A match on the unmasked reason is an oracle: one guess shows the row,
+    // the next does not, and the address falls out a character at a time.
+    expect((await listActivity(concertId, { ...page, search: 'farah@' })).total).toBe(1);
+    expect((await listActivity(concertId, { ...page, search: 'farah@', withoutReason: true })).total).toBe(0);
+    // What a viewer can see is still searchable.
+    expect((await listActivity(concertId, { ...page, search: 'updated', withoutReason: true })).total).toBe(1);
+    expect((await listActivity(concertId, { ...page, search: '7', withoutReason: true })).total).toBe(1);
+  });
+});

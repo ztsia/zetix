@@ -34,8 +34,16 @@ const displayNameSchema = z
   .trim()
   .min(1, 'Give the account a name — it is what the Activity log shows.')
   .max(120, 'That name is too long.');
-const emailSchema = z.string().trim().min(1, 'Enter an email address.').email('Enter a valid email address.');
-const roleSchema = z.enum(CONSOLE_ROLES as [string, ...string[]]).transform((r) => r as 'ADMIN' | 'VIEWER');
+const emailSchema = z
+  .string()
+  .trim()
+  .min(1, 'Enter an email address.')
+  // RFC 5321's limit on a whole address — a protocol bound, not an operational value.
+  .max(254, 'That email address is too long.')
+  .email('Enter a valid email address.');
+const roleSchema = z
+  .enum(CONSOLE_ROLES as [string, ...string[]], { error: 'Choose Admin or Viewer.' })
+  .transform((r) => r as 'ADMIN' | 'VIEWER');
 const userIdSchema = z.string().uuid('Malformed request.');
 
 function authAdmin() {

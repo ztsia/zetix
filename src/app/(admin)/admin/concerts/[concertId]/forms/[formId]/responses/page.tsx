@@ -7,7 +7,7 @@ import { getForm, getResponses, isResponseSortKey } from '../../queries';
 import { ResponsesTable } from './responses-table';
 import { responseRow } from './rows';
 import { SchemaExportButton } from './schema-export-button';
-import { maskForRole } from '@/lib/auth/mask';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 import { requireRole } from '@/lib/auth/guards';
 import { AdminOnly } from '@/components/auth/role';
 
@@ -54,6 +54,7 @@ export default async function ResponsesPage({
     sort,
     desc,
     search,
+    idOnly: masksContacts(user.role),
   });
 
   const basePath = `/admin/concerts/${concertId}/forms/${formId}/responses`;

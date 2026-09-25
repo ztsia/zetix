@@ -8,6 +8,7 @@ import { showSegments, shows } from '@/db/schema/shows';
 import { requireRole } from '@/lib/auth/guards';
 import { parseTicketFilters, ticketWhere, type TicketQuery } from './filters';
 import { TicketsTable, type TicketRow } from './tickets-table';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Tickets' };
 
@@ -46,7 +47,7 @@ export default async function TicketsPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Search>;
 }) {
-  await requireRole('ADMIN', 'VIEWER');
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcertId } = await params;
   const concertId = Number(rawConcertId);
@@ -174,7 +175,7 @@ export default async function TicketsPage({
       shows={concertShows}
       segments={concertSegments}
       filters={filters}
-      rows={data}
+      rows={maskForRole(user.role, data)}
       rowCount={tally?.n ?? 0}
       needsReissueCount={pending?.n ?? 0}
       pageIndex={pageIndex}

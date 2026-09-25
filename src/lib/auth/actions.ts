@@ -61,8 +61,8 @@ const CONSOLE_ROLES = new Set(['ADMIN', 'VIEWER']);
  * password (spec/v3.md §28, replacing V1's code-only shared account).
  *
  * **Throttled per IP and per account** — two buckets, both checked before
- * Supabase is touched, both charged with every failure, both cleared by a
- * success. Either one being locked refuses the attempt: the IP bucket stops one
+ * Supabase is touched, both charged with every wrong password, both cleared by
+ * a success; an attempt refused for a lockout charges only the locked one. Either one being locked refuses the attempt: the IP bucket stops one
  * caller guessing many accounts, the account bucket stops many callers guessing
  * one (`rate-limit.ts`, `accountBucket`).
  */
@@ -105,7 +105,12 @@ export async function signInConsole(
   }
 
   if (verdicts.some((v) => !v.allowed)) {
-    const extended = await Promise.all(buckets.map(registerFailure));
+    // Only the locked bucket is charged. The attempt never reaches Supabase,
+    // so it guesses nothing — and charging the IP too would let one locked
+    // account spread: its owner retrying from the office would lock every
+    // colleague on that IP out as well.
+    const locked = buckets.filter((_, i) => !verdicts[i]!.allowed);
+    const extended = await Promise.all(locked.map(registerFailure));
     return { error: lockoutMessage(longestLockout([...verdicts, ...extended])) };
   }
 

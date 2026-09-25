@@ -2,6 +2,7 @@ import 'server-only';
 
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import type { Executor } from '@/db/allocation';
 import { rethrowDbError } from '@/db/errors';
 import { bindingsUsed, parseLayout, type Binding } from './layout';
 import { mintIdentifiers } from './mint';
@@ -214,10 +215,12 @@ async function showsInScope(scope: IssueScope): Promise<number[]> {
 export async function flagReissueForChangedFields(
   attendeeIds: number[],
   changedFields: Binding[],
+  /** The caller's transaction, when the edit that changed the field is in one. */
+  executor: Executor = getDb(),
 ): Promise<number> {
   if (attendeeIds.length === 0 || changedFields.length === 0) return 0;
 
-  const db = getDb();
+  const db = executor;
 
   // Which of those fields each attendee's own pinned template actually prints.
   // A concert whose template never shows `player.instrument` should not raise a

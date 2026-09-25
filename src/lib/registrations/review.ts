@@ -49,7 +49,8 @@ export type ReviewQueue = {
 /**
  * Everything the review screen renders, for one segment.
  *
- * Ordered by `requested_at`, then id — the FCFS key of §7.4, never
+ * Ordered by each pending seat's `attendees.requested_at` (spec/v3.md §21.3), then id —
+ * the FCFS key of §7.4, never
  * `created_at`. An import run a week after the form closed must preserve the
  * order people actually asked in, and with two registration rounds that matters
  * more, not less.
@@ -86,7 +87,11 @@ export async function loadReviewQueue(segmentId: number): Promise<ReviewQueue> {
       guest_names: string[];
     }>(sql`
       select r.id,
-             r.requested_at,
+             -- The walk orders by each seat's own request time (spec/v3.md
+             -- §21.3), so a seat merged in later cannot jump the queue on its
+             -- party's earlier timestamp. A party is placed by its earliest
+             -- seat still waiting for review.
+             min(a.requested_at) filter (where a.status = 'PENDING_REVIEW') as requested_at,
              r.round_label,
              p.full_name as player_name,
              r.contact_name,
@@ -107,7 +112,7 @@ export async function loadReviewQueue(segmentId: number): Promise<ReviewQueue> {
          and r.status <> 'CANCELLED'
        group by r.id, p.full_name
       having count(*) filter (where a.status = 'PENDING_REVIEW') > 0
-       order by r.requested_at, r.id
+       order by 2, r.id
     `);
 
     const requests: ReviewRequest[] = rows.map((row) => ({

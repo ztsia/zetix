@@ -2,6 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
+import type { Tx } from '@/db/tx';
 import {
   claimSeats,
   lockShowForClaim,
@@ -43,6 +44,23 @@ export type Override = {
   /** True once the admin has typed the confirmation (§7.5, §7.6). */
   override?: boolean;
 };
+
+export type { Tx };
+
+/**
+ * Where a mutation runs: the caller's transaction, or its own.
+ *
+ * V3's commands (spec/v3.md §23.1) work one row per transaction the runner
+ * opens, so every mutation here can join that transaction instead of opening a
+ * second one — which on the `max: 1` pool would wait for the connection the
+ * runner's transaction holds and deadlock against it. A Server Action that
+ * calls a mutation on its own still gets a transaction of its own.
+ */
+export type InTx = { executor?: Tx };
+
+function within<T>(executor: Tx | undefined, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return executor ? fn(executor) : getDb().transaction(fn);
+}
 
 export type NewSeat = {
   fullName?: string | null;
@@ -171,13 +189,14 @@ export async function recomputeStatus(tx: Executor, registrationId: number): Pro
  */
 export async function createRegistration(
   input: CreateRegistrationInput,
+  options: InTx = {},
 ): Promise<CreateRegistrationResult> {
   if (input.seats.length === 0) {
     throw new Error('A registration needs at least one seat.');
   }
 
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const { showId } = await segmentContext(tx, input.segmentId);
 
       /**
@@ -200,7 +219,7 @@ export async function createRegistration(
         insert into registrations (
           show_id, segment_id, round_label, player_id, source,
           contact_name, contact_email, contact_phone, status, requested_at,
-          created_by
+          created_by, approved_at, approved_by
         ) values (
           ${showId}, ${input.segmentId}, ${input.roundLabel ?? null},
           ${input.playerId ?? null}, 'ADMIN',
@@ -213,7 +232,10 @@ export async function createRegistration(
           -- party recorded as confirmed with no seats.
           'WAITLIST',
           ${(input.requestedAt ?? new Date()).toISOString()}::timestamptz,
-          ${input.createdBy ?? null}
+          ${input.createdBy ?? null},
+          -- Admin-created parties are approved on creation (spec/v3.md §25.4):
+          -- the person entering them is the reviewer.
+          now(), ${input.createdBy ?? null}
         )
         returning id
       `);
@@ -266,13 +288,15 @@ export type RegistrationDetails = {
 export async function updateRegistrationDetails(
   registrationId: number,
   details: RegistrationDetails,
+  options: InTx = {},
 ): Promise<void> {
+  const db = options.executor ?? getDb();
   try {
-    const before = await getDb().execute<{ contact_name: string }>(sql`
+    const before = await db.execute<{ contact_name: string }>(sql`
       select contact_name from registrations where id = ${registrationId}
     `);
 
-    await getDb().execute(sql`
+    await db.execute(sql`
       update registrations
          set contact_name  = ${details.contactName},
              contact_email = ${details.contactEmail ?? null},
@@ -288,8 +312,9 @@ export async function updateRegistrationDetails(
 
     if (before.length > 0 && before[0].contact_name !== details.contactName) {
       await flagReissueForChangedFields(
-        await attendeeIdsOf(registrationId),
+        await attendeeIdsOf(registrationId, db),
         ['registration.contact_name'],
+        db,
       );
     }
   } catch (error) {
@@ -297,8 +322,11 @@ export async function updateRegistrationDetails(
   }
 }
 
-async function attendeeIdsOf(registrationId: number): Promise<number[]> {
-  const rows = await getDb().execute<{ id: string }>(sql`
+async function attendeeIdsOf(
+  registrationId: number,
+  executor: Executor = getDb(),
+): Promise<number[]> {
+  const rows = await executor.execute<{ id: string }>(sql`
     select id from attendees
      where registration_id = ${registrationId} and deleted_at is null
   `);
@@ -319,12 +347,12 @@ async function attendeeIdsOf(registrationId: number): Promise<number[]> {
 export async function addAttendees(
   registrationId: number,
   seats: NewSeat[],
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<{ confirmed: number; pending: number; waitlisted: number }> {
   if (seats.length === 0) throw new Error('Add at least one seat.');
 
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string; status: string }>(sql`
         select segment_id, status from registrations
          where id = ${registrationId} and deleted_at is null
@@ -369,11 +397,13 @@ export async function addAttendees(
 export async function renameAttendee(
   attendeeId: number,
   fullName: string | null,
+  options: InTx = {},
 ): Promise<void> {
   const trimmed = (fullName ?? '').trim();
+  const db = options.executor ?? getDb();
 
   try {
-    await getDb().execute(sql`
+    await db.execute(sql`
       update attendees a
          set full_name = coalesce(
                nullif(${trimmed}, ''),
@@ -390,7 +420,7 @@ export async function renameAttendee(
     rethrowDbError(error);
   }
 
-  await flagReissueForChangedFields([attendeeId], ['attendee.full_name']);
+  await flagReissueForChangedFields([attendeeId], ['attendee.full_name'], db);
 }
 
 /**
@@ -402,9 +432,9 @@ export async function renameAttendee(
  * door needs the code to still resolve so it can say "cancelled — refer to
  * desk" rather than "not found" (§7.9, `checkin.md` §12.1).
  */
-export async function removeAttendee(attendeeId: number): Promise<void> {
+export async function removeAttendee(attendeeId: number, options: InTx = {}): Promise<void> {
   try {
-    await getDb().transaction(async (tx) => {
+    await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ registration_id: string }>(sql`
         update attendees
            set status = 'CANCELLED', deleted_at = now()
@@ -456,10 +486,10 @@ export type MoveResult = {
 export async function moveRegistration(
   registrationId: number,
   destinationSegmentId: number,
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<MoveResult> {
   try {
-    const result = await getDb().transaction(async (tx) => {
+    const result = await within(options.executor, async (tx) => {
       const current = await tx.execute<{
         show_id: string;
         segment_id: string;
@@ -529,13 +559,12 @@ export async function moveRegistration(
     });
 
     if (result.showChanged) {
-      await flagReissueForChangedFields(await attendeeIdsOf(registrationId), [
-        'show.name',
-        'show.starts_at',
-        'show.doors_open_at',
-        'show.venue_name',
-        'show.venue_address',
-      ]);
+      const db = options.executor ?? getDb();
+      await flagReissueForChangedFields(
+        await attendeeIdsOf(registrationId, db),
+        ['show.name', 'show.starts_at', 'show.doors_open_at', 'show.venue_name', 'show.venue_address'],
+        db,
+      );
     }
 
     return result;
@@ -578,9 +607,12 @@ export type CancelResult = {
  * entitlement; after it, `unclaimed_base` is zero and the seat lands in the
  * extras pool. Both fall out of the §7.2 formulas.
  */
-export async function cancelRegistration(registrationId: number): Promise<CancelResult> {
+export async function cancelRegistration(
+  registrationId: number,
+  options: InTx = {},
+): Promise<CancelResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string; freed: number }>(sql`
         select r.segment_id,
                (select count(*)::int from attendees a
@@ -685,9 +717,12 @@ export class AdmittedAttendeeError extends Error {
  *
  * @throws AdmittedAttendeeError when a seat holds a live check-in.
  */
-export async function deleteRegistration(registrationId: number): Promise<DeleteResult> {
+export async function deleteRegistration(
+  registrationId: number,
+  options: InTx = {},
+): Promise<DeleteResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ freed: number; admitted: number }>(sql`
         select (select count(*)::int from attendees a
                  where a.registration_id = r.id
@@ -775,10 +810,10 @@ export type RestoreResult = {
  */
 export async function restoreRegistration(
   registrationId: number,
-  options: Override = {},
+  options: Override & InTx = {},
 ): Promise<RestoreResult> {
   try {
-    return await getDb().transaction(async (tx) => {
+    return await within(options.executor, async (tx) => {
       const rows = await tx.execute<{ segment_id: string }>(sql`
         select segment_id from registrations
          where id = ${registrationId}

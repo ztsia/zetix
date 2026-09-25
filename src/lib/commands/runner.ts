@@ -128,7 +128,8 @@ async function resolveTargets(
     const matched = await def.match(tx, ctx, selection.filter);
     return matched.filter((id) => !excluded.has(id));
   }
-  return Array.from(new Set(selection.ids));
+  const ids = Array.from(new Set(selection.ids));
+  return def.order ? def.order(tx, ctx, ids) : ids;
 }
 
 const NOT_FOUND = 'No longer exists in this concert.';

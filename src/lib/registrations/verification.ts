@@ -75,8 +75,16 @@ export async function queueVerificationEmail(
     token: string;
     concertName: string;
     showName: string;
+    /**
+     * `DRAFT` on submit (decision 23, below). The Audience workspace's *Send
+     * verification reminder* (spec/v3.md §23.2) queues it directly: that command
+     * previews every recipient before it runs, which is the human review
+     * decision 23 asks for, and a reminder that then waited for a second
+     * confirmation elsewhere would not be a reminder.
+     */
+    status?: 'DRAFT' | 'QUEUED';
   },
-): Promise<void> {
+): Promise<boolean> {
   const templates = await tx.execute<{ subject: string; body_md: string }>(sql`
     select subject, body_md from email_templates where key = 'public_verify'
   `);
@@ -92,7 +100,7 @@ export async function queueVerificationEmail(
     console.error(
       `no "public_verify" email template: registration ${input.registrationId} has a verification token but no message was drafted`,
     );
-    return;
+    return false;
   }
 
   const context = escapeMergeValues({
@@ -111,7 +119,7 @@ export async function queueVerificationEmail(
    * `(registration_id, purpose)` where the row is still pending
    * (`email.md` §11.4). A double-submitted form must not draft two links.
    */
-  await tx.execute(sql`
+  const inserted = await tx.execute<{ id: string }>(sql`
     insert into email_outbox (
       registration_id, purpose, template_key, to_email, to_name, subject, body_md, context,
       status
@@ -119,10 +127,12 @@ export async function queueVerificationEmail(
       ${input.registrationId}::bigint, 'VERIFICATION', 'public_verify',
       ${input.contactEmail}, ${input.contactName},
       ${subject.text}, ${body.text},
-      ${JSON.stringify(context)}::text::jsonb, 'DRAFT'
+      ${JSON.stringify(context)}::text::jsonb, ${input.status ?? 'DRAFT'}::outbox_status
     )
     on conflict do nothing
+    returning id
   `);
+  return inserted.length > 0;
 }
 
 export type VerifyOutcome =

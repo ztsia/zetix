@@ -71,6 +71,13 @@
       "when": 1790346250853,
       "tag": "0201_audit_concert_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "7",
+      "when": 1790352429556,
+      "tag": "0202_void_qr_token",
+      "breakpoints": true
     }
   ]
 }

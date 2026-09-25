@@ -2,6 +2,8 @@ import 'server-only';
 
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import type { Executor } from '@/db/allocation';
+import type { Tx } from '@/db/tx';
 import { pgError, rethrowDbError } from '@/db/errors';
 import {
   DEFAULT_TICKET_CODE_PREFIX,
@@ -62,13 +64,21 @@ export type MintScope = TicketScope;
  */
 export async function mintIdentifiers(
   scope: MintScope,
-  options: { prefix?: string } = {},
+  options: {
+    prefix?: string;
+    /**
+     * The caller's transaction (a V3 command's row, spec/v3.md §23.1). Each
+     * attempt then runs in a savepoint, so a collision rolls back only the
+     * attempt rather than aborting the caller's whole transaction.
+     */
+    executor?: Tx;
+  } = {},
 ): Promise<MintResult> {
   const prefix = options.prefix ?? DEFAULT_TICKET_CODE_PREFIX;
-  const db = getDb();
+  const db: Tx | ReturnType<typeof getDb> = options.executor ?? getDb();
 
-  const pending = await selectPending(scope);
-  const alreadyIssued = await countIssued(scope);
+  const pending = await selectPending(scope, db);
+  const alreadyIssued = await countIssued(scope, db);
   if (pending.length === 0) return { minted: 0, alreadyIssued, attempts: 0 };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -92,7 +102,7 @@ export async function mintIdentifiers(
        * rows. Without it, this would overwrite a token that may already be on
        * a printed ticket.
        */
-      const updated = await db.execute<{ id: string }>(sql`
+      const statement = sql`
         update attendees a
            set ticket_code = v.code,
                qr_token = v.token
@@ -103,7 +113,12 @@ export async function mintIdentifiers(
          where a.id = v.id
            and a.qr_token is null
         returning a.id
-      `);
+      `;
+      const updated = options.executor
+        ? await options.executor.transaction((savepoint) =>
+            savepoint.execute<{ id: string }>(statement),
+          )
+        : await db.execute<{ id: string }>(statement);
 
       return { minted: updated.length, alreadyIssued, attempts: attempt };
     } catch (error) {
@@ -121,8 +136,8 @@ export async function mintIdentifiers(
 }
 
 /** Attendee ids in scope that still need identifiers. */
-async function selectPending(scope: MintScope): Promise<number[]> {
-  const rows = await getDb().execute<{ id: string }>(sql`
+async function selectPending(scope: MintScope, db: Executor): Promise<number[]> {
+  const rows = await db.execute<{ id: string }>(sql`
     select a.id
       from attendees a
       join registrations r on r.id = a.registration_id
@@ -135,8 +150,8 @@ async function selectPending(scope: MintScope): Promise<number[]> {
 }
 
 /** Attendees in scope that already hold identifiers. */
-async function countIssued(scope: MintScope): Promise<number> {
-  const rows = await getDb().execute<{ n: number }>(sql`
+async function countIssued(scope: MintScope, db: Executor): Promise<number> {
+  const rows = await db.execute<{ n: number }>(sql`
     select count(*)::int as n
       from attendees a
       join registrations r on r.id = a.registration_id

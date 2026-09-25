@@ -11,7 +11,7 @@ All in `docs/`. Each has one job; keep content in the file whose job it is.
 | `docs/spec/` | The system, one file per module: data model, allocation, tickets, email, check-in, portal, surfaces | The contract. If code disagrees with it, the code is wrong. Start at `spec/README.md` — it maps sections to files. |
 | `docs/context.md` | This concert: real capacities, player counts, dates, delivery plan, open questions | Facts, not rules. Never let these values reach code, and do not edit unless asked. |
 | `docs/ref.md` | Patterns distilled from Hi.Events, chiefly the door-scanner IA | Background reading. Do not clone or copy from that repo. |
-| `docs/modules.md` | How V1 is cut into branches, what each owns, and the rules that keep parallel sessions from colliding | Your branch's boundary. Read the row for your module before starting. |
+| `docs/modules.md`, `modules-v2.md`, `modules-v3.md` | How each version is cut into branches, what each owns, and the rules that keep parallel sessions from colliding | Your branch's boundary. Read the row for your module before starting. |
 | `docs/local.md` | Everything only a human or a local session can do — dashboards, secrets, migrations | A queue. Add to it rather than attempting these from a cloud session. |
 | `docs/handoff/` | One-time notes handing one session's context to the next | See below. Read once, then archive. |
 
@@ -31,37 +31,20 @@ the short version is that anything still true next week belongs in `docs/spec/`,
 
 ## Where the build is
 
-**V1 is complete — all ten modules merged.** `pnpm dev`, `pnpm test`, `pnpm build` and CI all pass.
+**V1 and V2 are complete and merged to `main`** (`A`–`I`, then `J`–`O`: native forms, the portal,
+notes and feedback). The 19 Sep concert ran on V1; its feedback went out on 20 Sep. `pnpm dev`,
+`pnpm test`, `pnpm build` and CI pass.
 
-| Merged |
-|---|
-| `F1` schema, settings cascade, `claim_seats()` · `F2` auth, admin shell, `DataTable` |
-| `A` config & people · `B` registrations & extras · `C` spreadsheet import |
-| `D` ticket render · `E` template editor · `F` outbox & blast |
-| `G` door scanner · `H` check-in & operators · `I` read-only `/t/{token}` |
+**Now: V3, specified and not started.** The console is being rebuilt around one record, the party,
+with derived stages, work queues, whole-job commands, a send wizard, an intake review gate, an inbox
+for replies and bounces, a `pg_cron` scheduler and named roles. Behaviour is `docs/spec/v3.md`; the
+branch map is `docs/modules-v3.md` (`P`–`X`, each PR straight to `main`, migrations from `0200`); the
+decisions it reverses are `docs/spec/decisions.md` §19.3. **Start with `P`.** Every module branch starts by rebasing onto `main` and reading its handoff there (`modules-v3.md` §3). Until V3 lands, the
+non-negotiables below describe the running system — where V3 changes one, the spec says so.
 
-**The whole flow has now been driven end to end against production in a real browser (10 Sep),**
-**including a real operator account.**
-Concert → show → two segments → four registrations → allocation → ticket issue → PDF → blast →
-five real emails → QR scan off a camera → manual admit by name and by ticket code. What that pass
-found, and the test data it left behind, is in `docs/local.md` §5h.
-
-**Next task**: the real 19 Sep concert still has to be configured by hand, and it cannot be until the
-`TBC`s in `docs/context.md` §6 are answered (start time, doors, venue, public party cap, base claim
-deadline). Then the two pre-blast gates: a printed ticket scanned on a real usher phone, and the
-400-ticket dry run.
-
-Deployment state: Supabase live with migrations `0000`–`0006` applied (10 Sep, 22 tables), system
-settings seeded, the shared `ADMIN` account created, the manifest authorization boundary verified
-from outside, and the private `ticket-assets` bucket created and its privacy proved
-(`docs/local.md` §4, §5a, §8). Public sign-ups off, email confirmation on, all three extensions
-installed. Vercel project `zetix` live in `sin1` with the GitHub repo connected and Production
-env vars set; `main` is branch-protected requiring `ci`.
-
-**The system is configured with nothing.** No capacity, quota or deadline exists in code, seed or
-database — by design (§2.1). Until someone enters this concert through the admin UI,
-`segment_pool()` refuses to return figures and allocation, import and the blast all stop rather than
-guess. That, and the outstanding human tasks, are in `docs/local.md`.
+Deployment: Supabase live (`docs/local.md` §4, §5a, §8), Vercel project `zetix` in `sin1`,
+`main` branch-protected requiring `ci`. Nothing is configured in code: every capacity, quota and
+deadline is entered through the admin UI (§2.1). Human-only steps are queued in `docs/local.md`.
 
 **`pnpm test` must never point at Supabase.** The suite truncates every table. Put the local
 Postgres URL in `.env.test.local`, which vitest loads ahead of `.env.local`; `tests/helpers/db.ts`

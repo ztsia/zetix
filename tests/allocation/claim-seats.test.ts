@@ -497,8 +497,8 @@ describe('claim_seats() — HELD and COMP are reported, not silently written', (
   });
 });
 
-describe('claim_seats() — the override relaxes capacity, not entitlement', () => {
-  it('will not grant a player more BASE seats than their quota', async () => {
+describe('claim_seats() — the override now relaxes entitlement too (decision 47)', () => {
+  it('grants a player BASE seats past their quota only with the override', async () => {
     await resetDb();
     const concertId = await createConcert();
     const showId = await createShow(concertId, 500);
@@ -512,12 +512,14 @@ describe('claim_seats() — the override relaxes capacity, not entitlement', () 
     const [playerId] = await createPlayers(concertId, 1);
     const registrationId = await createRegistration({ showId, segmentId, playerId });
 
-    // §7.6 authorises overriding the hall ceiling. Decision 17 is explicit that
-    // base entitlement has no opt-out: the honest levers are raising the quota
-    // or the capacity, both of which are recorded config changes.
+    // This test used to assert the opposite: decision 17 said base entitlement
+    // had no opt-out, so the override granted 2 and waitlisted 3. V3 reverses
+    // it (decision 47, spec/v3.md §23.5) — an admin may grant past a player's
+    // quota, and the excess is marked OVER_CAPACITY. Without the override the
+    // quota still holds; `override.test.ts` covers both sides and the marking.
     const outcome = await claim(segmentId, registrationId, seats(5, 'BASE'), true);
-    expect(outcome.granted_base).toBe(2);
-    expect(outcome.waitlisted).toBe(3);
+    expect(outcome.granted_base).toBe(5);
+    expect(outcome.waitlisted).toBe(0);
   });
 });
 

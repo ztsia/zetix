@@ -108,14 +108,15 @@ export async function queueVerificationEmail(
 
   /**
    * `on conflict do nothing` against the partial unique index on
-   * `(registration_id, template_key)` where the row is still pending
+   * `(registration_id, purpose)` where the row is still pending
    * (`email.md` §11.4). A double-submitted form must not draft two links.
    */
   await tx.execute(sql`
     insert into email_outbox (
-      registration_id, template_key, to_email, to_name, subject, body_md, context, status
+      registration_id, purpose, template_key, to_email, to_name, subject, body_md, context,
+      status
     ) values (
-      ${input.registrationId}::bigint, 'public_verify',
+      ${input.registrationId}::bigint, 'VERIFICATION', 'public_verify',
       ${input.contactEmail}, ${input.contactName},
       ${subject.text}, ${body.text},
       ${JSON.stringify(context)}::text::jsonb, 'DRAFT'

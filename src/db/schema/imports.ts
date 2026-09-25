@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { importStatus } from './enums';
 import { appUsers } from './people';
 import { shows, showSegments } from './shows';
@@ -51,7 +51,18 @@ export const importBatches = pgTable(
     errorCount: integer('error_count').notNull().default(0),
     report: jsonb('report'),
     status: importStatus('status').notNull(),
+
+    /**
+     * Whether committing this batch queues a `RECEIPT` for each new party
+     * (spec/v3.md §25.3). Off unless the admin turns it on for the batch:
+     * Google Forms respondents already had Google's own confirmation. A
+     * per-batch choice, not a tunable, so it is a column and not a setting.
+     */
+    queueReceipts: boolean('queue_receipts').notNull().default(false),
+
     ...createdAt,
+    /** V3: a staged batch is edited and committed over several passes (§25.7). */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('import_batches_segment_idx').on(t.segmentId, t.status)],
 );

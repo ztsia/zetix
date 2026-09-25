@@ -607,18 +607,11 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       };
     }
 
-    /**
-     * `registrations_no_duplicate_import` is unique on
-     * `(segment_id, contact_email, requested_at)`. On this surface it means a
-     * double-submitted form, which is worth naming rather than crashing — `J`'s
-     * handoff left this mapping to whichever screen raises it.
+    /*
+     * `registrations_no_duplicate_import` used to be mapped here. V3 dropped the
+     * index (spec/v3.md §30.1): a second submission from the same address is
+     * merged into the existing party (§25.5), which is module `V`'s intake.
      */
-    if (violated('registrations_no_duplicate_import')) {
-      return {
-        ok: false,
-        message: 'This looks like a duplicate submission. Nothing was saved twice.',
-      };
-    }
 
     console.error(`registration submit failed for "${input.slug}":`, error);
     return { ok: false, message: 'Something went wrong and nothing was saved. Please try again.' };

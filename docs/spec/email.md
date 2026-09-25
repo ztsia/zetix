@@ -180,8 +180,8 @@ The mechanisms, all required:
    still have at least one undelivered seat**, because a message is addressed to a registrant and
    carries every outstanding ticket in that party:
    ```sql
-   insert into email_outbox (registration_id, template_key, to_email, to_name, ...)
-   select r.id, 'public_ticket', r.contact_email, r.contact_name, ...
+   insert into email_outbox (registration_id, purpose, template_key, to_email, to_name, ...)
+   select r.id, 'TICKETS', 'public_ticket', r.contact_email, r.contact_name, ...
      from registrations r
     where r.segment_id = $1
       and r.status = 'CONFIRMED'
@@ -200,9 +200,11 @@ The mechanisms, all required:
              and (a.qr_token is null or a.ticket_template_id is null))
    on conflict do nothing;
    ```
-3. **The partial unique index** on `(registration_id, template_key) where status in
+3. **The partial unique index** on `(registration_id, purpose) where status in
    ('DRAFT','QUEUED','SENDING')` (`domain.md` §5.1) makes the `on conflict do nothing` meaningful. Without it,
-   clicking Send twice queues everything twice.
+   clicking Send twice queues everything twice. **V3 keys it on the message's purpose, not its
+   template** (`v3.md` §24.2, decision 52): before, a redraft under a different template did not conflict
+   with the first draft, and both sent.
 4. **A party with a ticket still to be issued is not queued at all.** The message carries every
    ticket the party holds (decision 22), and `buildPartyAttachments()` refuses the whole party if any
    one seat has no pinned template — so a half-issued party could never be *sent*. Drafting it anyway

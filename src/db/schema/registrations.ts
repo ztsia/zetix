@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   unique,
@@ -16,6 +17,9 @@ import {
 import {
   allocationType,
   bookingStatus,
+  duplicateStatus,
+  importMatchAction,
+  importRowStatus,
   formKind,
   formStatus,
   nameSource,
@@ -94,6 +98,15 @@ export const registrationForms = pgTable(
     autoCloseOnCapacity: boolean('auto_close_on_capacity'),
     allowEditUntil: timestamp('allow_edit_until', { withTimezone: true }),
     confirmationMessageMd: text('confirmation_message_md'),
+
+    /**
+     * Per-form theme (spec/v3.md §25.6): `{ bannerPath, colour, colourOverride }`.
+     * The banner lives in a **public** bucket — `ticket-assets` is private — and
+     * the colour is contrast-checked before it is used as button text. It sets
+     * `--form-*` tokens on the form wrapper and nothing else. Null is the
+     * default look.
+     */
+    theme: jsonb('theme'),
     status: formStatus('status').notNull(),
     ...timestamps,
   },
@@ -293,6 +306,48 @@ export const registrations = pgTable(
      */
     requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
 
+    /**
+     * **The review gate** (spec/v3.md §25.4). Null means the party sits in
+     * `NEEDS_REVIEW` and Send tickets skips it. Approval gates the ticket, never
+     * the seat: seats are claimed on submit, exactly as before.
+     *
+     * `0200` backfilled every registration that existed before V3 to its
+     * `created_at`, so nothing already ticketed went back to review.
+     */
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedBy: uuid('approved_by').references(() => appUsers.id, {
+      onDelete: 'set null',
+    }),
+
+    /**
+     * The survivor this party was merged into (spec/v3.md §25.5). The absorbed
+     * party is soft-deleted and keeps this pointer, so its history — and any
+     * link a guest still holds — can be followed to where the seats went.
+     */
+    mergedIntoId: fk('merged_into_id'),
+
+    /**
+     * The party update link for a party that has no form response to carry an
+     * `edit_token` — an imported or admin-created one (spec/v3.md §25.6).
+     * Unguessable and nullable, like `verification_token`.
+     */
+    updateToken: text('update_token'),
+
+    /**
+     * The last address check on `contact_email` (spec/v3.md §24.6). The checks
+     * — syntax, typo suggester, MX lookup — run in the app, not in SQL, so their
+     * result is stored here for `party_pipeline` to read as
+     * `SUSPICIOUS_ADDRESS` (§21.2).
+     *
+     * `email_issue` null means clean or not yet checked; whoever changes
+     * `contact_email` re-runs the check and rewrites all three.
+     * `email_issue_accepted_at` is the admin's "this address is right" — it
+     * clears the flag without pretending the check passed.
+     */
+    emailIssue: text('email_issue'),
+    emailCheckedAt: timestamp('email_checked_at', { withTimezone: true }),
+    emailIssueAcceptedAt: timestamp('email_issue_accepted_at', { withTimezone: true }),
+
     createdBy: uuid('created_by').references(() => appUsers.id, {
       onDelete: 'set null',
     }),
@@ -324,43 +379,21 @@ export const registrations = pgTable(
 
     uniqueIndex('registrations_verification_token_key').on(t.verificationToken),
 
+    uniqueIndex('registrations_update_token_key').on(t.updateToken),
+
+    foreignKey({
+      name: 'registrations_merged_into_fk',
+      columns: [t.mergedIntoId],
+      foreignColumns: [t.id],
+    }).onDelete('set null'),
+
     /**
-     * **A party is imported once, however many times the sheet is re-uploaded**
-     * (spec/import.md §9.2, decision 33).
-     *
-     * A Google Forms export is cumulative: the round 2 download is round 1 plus
-     * the new responses. `(contact_email, requested_at)` is the pair §9.2 groups
-     * a party on, and the only identity of a party that survives outside the
-     * file — `requested_at` is the form response timestamp, not import time.
-     *
-     * `fix/import-reimport-dedup` closed this in application code with the show
-     * row lock, and QA correctly pointed out that the index is the stronger
-     * guarantee. It was deferred only because a migration before 19 Sep meant a
-     * manual deployment step; that reason expired with the concert
-     * (`modules-v2.md` §6).
-     *
-     * **Despite the name, it governs every source, not just `IMPORT`.** The
-     * archived SQL is unconditional and is carried verbatim, which is the right
-     * call — a public form double-submit and an admin creating the same party
-     * twice are the same mistake as a re-uploaded sheet, and refusing all three
-     * is better than refusing one. The cost is the error an admin sees: a raw
-     * `duplicate key … "registrations_no_duplicate_import"` on a path that is
-     * not an import. Mapping that to a sentence belongs to whichever screen
-     * raises it, not here; `tests/schema/v2-delta.test.ts` pins the behaviour so
-     * it is a known property rather than a surprise.
-     *
-     * Partial on `deleted_at is null`, because a delete means the row should
-     * never have existed (spec/allocation.md §7.6) and an export still carrying
-     * it is bringing in something genuinely absent. A *cancelled* party still
-     * counts as imported and is still covered here — cancellation is an admin
-     * decision about a registration that exists, and it can be restored (§7.9).
-     *
-     * A party with no `contact_email` is not covered: two nulls never conflict
-     * in Postgres, which is the same known limit the code path has.
+     * `registrations_no_duplicate_import` — unique on
+     * `(segment_id, contact_email, requested_at)` — was **dropped in V3**
+     * (spec/v3.md §30.1). Grouping by email within the segment (§25.7) and
+     * merging (§25.5) replace what it guarded, and it would reject a legitimate
+     * second submission merged by email. Do not bring it back.
      */
-    uniqueIndex('registrations_no_duplicate_import')
-      .on(t.segmentId, t.contactEmail, t.requestedAt)
-      .where(sql`deleted_at is null`),
   ],
 );
 
@@ -440,6 +473,37 @@ export const attendees = pgTable(
     }),
     ticketTemplateVersion: integer('ticket_template_version'),
 
+    /**
+     * **This seat's own first-come time** (spec/v3.md §21.3). Merging parties
+     * and grouping an import by email must not let a late seat jump the queue,
+     * so each seat carries the time of the submission or import row that
+     * created it; the extras walk orders by this, not the party's.
+     *
+     * Not null, but callers need not supply it: a trigger in `0200` fills it
+     * from the registration's `requested_at`, which is exactly right for every
+     * seat created with its party. `claim_seats()` takes an explicit one per
+     * request for the seats that are not (a merge, a later submission added to
+     * an existing party).
+     */
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+
+    /**
+     * Set when an admin's override put this seat past the segment's capacity,
+     * the hall's, or the player's base quota (spec/v3.md §23.5, decision 47).
+     * Written only by `claim_seats()` / `promote_seats()`, and only on a seat
+     * the override was actually needed for. `party_pipeline` reads it as
+     * `OVER_CAPACITY` (§21.2).
+     */
+    overCapacityAt: timestamp('over_capacity_at', { withTimezone: true }),
+
+    /**
+     * The staged import row that created this seat (spec/v3.md §25.7).
+     * Per seat rather than per party because an import may **add seats to an
+     * existing party** — Undo import must remove those seats without touching
+     * the party the batch did not create.
+     */
+    importRowId: fk('import_row_id'),
+
     ...timestamps,
   },
   (t) => [
@@ -468,5 +532,111 @@ export const attendees = pgTable(
     index('attendees_show_status_idx').on(t.showId, t.status),
     index('attendees_registration_idx').on(t.registrationId),
     index('attendees_template_idx').on(t.ticketTemplateId),
+
+    foreignKey({
+      name: 'attendees_import_row_fk',
+      columns: [t.importRowId],
+      foreignColumns: [importRows.id],
+    }).onDelete('set null'),
+    index('attendees_import_row_idx').on(t.importRowId),
+  ],
+);
+
+/**
+ * `import_rows` — the staging grid (spec/v3.md §25.7, decision 49).
+ *
+ * One row per **seat** as the grid shows it, not per line of the file: a wide
+ * sheet's repeating guest columns derive several rows from one line, and every
+ * derived row is visible and editable before commit — the thing that makes the
+ * wide mapping safe where decision 33 found it unsafe. `row_number` is the
+ * file's line; `seat_index` numbers the rows derived from it.
+ *
+ * `raw` is the cells as they were in the file and is never rewritten — the
+ * party record's Responses tab shows it (§22.4). `normalized` is what the admin
+ * edits. `issues` is recomputed on every edit; a row with issues is "blocked",
+ * which is derived here rather than stored as a status.
+ */
+export const importRows = pgTable(
+  'import_rows',
+  {
+    id: pk(),
+    batchId: fk('batch_id')
+      .notNull()
+      .references(() => importBatches.id, { onDelete: 'cascade' }),
+    rowNumber: integer('row_number').notNull(),
+    seatIndex: integer('seat_index').notNull(),
+
+    raw: jsonb('raw').notNull(),
+    normalized: jsonb('normalized').notNull(),
+
+    /** The derived party key — the case-folded contact email, or a mapped `group_key`. */
+    partyKey: text('party_key'),
+    /** An array of `{ field, code, message }`. Empty means ready to commit. */
+    issues: jsonb('issues').notNull(),
+
+    /** A live party in the segment that already holds this email, and what to do about it. */
+    existingRegistrationId: fk('existing_registration_id').references(() => registrations.id, {
+      onDelete: 'set null',
+    }),
+    existingAction: importMatchAction('existing_action'),
+
+    status: importRowStatus('status').notNull(),
+    /** Set once committed: the party this row became, or was added to. */
+    registrationId: fk('registration_id').references(() => registrations.id, {
+      onDelete: 'set null',
+    }),
+    committedAt: timestamp('committed_at', { withTimezone: true }),
+
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('import_rows_batch_row_seat_key').on(t.batchId, t.rowNumber, t.seatIndex),
+    index('import_rows_batch_status_idx').on(t.batchId, t.status),
+    index('import_rows_registration_idx').on(t.registrationId),
+  ],
+);
+
+/**
+ * `duplicate_candidates` — a stored pair of live parties in one show that match
+ * on email, normalised phone, or a name at or above
+ * `review.duplicate_name_similarity` (spec/v3.md §25.5).
+ *
+ * Stored rather than recomputed so that **"Not a duplicate" sticks**: a
+ * dismissed pair stays dismissed however often detection runs. The pair is
+ * ordered (`registration_a_id < registration_b_id`) so the same two parties can
+ * only ever be one row.
+ */
+export const duplicateCandidates = pgTable(
+  'duplicate_candidates',
+  {
+    id: pk(),
+    showId: fk('show_id')
+      .notNull()
+      .references(() => shows.id, { onDelete: 'cascade' }),
+    registrationAId: fk('registration_a_id')
+      .notNull()
+      .references(() => registrations.id, { onDelete: 'cascade' }),
+    registrationBId: fk('registration_b_id')
+      .notNull()
+      .references(() => registrations.id, { onDelete: 'cascade' }),
+    /** Which rules matched: any of `EMAIL`, `PHONE`, `NAME`. */
+    reasons: text('reasons').array().notNull(),
+    /** The best `pg_trgm` similarity found, when `NAME` is a reason. */
+    nameSimilarity: real('name_similarity'),
+
+    status: duplicateStatus('status').notNull(),
+    decidedBy: uuid('decided_by').references(() => appUsers.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('duplicate_candidates_pair_key').on(t.registrationAId, t.registrationBId),
+    index('duplicate_candidates_b_idx').on(t.registrationBId),
+    index('duplicate_candidates_show_status_idx').on(t.showId, t.status),
+    check(
+      'duplicate_candidates_ordered_pair',
+      sql`registration_a_id < registration_b_id`,
+    ),
   ],
 );

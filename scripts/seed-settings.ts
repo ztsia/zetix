@@ -94,6 +94,26 @@ const SYSTEM_SEEDS: Record<string, unknown> = {
    */
   'show.auto_complete_after_hours': 2,
   'portal.feedback_send_hour': 12,
+
+  /**
+   * V3 (spec/v3.md §30.2), seeded here for the same reason as the two above:
+   * each describes the runtime or a review policy, not this event, and the
+   * spec's table gives each its seed. A per-concert receipt hold or a
+   * per-segment auto-approve overrides these through the cascade.
+   *
+   * `scheduler.tick_minutes` and `scheduler.history_days` are read by
+   * `schedule_scheduler_jobs()` in the database (`drizzle/0200`), which refuses
+   * to schedule anything while they are unset.
+   */
+  'email.receipt_hold_minutes': 10,
+  'review.auto_approve_clean': false,
+  'review.duplicate_name_similarity': 0.8,
+  'delivery.review_single_party': false,
+  'admin.typed_confirm_above': 20,
+  'scheduler.tick_minutes': 10,
+  'scheduler.history_days': 7,
+  'inbox.match_fallback_days': 30,
+  'inbox.sync_budget_seconds': 20,
 };
 
 async function main() {

@@ -1,4 +1,7 @@
 import 'server-only';
+import type { messagePurpose } from '@/db/schema/enums';
+
+export type MessagePurpose = (typeof messagePurpose.enumValues)[number];
 
 /**
  * The eight message types of spec/email.md §11.3, and which of them carry
@@ -33,6 +36,44 @@ export const TEMPLATE_KEYS = [
 ] as const;
 
 export type TemplateKey = (typeof TEMPLATE_KEYS)[number];
+
+/**
+ * What each template's message is *for* (spec/v3.md §24.2, decision 52).
+ *
+ * The pending-message key is `(addressee, purpose)`, not the template, so every
+ * insert into `email_outbox` must say which purpose it serves — the column has
+ * no default, on purpose. `player_confirmation` and `public_ticket` are one
+ * purpose worded for two audiences, and a party is only ever one of them;
+ * `extras_granted` and `extras_declined` are one decision, so a second draft for
+ * the same party is refused until the first is sent or cancelled (superseding
+ * it instead is module `T`'s send wizard).
+ *
+ * Mirrors the backfill in `drizzle/0200_v3_schema_delta.sql`, which is what
+ * `tests/email/purpose.test.ts` checks it against.
+ */
+export const TEMPLATE_PURPOSE = {
+  player_confirmation: 'TICKETS',
+  public_verify: 'VERIFICATION',
+  public_ticket: 'TICKETS',
+  extras_granted: 'EXTRAS_DECISION',
+  extras_declined: 'EXTRAS_DECISION',
+  registration_cancelled: 'CANCELLATION',
+  reminder: 'REMINDER',
+  player_notes_digest: 'NOTES_DIGEST',
+  feedback_request: 'FEEDBACK',
+} as const satisfies Record<TemplateKey, MessagePurpose>;
+
+/**
+ * The purpose to write for a template, or an error for a key that has none.
+ * Refusing is the point: a guessed purpose would put the message under the
+ * wrong pending key, where it either collides with an unrelated message or
+ * fails to collide with its own duplicate.
+ */
+export function purposeFor(templateKey: string): MessagePurpose {
+  const purpose = (TEMPLATE_PURPOSE as Record<string, MessagePurpose>)[templateKey];
+  if (!purpose) throw new Error(`No message purpose for template "${templateKey}"`);
+  return purpose;
+}
 
 /**
  * Which templates attach the party's PDFs, straight from §11.3's "To" column:

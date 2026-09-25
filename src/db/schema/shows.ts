@@ -138,6 +138,27 @@ export const showSegments = pgTable(
     allowPartialGrant: boolean('allow_partial_grant'),
     maxTicketsPerResponse: integer('max_tickets_per_response'),
 
+    /**
+     * The segment level of `review.auto_approve_clean` (spec/v3.md §25.4,
+     * §30.2): approve a party with no flags at submit. Null means "not set
+     * here" and the cascade continues; the segment level of the cascade reads
+     * typed columns only, so a segment-level key needs one.
+     */
+    autoApproveClean: boolean('auto_approve_clean'),
+
+    /**
+     * The ticket design this segment's seats default to (spec/v3.md §24.1,
+     * §24.2). The Send tickets wizard reads it and the admin may override it per
+     * send. It is the segment level of `ticket.default_template_id`'s cascade —
+     * `resolve_setting()` reads it before the show's `ticket_template_id` — so
+     * a null here changes nothing. Choosing a design is not an operational
+     * value, so it is a column, not a settings key.
+     */
+    defaultTicketTemplateId: fk('default_ticket_template_id').references(
+      () => ticketTemplates.id,
+      { onDelete: 'set null' },
+    ),
+
     displayOrder: integer('display_order').notNull().default(0),
 
     ...timestamps,

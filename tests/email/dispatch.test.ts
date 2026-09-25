@@ -9,6 +9,7 @@ import {
   setSystemSetting,
 } from '../helpers/fixtures';
 import { dispatchBatch } from '@/lib/email/dispatch';
+import { purposeFor } from '@/lib/email/templates';
 import { issueTickets } from '@/lib/tickets/issue';
 import type { MailTransport, OutgoingMessage, SendResult } from '@/lib/email/transport';
 
@@ -80,8 +81,10 @@ async function seedParty(opts: { seats: number; subject?: string; templateKey?: 
   });
   await issueTickets({ concertId, showId });
   await sql`
-    insert into email_outbox (registration_id, template_key, to_email, to_name, subject, body_md, status)
-    values (${registrationId}, ${opts.templateKey ?? 'public_ticket'}, 'party@example.test', 'Party',
+    insert into email_outbox (registration_id, purpose, template_key, to_email, to_name, subject,
+                              body_md, status)
+    values (${registrationId}, ${purposeFor(opts.templateKey ?? 'public_ticket')}::message_purpose,
+            ${opts.templateKey ?? 'public_ticket'}, 'party@example.test', 'Party',
             ${opts.subject ?? 'Your tickets'}, 'Hello **Party**', 'QUEUED')
   `;
   return { concertId, showId, segmentId, registrationId };
@@ -450,8 +453,10 @@ describe('the caps', () => {
       await seedAttendees({ registrationId, showId, segmentId, count: 1, allocationType: 'BASE' });
       await issueTickets({ concertId, showId });
       await sql`
-        insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-        values (${registrationId}, 'public_ticket', ${`p${i}@example.test`}, 's', 'b', 'QUEUED')
+        insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                  status)
+        values (${registrationId}, 'TICKETS', 'public_ticket', ${`p${i}@example.test`}, 's', 'b',
+                'QUEUED')
       `;
     }
     await setSystemSetting('email.max_per_dispatch', 2);
@@ -513,8 +518,10 @@ describe('templates that carry no tickets', () => {
     const registrationId = await createRegistration({ showId, segmentId, contactName: 'Nobody' });
     await seedAttendees({ registrationId, showId, segmentId, count: 1, allocationType: 'BASE' });
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-      values (${registrationId}, 'extras_declined', 'x@example.test', 's', 'b', 'QUEUED')
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status)
+      values (${registrationId}, 'EXTRAS_DECISION', 'extras_declined', 'x@example.test', 's', 'b',
+              'QUEUED')
     `;
     const transport = recordingTransport();
 
@@ -535,8 +542,9 @@ describe('a ticket-bearing template with nothing to attach', () => {
     const registrationId = await createRegistration({ showId, segmentId, contactName: 'Unissued' });
     await seedAttendees({ registrationId, showId, segmentId, count: 2, allocationType: 'BASE' });
     await sql`
-      insert into email_outbox (registration_id, template_key, to_email, subject, body_md, status)
-      values (${registrationId}, 'public_ticket', 'x@example.test', 's', 'b', 'QUEUED')
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md,
+                                status)
+      values (${registrationId}, 'TICKETS', 'public_ticket', 'x@example.test', 's', 'b', 'QUEUED')
     `;
     const transport = recordingTransport();
 

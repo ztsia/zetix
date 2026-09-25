@@ -405,111 +405,44 @@ describe('feedback_responses — spec/v2.md §13.5', () => {
   });
 });
 
-describe('registrations_no_duplicate_import — spec/import.md §9.2, decision 33', () => {
+describe('registrations_no_duplicate_import is gone — dropped by V3 (spec/v3.md §30.1)', () => {
   let showId: number;
   let publicSegmentId: number;
-  let playerSegmentId: number;
 
   /**
-   * A Google Forms export is cumulative: the round 2 download is round 1 plus
-   * the new responses. `fix/import-reimport-dedup` closed the hole in
-   * application code and deferred this index only because a migration before
-   * 19 Sep meant a manual deploy; that reason expired with the concert
-   * (`modules-v2.md` §6).
+   * This block used to pin the index V2 added: unique on
+   * `(segment_id, contact_email, requested_at)`, refusing a re-uploaded sheet's
+   * party a second time. **V3 drops it** (`drizzle/0200_v3_schema_delta.sql`).
+   * Grouping by email within the segment (§25.7, decision 49) and merging
+   * (§25.5) replace what it guarded, and it would refuse a legitimate second
+   * submission merged by email — the exact thing V3's intake is built to accept.
+   * Re-import dedup is the staging grid's job now, where the admin can see it.
    */
   const AT = '2026-09-01T10:00:00.123456+00';
 
-  const importParty = (segmentId: number, email: string | null, at: string = AT) => sql`
+  const importParty = (segmentId: number, email: string | null) => sql`
     insert into registrations (show_id, segment_id, source, contact_name, contact_email,
                                status, requested_at)
     values (${showId}::bigint, ${segmentId}::bigint, 'IMPORT', 'A Party', ${email},
-            'CONFIRMED', ${at}::text::timestamptz)
+            'CONFIRMED', ${AT}::text::timestamptz)
     returning id
   `;
 
   beforeEach(async () => {
     await resetDb();
-    ({ showId, publicSegmentId, playerSegmentId } = await scaffold());
+    ({ showId, publicSegmentId } = await scaffold());
   });
 
-  it('refuses the same party twice from a re-uploaded sheet', async () => {
-    await expect(importParty(publicSegmentId, 'party@example.test')).resolves.toHaveLength(1);
-    await expect(importParty(publicSegmentId, 'party@example.test')).rejects.toThrow(
-      /registrations_no_duplicate_import/,
-    );
-  });
-
-  it('folds case, because the same person types their address either way', async () => {
-    // `contact_email` is citext, so this is the type doing the work rather than
-    // every call site remembering to lower(). The application-side dedup keys a
-    // Map, where citext does not save it — hence both halves exist.
-    await importParty(publicSegmentId, 'party@example.test');
-    await expect(importParty(publicSegmentId, 'PARTY@EXAMPLE.TEST')).rejects.toThrow(
-      /registrations_no_duplicate_import/,
-    );
-  });
-
-  it('lets the same address register again with a new timestamp', async () => {
-    // Round 2 is a genuinely new response. Email alone would merge a person's
-    // two rounds into one oversized party; the timestamp is what separates them.
-    await importParty(publicSegmentId, 'party@example.test');
-    await expect(
-      importParty(publicSegmentId, 'party@example.test', '2026-09-08T10:00:00+00'),
-    ).resolves.toHaveLength(1);
-  });
-
-  it('scopes to the segment, since one import run is one segment', async () => {
-    await importParty(publicSegmentId, 'party@example.test');
-    await expect(importParty(playerSegmentId, 'party@example.test')).resolves.toHaveLength(1);
-  });
-
-  it('re-imports a deleted party, because a delete means it should not have existed', async () => {
-    const [row] = await importParty(publicSegmentId, 'party@example.test');
-    await sql`update registrations set deleted_at = now() where id = ${row.id}::bigint`;
-    await expect(importParty(publicSegmentId, 'party@example.test')).resolves.toHaveLength(1);
-  });
-
-  it('still counts a cancelled party as imported', async () => {
-    // QA failed the reverse of this once and was right to: a cancellation can be
-    // restored (spec/allocation.md §7.9), and cancel → re-import → restore left
-    // one form response holding two CONFIRMED registrations and four tickets.
-    const [row] = await importParty(publicSegmentId, 'party@example.test');
-    await sql`update registrations set status = 'CANCELLED' where id = ${row.id}::bigint`;
-    await expect(importParty(publicSegmentId, 'party@example.test')).rejects.toThrow(
-      /registrations_no_duplicate_import/,
-    );
-  });
-
-  it('governs every source, not only IMPORT — despite the name', async () => {
-    // The archived SQL is unconditional and is carried verbatim. A public form
-    // double-submit and an admin creating the same party twice are the same
-    // mistake as a re-uploaded sheet, so refusing all three is right — but the
-    // name says `import`, and an admin hitting it sees a constraint that claims
-    // to be about a path they were not on. Pinned here so that is a known
-    // property of the index rather than a surprise to whoever fields the
-    // support question; the friendly message belongs to the screen that raises
-    // it, not to the schema.
-    await sql`
-      insert into registrations (show_id, segment_id, source, contact_name, contact_email,
-                                 status, requested_at)
-      values (${showId}::bigint, ${publicSegmentId}::bigint, 'ADMIN', 'A Party',
-              'admin@example.test', 'CONFIRMED', ${AT}::text::timestamptz)
+  it('no longer exists in the catalog', async () => {
+    const rows = await sql`
+      select 1 from pg_indexes
+       where schemaname = 'public' and indexname = 'registrations_no_duplicate_import'
     `;
-    await expect(
-      sql`
-        insert into registrations (show_id, segment_id, source, contact_name, contact_email,
-                                   status, requested_at)
-        values (${showId}::bigint, ${publicSegmentId}::bigint, 'ADMIN', 'A Party',
-                'admin@example.test', 'CONFIRMED', ${AT}::text::timestamptz)
-      `,
-    ).rejects.toThrow(/registrations_no_duplicate_import/);
+    expect(rows).toHaveLength(0);
   });
 
-  it('cannot dedup a party with no email, which is the known limit', async () => {
-    // Two nulls never conflict in Postgres. §9.2 gives such a party a row-scoped
-    // key that nothing outside the file can match, so it re-imports every round
-    // and the importer reports it as a WARNING rather than swallowing it.
-    await expect(importParty(publicSegmentId, null)).resolves.toHaveLength(1);
-    await expect(importParty(publicSegmentId, null)).resolves.toHaveLength(1);
+  it('no longer refuses the same email and timestamp twice in a segment', async () => {
+    await expect(importParty(publicSegmentId, 'party@example.test')).resolves.toHaveLength(1);
+    await expect(importParty(publicSegmentId, 'party@example.test')).resolves.toHaveLength(1);
   });
 });

@@ -71,7 +71,12 @@ export const backgroundKind = pgEnum('background_kind', ['IMAGE', 'PDF', 'NONE']
 export const moderationStatus = pgEnum('moderation_status', ['PENDING', 'APPROVED', 'HIDDEN']);
 export const wallStatus = pgEnum('wall_status', ['NOT_PUBLISHED', 'PUBLISHED']);
 
-export const importStatus = pgEnum('import_status', ['DRY_RUN', 'COMMITTED']);
+/**
+ * V3 adds `STAGED` — rows sit in `import_rows` as an editable grid and commit in
+ * as many passes as it takes (spec/v3.md §25.7) — and `UNDONE`, for a batch the
+ * Undo import command has reversed. `DRY_RUN` stays for V1/V2 batches.
+ */
+export const importStatus = pgEnum('import_status', ['DRY_RUN', 'COMMITTED', 'STAGED', 'UNDONE']);
 
 export const outboxStatus = pgEnum('outbox_status', [
   'DRAFT',
@@ -80,7 +85,76 @@ export const outboxStatus = pgEnum('outbox_status', [
   'SENT',
   'FAILED',
   'CANCELLED',
+  /**
+   * V3. Terminal: the inbox matched a delivery-status notification to this
+   * message (spec/v3.md §26.4). Set only by the inbox, never by the
+   * dispatcher, and never a pending status.
+   */
+  'BOUNCED',
 ]);
 
-/** One shared ADMIN, many scoped OPERATORs (decisions 19 and 20). */
-export const userRole = pgEnum('user_role', ['ADMIN', 'OPERATOR']);
+/**
+ * What a message is *for* (spec/v3.md §24.2). The template is only how the
+ * purpose is worded; the pending-message key is `(addressee, purpose)`, so a
+ * redraft under a different template supersedes the first rather than sending
+ * alongside it (decision 52).
+ *
+ * There is deliberately no column default. A default purpose would make
+ * unrelated messages collide under the pending index — a missing one must fail
+ * the insert.
+ */
+export const messagePurpose = pgEnum('message_purpose', [
+  'RECEIPT',
+  'VERIFICATION',
+  'TICKETS',
+  'EXTRAS_DECISION',
+  'CANCELLATION',
+  'REMINDER',
+  'FEEDBACK',
+  'NOTES_DIGEST',
+  'PLAYER_INVITE',
+  'REPLY',
+]);
+
+/** One stored mail message, either way (spec/v3.md §26.5). */
+export const mailDirection = pgEnum('mail_direction', ['INBOUND', 'OUTBOUND']);
+
+/** Stored so a "Not a duplicate" decision sticks (spec/v3.md §25.5). */
+export const duplicateStatus = pgEnum('duplicate_status', ['OPEN', 'MERGED', 'DISMISSED']);
+
+/** A command run (spec/v3.md §23.1). Preview writes nothing, so it has no status. */
+export const commandRunStatus = pgEnum('command_run_status', [
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+]);
+
+/** One target of a command run: done, skipped with a reason, or failed. */
+export const commandItemStatus = pgEnum('command_item_status', [
+  'PENDING',
+  'DONE',
+  'SKIPPED',
+  'FAILED',
+]);
+
+/**
+ * A staged import row (spec/v3.md §25.7). "Blocked" is not a status — it is a
+ * `STAGED` row with issues, derived from `issues` rather than stored, so it
+ * cannot disagree with them.
+ */
+export const importRowStatus = pgEnum('import_row_status', ['STAGED', 'COMMITTED', 'SKIPPED']);
+
+/**
+ * What a staged row does when its email already holds a party in the segment
+ * (spec/v3.md §25.7): add seats to it (the default the grid offers), skip, or
+ * keep a separate party.
+ */
+export const importMatchAction = pgEnum('import_match_action', ['ADD_SEATS', 'SKIP', 'SEPARATE']);
+
+/**
+ * Named ADMIN and VIEWER accounts, many scoped OPERATORs (decision 50, which
+ * reverses 19; spec/v3.md §28). `VIEWER` reads every admin screen, runs
+ * nothing, and sees contact details masked.
+ */
+export const userRole = pgEnum('user_role', ['ADMIN', 'OPERATOR', 'VIEWER']);

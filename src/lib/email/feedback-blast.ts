@@ -250,10 +250,10 @@ export async function queueFeedbackBlast(input: {
 
       inserted = await db.execute<{ id: string }>(sql`
         insert into email_outbox (
-          registration_id, template_key, to_email, to_name, subject, body_md, context,
-          status, scheduled_for
+          registration_id, purpose, template_key, to_email, to_name, subject, body_md,
+          context, status, scheduled_for
         )
-        select r.id, ${FEEDBACK_TEMPLATE_KEY}, r.contact_email, v.to_name,
+        select r.id, 'FEEDBACK', ${FEEDBACK_TEMPLATE_KEY}, r.contact_email, v.to_name,
                v.subject, v.body_md, v.context,
                -- QUEUED, not DRAFT: decision 38 narrows decision 23 for this one
                -- message. It carries no attachment, no per-person merge beyond a

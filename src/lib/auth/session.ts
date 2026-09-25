@@ -5,7 +5,13 @@ import { getDb } from '@/db/client';
 import { appUsers } from '@/db/schema/people';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-export type Role = 'ADMIN' | 'OPERATOR';
+/**
+ * `VIEWER` arrived with the V3 schema (`0200`, spec/v3.md §28). Until module `R`
+ * lands `requireRole()`, every guard checks for `ADMIN` or `OPERATOR` by name, so
+ * a viewer is refused everywhere — the safe side of a role nobody can yet be
+ * given through the UI.
+ */
+export type Role = 'ADMIN' | 'OPERATOR' | 'VIEWER';
 
 export type SessionUser = {
   /** The Supabase Auth id. `app_users.id` **is** this value (spec/domain.md §5.1). */

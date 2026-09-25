@@ -35,11 +35,12 @@ the short version is that anything still true next week belongs in `docs/spec/`,
 notes and feedback). The 19 Sep concert ran on V1; its feedback went out on 20 Sep. `pnpm dev`,
 `pnpm test`, `pnpm build` and CI pass.
 
-**Now: V3, specified and not started.** The console is being rebuilt around one record, the party,
+**Now: V3, in progress.** `P`, the schema delta (`drizzle/0200_v3_schema_delta.sql`), is done;
+**`Q` is next.** The console is being rebuilt around one record, the party,
 with derived stages, work queues, whole-job commands, a send wizard, an intake review gate, an inbox
 for replies and bounces, a `pg_cron` scheduler and named roles. Behaviour is `docs/spec/v3.md`; the
 branch map is `docs/modules-v3.md` (`P`–`X`, each PR straight to `main`, migrations from `0200`); the
-decisions it reverses are `docs/spec/decisions.md` §19.3. **Start with `P`.** Every module branch starts by rebasing onto `main` and reading its handoff there (`modules-v3.md` §3). Until V3 lands, the
+decisions it reverses are `docs/spec/decisions.md` §19.3. Every module branch starts by rebasing onto `main` and reading its handoff there (`modules-v3.md` §3). Until V3 lands, the
 non-negotiables below describe the running system — where V3 changes one, the spec says so.
 
 Deployment: Supabase live (`docs/local.md` §4, §5a, §8), Vercel project `zetix` in `sin1`,

@@ -457,6 +457,113 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
       },
     ],
   },
+  {
+    /**
+     * The nine keys V3 adds (spec/v3.md §30.2). Every one is seeded at system
+     * level like any other runtime value — none is a code default — and every
+     * one describes the runtime or a review policy, not this event.
+     */
+    title: 'Review, delivery and scheduling',
+    blurb:
+      'V3. How intake is reviewed, how receipts and replies are handled, and how often the scheduler runs. Seeded at install; change them here or per concert or segment where noted.',
+    settings: [
+      {
+        key: 'email.receipt_hold_minutes',
+        min: 0,
+        max: 1440,
+        label: 'Receipt hold (minutes)',
+        kind: 'number',
+        description:
+          'How long a receipt waits before it is due. Repeat submissions from the same address inside it collapse into one email. Usually set per concert.',
+        operational: false,
+        level: 'concert',
+      },
+      {
+        key: 'review.auto_approve_clean',
+        label: 'Auto-approve clean parties',
+        kind: 'boolean',
+        description:
+          'Approve a party with no flags the moment it submits, so only flagged parties wait in Needs review. Usually set per segment.',
+        operational: false,
+        level: 'segment',
+      },
+      {
+        key: 'review.duplicate_name_similarity',
+        min: 0,
+        max: 1,
+        integer: false,
+        label: 'Duplicate name similarity',
+        kind: 'number',
+        description:
+          'Two parties in a show whose contact or guest names are at least this similar (0–1) are shown as possible duplicates.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'delivery.review_single_party',
+        label: 'Review one-party resends',
+        kind: 'boolean',
+        description:
+          'Whether resending to a single party from its record must pass the wizard’s design and email steps. Bulk sends always do.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'admin.typed_confirm_above',
+        min: 0,
+        label: 'Typed confirmation above (rows)',
+        kind: 'number',
+        description:
+          'An irreversible command touching more rows than this needs its confirmation phrase typed out.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'scheduler.tick_minutes',
+        /**
+         * 1–59 because the pg_cron schedule is "every N minutes" in cron's
+         * minute field, which means nothing past 59. `schedule_scheduler_jobs()` refuses the
+         * same range, so a value outside it fails at save rather than at 3am.
+         */
+        min: 1,
+        max: 59,
+        label: 'Scheduler interval (minutes)',
+        kind: 'number',
+        description:
+          'How often pg_cron calls the tick that sends due mail, continues long commands and syncs the inbox. Changing it re-schedules the job.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'scheduler.history_days',
+        min: 1,
+        label: 'Scheduler history (days)',
+        kind: 'number',
+        description: 'How long pg_cron and pg_net keep their run history before it is trimmed.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'inbox.match_fallback_days',
+        min: 0,
+        label: 'Reply match window (days)',
+        kind: 'number',
+        description:
+          'A reply that lost its threading headers is matched by sender address alone only within this many days of a message to them.',
+        operational: false,
+        level: 'system',
+      },
+      {
+        key: 'inbox.sync_budget_seconds',
+        min: 1,
+        label: 'Inbox sync budget (seconds)',
+        kind: 'number',
+        description: 'The share of each scheduler tick spent reading the mailbox.',
+        operational: false,
+        level: 'system',
+      },
+    ],
+  },
 ];
 
 export const ALL_SETTINGS: SettingSpec[] = SETTING_GROUPS.flatMap((group) => group.settings);

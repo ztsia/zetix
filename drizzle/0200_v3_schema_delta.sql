@@ -1623,6 +1623,12 @@ revoke all on table "scheduler_heartbeat" from anon, authenticated;--> statement
 -- caller has any.
 revoke all on table party_pipeline from public, anon, authenticated;--> statement-breakpoint
 
+-- The nine new identity sequences, as 0004 did for the first ones. On Supabase
+-- some default privileges belong to `supabase_admin` and 0004 could not alter
+-- them, so a new sequence may arrive with `usage` for both roles; this takes it
+-- back rather than relying on the default.
+revoke all on all sequences in schema public from anon, authenticated;--> statement-breakpoint
+
 -- Every function this migration creates, off PUBLIC for the reason 0004 gives:
 -- execute defaults to PUBLIC, and PostgREST serves every function at
 -- `/rest/v1/rpc/<name>`. `schedule_scheduler_jobs()` in particular must never

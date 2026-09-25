@@ -6,7 +6,7 @@ import { asc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { attendees, registrations } from '@/db/schema/registrations';
 import { showSegments, shows } from '@/db/schema/shows';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
 import { dismissReissue, issueTickets, reissueTickets } from '@/lib/tickets/issue';
 import {
@@ -20,7 +20,7 @@ import {
  * The two ticket mutations (spec/tickets.md §10.5).
  *
  * Server Actions, because both are admin buttons rather than URLs anything
- * external calls (CLAUDE.md conventions). **Each re-checks `requireAdmin()`
+ * external calls (CLAUDE.md conventions). **Each re-checks `requireRole('ADMIN')`
  * itself**: a Server Action is its own entry point, so the page's guard does
  * not cover it, and the proxy never reads a role (modules.md §5.2.1).
  *
@@ -43,7 +43,7 @@ export type TicketActionResult =
 export async function issueTicketsAction(
   input: z.infer<typeof scopeSchema>,
 ): Promise<TicketActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = scopeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };
@@ -79,7 +79,7 @@ export async function issueTicketsAction(
 export async function reissueTicketsAction(
   input: z.infer<typeof scopeSchema>,
 ): Promise<TicketActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = scopeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };
@@ -146,7 +146,7 @@ export type MatchingIdsResult =
 export async function matchingTicketIdsAction(
   input: z.infer<typeof filtersSchema>,
 ): Promise<MatchingIdsResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = filtersSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };
@@ -199,7 +199,7 @@ function messageOf(error: unknown): string {
 /** Re-render the screen after a mutation so the counts are current. */
 export async function refreshTickets(concertId: number): Promise<void> {
   // Only a cache refresh, but still reachable by name from any browser.
-  await requireAdmin();
+  await requireRole('ADMIN');
   revalidatePath(`/admin/concerts/${concertId}/tickets`);
 }
 
@@ -214,7 +214,7 @@ export async function refreshTickets(concertId: number): Promise<void> {
 export async function dismissReissueAction(
   input: z.infer<typeof scopeSchema>,
 ): Promise<TicketActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = scopeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };

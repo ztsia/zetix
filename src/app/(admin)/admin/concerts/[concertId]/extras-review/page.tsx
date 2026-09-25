@@ -9,6 +9,8 @@ import {
 import { getConcertHeader } from '../shows/queries';
 import { listReviewSegments, loadReviewBoard } from './queries';
 import { ReviewBoard } from './review-board';
+import { maskForRole } from '@/lib/auth/mask';
+import { requireRole } from '@/lib/auth/guards';
 
 export const metadata: Metadata = { title: 'Extras review' };
 
@@ -32,6 +34,7 @@ export default async function ExtrasReviewPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<{ segment?: string }>;
 }) {
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -79,7 +82,7 @@ export default async function ExtrasReviewPage({
   return (
     <ReviewBoard
       concertId={concertId}
-      data={data}
+      data={maskForRole(user.role, data)}
       segments={segments}
       timeZone={concert.timezone}
     />

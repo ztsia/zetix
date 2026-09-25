@@ -85,6 +85,12 @@ const ADMIN = {
   displayName: 'Committee',
   role: 'ADMIN' as const,
 };
+const VIEWER = {
+  id: '00000000-0000-4000-8000-0000000000bb',
+  email: 'viewer@example.test',
+  displayName: 'Mei',
+  role: 'VIEWER' as const,
+};
 const OPERATOR = {
   id: '00000000-0000-4000-8000-000000000101',
   email: 'wei@operators.invalid',
@@ -100,6 +106,7 @@ async function outcome(run: () => Promise<unknown>): Promise<string> {
   } catch (error) {
     if (error instanceof RedirectSignal) return `redirect:${error.to}`;
     if (error instanceof NotFoundSignal) return 'notFound';
+    if (error instanceof Error && error.name === 'ReadOnlyAccountError') return 'read-only';
     throw error;
   }
 }
@@ -115,6 +122,7 @@ beforeEach(async () => {
   await sql`
     insert into app_users (id, email, display_name, role, is_active) values
       (${ADMIN.id}, ${ADMIN.email}, 'Committee', 'ADMIN', true),
+      (${VIEWER.id}, ${VIEWER.email}, 'Mei', 'VIEWER', true),
       (${OPERATOR.id}, ${OPERATOR.email}, 'Wei', 'OPERATOR', true)
   `;
 
@@ -142,7 +150,7 @@ beforeEach(async () => {
   checkInId = Number(scan!.id);
 });
 
-describe('the pages are behind requireAdmin()', () => {
+describe('the pages are behind requireRole()', () => {
   const pages = [
     ['operators', () => OperatorsPage({ params: Promise.resolve({ concertId: String(concertId) }) })],
     [
@@ -168,6 +176,11 @@ describe('the pages are behind requireAdmin()', () => {
 
     it(`${name}: the admin gets in`, async () => {
       sessionUser.mockResolvedValue(ADMIN);
+      expect(await outcome(render)).toBe('allowed');
+    });
+
+    it(`${name}: a viewer reads it (spec/v3.md §28)`, async () => {
+      sessionUser.mockResolvedValue(VIEWER);
       expect(await outcome(render)).toBe('allowed');
     });
   }
@@ -203,8 +216,17 @@ describe('every operator action calls its guard', () => {
     }
   });
 
+  it('refuses a viewer — read-only means no provisioning (spec/v3.md §28)', async () => {
+    sessionUser.mockResolvedValue(VIEWER);
+    for (const [name, run] of actions()) {
+      expect(await outcome(run), name).toBe('read-only');
+    }
+  });
+
   it('leaves nothing behind when it refuses', async () => {
     sessionUser.mockResolvedValue(OPERATOR);
+    for (const [, run] of actions()) await outcome(run);
+    sessionUser.mockResolvedValue(VIEWER);
     for (const [, run] of actions()) await outcome(run);
 
     const users = await sql`select count(*)::int as n from app_users where role = 'OPERATOR'`;
@@ -225,6 +247,14 @@ describe('revertCheckInAction calls its guard', () => {
   it('refuses an operator: admitting is theirs, unwriting the record is not', async () => {
     sessionUser.mockResolvedValue(OPERATOR);
     expect(await outcome(revert)).toBe('redirect:/scan');
+
+    const rows = await sql`select reverted_at from check_ins where id = ${checkInId}`;
+    expect(rows[0]!.reverted_at).toBeNull();
+  });
+
+  it('refuses a viewer, and the scan stays admitted', async () => {
+    sessionUser.mockResolvedValue(VIEWER);
+    expect(await outcome(revert)).toBe('read-only');
 
     const rows = await sql`select reverted_at from check_ins where id = ${checkInId}`;
     expect(rows[0]!.reverted_at).toBeNull();

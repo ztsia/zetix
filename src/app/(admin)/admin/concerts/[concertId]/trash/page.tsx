@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { parseTableState } from '@/components/data-table/url-state';
 import { listTrash, trashKindSchema } from '@/lib/trash/queries';
 import { getConcertHeader } from '../shows/queries';
 import { TrashTable } from './trash-table';
+import { maskForRole, masksContacts } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Trash' };
 
@@ -24,7 +25,7 @@ export default async function TrashPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -38,6 +39,7 @@ export default async function TrashPage({
     search: state.search,
     pageIndex: state.pageIndex,
     pageSize: state.pageSize,
+    labelOnly: masksContacts(user.role),
   });
 
   return (
@@ -54,7 +56,7 @@ export default async function TrashPage({
         timeZone={concert.timezone ?? 'UTC'}
         kind={kind}
         state={{ ...state, extra: { ...state.extra, kind } }}
-        page={page}
+        page={maskForRole(user.role, page)}
       />
     </div>
   );

@@ -292,8 +292,8 @@ Paste into Gemini Deep Research if reconsidering the hosting decision.
 | `GMAIL_APP_PASSWORD` | server | App password, not the account password; requires 2FA |
 | `APP_URL` | server | Absolute base for QR URLs and email links; must be the production origin |
 | `CRON_SECRET` | server | Shared secret checked by `/api/health` and dispatch routes so they are not openly callable |
-| `ADMIN_EMAIL` | server | Constant address behind the code-only admin login (`admin.md` §14.3) |
-| `BOOTSTRAP_ADMIN_PASSWORD` | script | The initial shared admin code; rotate from the UI afterwards |
+| `ADMIN_EMAIL` | script | The admin `scripts/bootstrap-admin.ts` creates or restores. The app no longer reads it since named accounts (`v3.md` §28) |
+| `BOOTSTRAP_ADMIN_PASSWORD` | script | That admin's password. `BOOTSTRAP_ADMIN_NAME` optionally names them. Every later account is made in Settings › People |
 
 `APP_URL` deserves care: it is baked into every QR code at issue time and cannot be recalled. Set it
 before the first render, not before the first send.

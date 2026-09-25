@@ -20,6 +20,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { AdminNote } from './queries';
 import { moderateNotesAction, setNotesOnWallAction } from './actions';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * §14.2's wall view: "approved notes as cards, filterable by show, player,
@@ -180,44 +181,46 @@ export function NotesBoard({
             : `${chosen.length} selected of ${notes.length}`}
         </Label>
 
-        <ButtonGroup className="ml-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pending || chosen.length === 0}
-            onClick={() => run(() => moderateNotesAction(concertId, chosen, 'APPROVED'))}
-          >
-            {pending ? <Spinner data-icon="inline-start" /> : <CheckIcon />}
-            Approve
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pending || chosen.length === 0}
-            onClick={() => run(() => moderateNotesAction(concertId, chosen, 'HIDDEN'))}
-          >
-            <EyeOffIcon />
-            Hide
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pending || chosen.length === 0}
-            onClick={() => run(() => setNotesOnWallAction(concertId, chosen, true))}
-          >
-            <UploadIcon />
-            Publish
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pending || chosen.length === 0}
-            onClick={() => run(() => setNotesOnWallAction(concertId, chosen, false))}
-          >
-            <RotateCcwIcon />
-            Unpublish
-          </Button>
-        </ButtonGroup>
+        <AdminOnly>
+          <ButtonGroup className="ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending || chosen.length === 0}
+              onClick={() => run(() => moderateNotesAction(concertId, chosen, 'APPROVED'))}
+            >
+              {pending ? <Spinner data-icon="inline-start" /> : <CheckIcon />}
+              Approve
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending || chosen.length === 0}
+              onClick={() => run(() => moderateNotesAction(concertId, chosen, 'HIDDEN'))}
+            >
+              <EyeOffIcon />
+              Hide
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending || chosen.length === 0}
+              onClick={() => run(() => setNotesOnWallAction(concertId, chosen, true))}
+            >
+              <UploadIcon />
+              Publish
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending || chosen.length === 0}
+              onClick={() => run(() => setNotesOnWallAction(concertId, chosen, false))}
+            >
+              <RotateCcwIcon />
+              Unpublish
+            </Button>
+          </ButtonGroup>
+        </AdminOnly>
       </div>
 
       {filtered.length === 0 ? (

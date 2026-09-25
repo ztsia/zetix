@@ -10,7 +10,7 @@ import { concerts } from '@/db/schema/concerts';
 import { formResponses, registrationForms } from '@/db/schema/registrations';
 import { shows, showSegments } from '@/db/schema/shows';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { FORM_KINDS, parseFormSchema, type FormKind } from '@/lib/forms/schema';
 import { blankFormSchema } from '@/lib/forms/templates';
 import { slugify } from '../../form-state';
@@ -185,7 +185,7 @@ export async function createFormAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = createSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -292,7 +292,7 @@ export async function saveFormSchemaAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const form = await loadForm(concertId, formId);
   if (!form) return { error: 'That form no longer exists.' };
@@ -373,7 +373,7 @@ export async function saveFormSettingsAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const form = await loadForm(concertId, formId);
   if (!form) return { error: 'That form no longer exists.' };
@@ -458,7 +458,7 @@ export async function saveFormHeaderAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const form = await loadForm(concertId, formId);
   if (!form) return { error: 'That form no longer exists.' };
@@ -506,7 +506,7 @@ export async function setFormStatusAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const form = await loadForm(concertId, formId);
   if (!form) return { error: 'That form no longer exists.' };
@@ -582,7 +582,7 @@ export async function startNewRoundAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const source = await loadForm(concertId, formId);
   if (!source) return { error: 'That form no longer exists.' };

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { writeAuditLog } from '@/lib/audit';
 import { layoutSchema } from '@/lib/tickets/layout';
 import {
@@ -18,7 +18,7 @@ import {
  *
  * Server Actions, because each is an admin button rather than a URL anything
  * external calls (CLAUDE.md conventions). **Every one re-checks
- * `requireAdmin()`**: a Server Action is its own entry point, so the page's
+ * `requireRole('ADMIN')`**: a Server Action is its own entry point, so the page's
  * guard does not cover it (modules.md §5.2.1).
  *
  * The layout arrives from a browser and is parsed with the same `zod` schema the
@@ -43,7 +43,7 @@ const saveSchema = z.object({
 export async function saveTemplateAction(
   input: z.infer<typeof saveSchema>,
 ): Promise<TemplateActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = saveSchema.safeParse(input);
   if (!parsed.success) {
@@ -123,7 +123,7 @@ const templateSchema = z.object({
 export async function setDefaultTemplateAction(
   input: z.infer<typeof templateSchema>,
 ): Promise<TemplateActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = templateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };
@@ -151,7 +151,7 @@ export async function setDefaultTemplateAction(
 export async function duplicateTemplateAction(
   input: z.infer<typeof templateSchema>,
 ): Promise<TemplateActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = templateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };
@@ -182,7 +182,7 @@ export async function duplicateTemplateAction(
 export async function deleteTemplateAction(
   input: z.infer<typeof templateSchema>,
 ): Promise<TemplateActionResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = templateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Malformed request.' };

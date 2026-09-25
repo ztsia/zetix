@@ -10,6 +10,8 @@ import {
   type AttendeeRow,
 } from './queries';
 import { RegistrationsTable } from './registrations-table';
+import { maskForRole } from '@/lib/auth/mask';
+import { requireRole } from '@/lib/auth/guards';
 
 export const metadata: Metadata = { title: 'Registrations' };
 
@@ -30,6 +32,7 @@ export default async function RegistrationsPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
+  const user = await requireRole('ADMIN', 'VIEWER');
   const { concertId: raw } = await params;
   const concertId = Number(raw);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -71,8 +74,8 @@ export default async function RegistrationsPage({
       <RegistrationsTable
         concertId={concertId}
         timeZone={concert.timezone}
-        registrations={registrations}
-        attendeesByRegistration={attendeesByRegistration}
+        registrations={maskForRole(user.role, registrations)}
+        attendeesByRegistration={maskForRole(user.role, attendeesByRegistration)}
         segments={segments}
         players={players}
       />

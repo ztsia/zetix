@@ -49,19 +49,23 @@ const GROUP_SIZE = 4;
  * rest and quietly cost a few bits. Bytes that land in the short tail are
  * discarded and redrawn instead, which is unbiased and, at a 94% acceptance
  * rate, costs nothing worth measuring.
+ *
+ * `length` exists for Settings › People, whose console passwords reach the whole
+ * console rather than one show's roster and are drawn longer
+ * (`src/lib/people/provision.ts`). An operator's code is always the default.
  */
-export function generateAccessCode(): string {
+export function generateAccessCode(length: number = ACCESS_CODE_LENGTH): string {
   const size = ACCESS_CODE_ALPHABET.length;
   /** The largest multiple of `size` that fits in a byte; above it, redraw. */
   const limit = Math.floor(256 / size) * size;
 
   const chars: string[] = [];
-  while (chars.length < ACCESS_CODE_LENGTH) {
+  while (chars.length < length) {
     // Drawn in batches so a code costs one or two syscalls rather than twelve.
-    for (const byte of randomBytes(ACCESS_CODE_LENGTH)) {
+    for (const byte of randomBytes(length)) {
       if (byte >= limit) continue;
       chars.push(ACCESS_CODE_ALPHABET[byte % size]!);
-      if (chars.length === ACCESS_CODE_LENGTH) break;
+      if (chars.length === length) break;
     }
   }
 

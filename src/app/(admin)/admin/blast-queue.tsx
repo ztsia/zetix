@@ -17,6 +17,7 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
 import type { OutboxBacklog } from '@/lib/email/dispatch';
+import { useCanEdit } from '@/components/auth/role';
 
 /**
  * The dispatch loop and its banner (spec/email.md §11.2.1, surfaces.md §15.1).
@@ -245,9 +246,12 @@ type View = {
  */
 export function BlastQueueBanner() {
   const context = useContext(BlastQueueContext);
+  const canEdit = useCanEdit();
   if (!context) return null;
 
   const { backlog, sending, progress, outcome, liveBacklog, dismissed, dismiss, start } = context;
+  // A viewer sees the queue's state but cannot drive it (spec/v3.md §28): the
+  // dispatch route refuses them, so Resume would be a button that fails.
 
   const live = liveBacklog ?? backlog;
   const queued = live.resumable;
@@ -413,7 +417,7 @@ export function BlastQueueBanner() {
         <ItemDescription aria-live="polite">{view.description}</ItemDescription>
       </ItemContent>
       <ItemActions>
-        {view.canResume ? (
+        {view.canResume && canEdit ? (
           <Button variant="outline" onClick={start}>
             Resume
           </Button>

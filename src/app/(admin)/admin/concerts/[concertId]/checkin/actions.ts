@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { dbErrorMessage } from '@/db/errors';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { canAccessShow } from '@/lib/auth/show-access';
 import { RevertError, revertCheckIn } from '@/lib/checkin/revert';
 import type { FormState } from '../../form-state';
@@ -11,10 +11,10 @@ import type { FormState } from '../../form-state';
 /**
  * Reverting a mistaken scan from the dashboard (spec/checkin.md §12.4).
  *
- * **`requireAdmin()` here, not on the page alone.** A Server Action is its own
+ * **`requireRole('ADMIN')` here, not on the page alone.** A Server Action is its own
  * POST entry point (modules.md §5.2.1). Reverting is an admin action only — an
  * operator at the door can admit anyone, but undoing the record of an admission
- * is not theirs to do, and `requireAdmin()` is what says so.
+ * is not theirs to do, and `requireRole('ADMIN')` is what says so.
  *
  * `canAccessShow()` runs as well. For an `ADMIN` it is always true, so it buys
  * nothing today — it is here because it is the same authorization question the
@@ -35,7 +35,7 @@ export async function revertCheckInAction(input: {
   concertId: number;
   reason?: string | null;
 }): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = schema.safeParse({ ...input, reason: input.reason ?? null });
   if (!parsed.success) return { error: 'Malformed request.' };

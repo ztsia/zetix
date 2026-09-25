@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { hasRole } from '@/lib/auth/guards';
 import { getSessionUser } from '@/lib/auth/session';
 import { assetEtag, getAsset } from '@/lib/tickets/assets';
 
@@ -9,9 +10,10 @@ import { assetEtag, getAsset } from '@/lib/tickets/assets';
  * HTTP. Neither backend can serve them directly: the local directory is not
  * inside `public/`, and the Supabase bucket is private.
  *
- * **Admins only, like every other view of ticket artwork.** The path is a random
- * UUID and therefore unguessable, but "unguessable" is not an authorization
- * check, and the same 404 answers "no such asset" and "not signed in" so probing
+ * **Admins and viewers only.** A viewer reads the template editor (spec/v3.md
+ * §28), and artwork holds no attendee's details; an operator has no reason to
+ * see it. The path is a random UUID and therefore unguessable, but
+ * "unguessable" is not an authorization check, and the same 404 answers "no such asset" and "not signed in" so probing
  * cannot tell them apart.
  */
 export const runtime = 'nodejs';
@@ -21,7 +23,7 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   const user = await getSessionUser();
-  if (!user || user.role !== 'ADMIN') {
+  if (!hasRole(user, 'ADMIN', 'VIEWER')) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

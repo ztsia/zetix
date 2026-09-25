@@ -5,9 +5,10 @@ import { authFailures } from '@/db/schema/auth';
 import { requireSetting } from '@/db/settings';
 
 /**
- * The admin login throttle (spec/admin.md §14.3, spec/README.md §4.2).
+ * The console login throttle (spec/admin.md §14.3, spec/v3.md §28).
  *
- * `auth.admin_max_attempts` failures per IP inside `auth.admin_lockout_window_min`,
+ * `auth.admin_max_attempts` failures per bucket — per IP, and per account since
+ * V3's named accounts ({@link accountBucket}) — inside `auth.admin_lockout_window_min`,
  * then a lockout that grows with each further failure. **Both numbers come from
  * the cascade** — they are seeded system values, not literals, and changing the
  * policy is an admin edit rather than a deploy (`CLAUDE.md`).
@@ -33,7 +34,7 @@ import { requireSetting } from '@/db/settings';
  * - `spec/README.md` §4.2 scopes V1 throttling to the admin credential.
  * - An usher locked out of the door app mid-queue is a worse failure on the
  *   night than the one throttling would prevent.
- * - An operator's blast radius is one show's roster; the admin code is
+ * - An operator's blast radius is one show's roster; a console password is
  *   everything.
  *
  * **Do not assume the platform covers the gap.** An independent QA pass fired 60
@@ -52,6 +53,8 @@ export type RateLimitVerdict =
 export function adminBucket(ip: string): string {
   return `admin:${ip}`;
 }
+
+export { accountBucket } from './account-bucket';
 
 /**
  * Headers the **platform** sets and strips from inbound requests, so a caller

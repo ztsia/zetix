@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/table';
 import { overrideVerificationAction } from './actions';
 import type { UnverifiedRegistration } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The unverified list, with the override beside each row.
@@ -92,15 +93,17 @@ export function UnverifiedTable({
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pending}
-                    onClick={() => release(row.id)}
-                  >
-                    {pending && busyId === row.id ? <Spinner data-icon="inline-start" /> : null}
-                    Release
-                  </Button>
+                  <AdminOnly>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => release(row.id)}
+                    >
+                      {pending && busyId === row.id ? <Spinner data-icon="inline-start" /> : null}
+                      Release
+                    </Button>
+                  </AdminOnly>
                 </TableCell>
               </TableRow>
             ))}

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { resolveFormCopy } from '@/lib/forms/resolve-copy';
 import { resolveRepeaterLimits } from '@/lib/forms/limits';
 import { parseFormSchema } from '@/lib/forms/schema';
@@ -25,8 +25,8 @@ export const metadata: Metadata = {
  * admin chrome anywhere (`surfaces.md` §15.2). A preview drawn inside the
  * console is a preview of the console.
  *
- * **Admin-only, despite the address.** It sits under `(registration)` for the
- * layout and nothing else; `requireAdmin` is what decides who may open it. A
+ * **Console-only (admin or viewer), despite the address.** It sits under `(registration)` for the
+ * layout and nothing else; `requireRole` is what decides who may open it. A
  * draft form is not public, and this route reaches one by id without any of the
  * gates `/f/{slug}` applies — no `OPEN` status, no open/close window, no
  * capacity check. That is the point of a preview and exactly why it may not be
@@ -43,7 +43,7 @@ export default async function FormPreviewPage({
 }: {
   params: Promise<{ formId: string }>;
 }) {
-  await requireAdmin();
+  await requireRole('ADMIN', 'VIEWER');
 
   const { formId: raw } = await params;
   const formId = Number(raw);

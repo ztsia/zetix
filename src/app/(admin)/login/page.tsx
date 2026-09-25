@@ -31,8 +31,10 @@ export default async function AdminLoginPage({
   const { next } = await searchParams;
   const user = await getSessionUser();
 
-  if (user?.role === 'ADMIN') redirect(safeRedirect(next ?? null, '/admin'));
-  // An operator who lands here is already signed in; the admin code would not
+  if (user?.role === 'ADMIN' || user?.role === 'VIEWER') {
+    redirect(safeRedirect(next ?? null, '/admin'));
+  }
+  // An operator who lands here is already signed in; signing in again would not
   // change their role, so send them to the surface they do have.
   if (user?.role === 'OPERATOR') redirect('/scan');
 
@@ -48,9 +50,9 @@ export default async function AdminLoginPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Admin sign-in</CardTitle>
+            <CardTitle>Sign in</CardTitle>
             <CardDescription>
-              Enter the shared committee code to reach the console.
+              Use the email and password an admin set up for you.
             </CardDescription>
           </CardHeader>
           <CardContent>

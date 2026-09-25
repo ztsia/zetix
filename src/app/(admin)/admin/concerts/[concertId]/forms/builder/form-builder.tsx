@@ -45,6 +45,7 @@ import {
 } from './operations';
 import { QuestionCard } from './question-card';
 import { SectionCard } from './section-card';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * The builder, drawn as Google Forms draws its editor (spec/v2.md §8.2).
@@ -329,14 +330,16 @@ export function FormBuilder({
           </p>
           <div className="flex items-center gap-1">
             <TokenHelp />
-            <Button
-              type="button"
-              onClick={save}
-              disabled={isPending || !dirty || !parsed.ok || title.trim() === ''}
-            >
-              {isPending ? <Spinner /> : <Save />}
-              {isPending ? 'Saving…' : 'Save'}
-            </Button>
+            <AdminOnly>
+              <Button
+                type="button"
+                onClick={save}
+                disabled={isPending || !dirty || !parsed.ok || title.trim() === ''}
+              >
+                {isPending ? <Spinner /> : <Save />}
+                {isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </AdminOnly>
           </div>
         </div>
       )}

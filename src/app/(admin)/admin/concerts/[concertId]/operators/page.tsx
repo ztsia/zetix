@@ -5,8 +5,9 @@ import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
 import { appUsers } from '@/db/schema/people';
 import { shows } from '@/db/schema/shows';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { OperatorsScreen, type OperatorRow, type ShowOption } from './operators-screen';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Operators' };
 
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: 'Operators' };
  * `/admin/concerts/{id}/operators` — provision operators, assign shows, reset
  * codes, deactivate (spec/admin.md §14.3, spec/checkin.md §12.1).
  *
- * **`requireAdmin()` here and again in every action.** This page lists who can
+ * **`requireRole()` here and again in every action.** This page lists who can
  * reach an attendee roster and hands out the credential that gets them there;
  * the Server Actions behind it are their own POST entry points, so the guard on
  * this page does not cover them (modules.md §5.2.1).
@@ -32,7 +33,7 @@ export default async function OperatorsPage({
 }: {
   params: Promise<{ concertId: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const concertId = Number((await params).concertId);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -119,7 +120,7 @@ export default async function OperatorsPage({
       // viewer's (spec/domain.md §6.1).
       timeZone={concert.timezone ?? 'UTC'}
       shows={showOptions}
-      operators={rows}
+      operators={maskForRole(user.role, rows)}
     />
   );
 }

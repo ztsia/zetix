@@ -18,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { NoteCard } from './notes-board';
 import { queueDigestAction } from './actions';
 import type { PlayerGroup } from './queries';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * §14.2's grouped view — "a collapsible section per player with every note
@@ -110,23 +111,25 @@ export function PlayerGroups({
             * "export these players' notes" and "export all of them" are the
             * same control (§14.2).
             */}
-          <a
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-            href={`/api/notes/export?concertId=${concertId}${
-              chosen.length > 0 ? `&playerIds=${chosen.join(',')}` : ''
-            }`}
-          >
-            <DownloadIcon />
-            Export CSV
-          </a>
-          <Button
-            size="sm"
-            disabled={pending || chosen.length === 0}
-            onClick={() => queue(chosen)}
-          >
-            {pending ? <Spinner data-icon="inline-start" /> : <MailIcon />}
-            Queue digest
-          </Button>
+          <AdminOnly>
+            <a
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+              href={`/api/notes/export?concertId=${concertId}${
+                chosen.length > 0 ? `&playerIds=${chosen.join(',')}` : ''
+              }`}
+            >
+              <DownloadIcon />
+              Export CSV
+            </a>
+            <Button
+              size="sm"
+              disabled={pending || chosen.length === 0}
+              onClick={() => queue(chosen)}
+            >
+              {pending ? <Spinner data-icon="inline-start" /> : <MailIcon />}
+              Queue digest
+            </Button>
+          </AdminOnly>
         </div>
       </div>
 

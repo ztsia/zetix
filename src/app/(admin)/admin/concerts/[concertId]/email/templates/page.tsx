@@ -3,13 +3,14 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
 import { formatInZone, ticketLinks } from '@/lib/email/queue';
 import { toNameCase } from '@/lib/names';
 import { TEMPLATE_KEYS } from '@/lib/email/templates';
 import { Button } from '@/components/ui/button';
 import { TemplateEditor, type PreviewRecipient } from './template-editor';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Email templates' };
 
@@ -28,7 +29,7 @@ export default async function TemplatesPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<{ key?: string }>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const { concertId: rawConcertId } = await params;
   const concertId = Number(rawConcertId);
@@ -255,7 +256,7 @@ export default async function TemplatesPage({
         name={rows[0].name}
         subject={rows[0].subject}
         bodyMd={rows[0].body_md}
-        recipients={recipients}
+        recipients={maskForRole(user.role, recipients)}
       />
     </div>
   );

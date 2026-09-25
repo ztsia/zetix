@@ -35,6 +35,7 @@ import {
 import { DataTablePagination } from './pagination';
 import { DataTableViewOptions } from './view-options';
 import { DataTableExportMenu, type DataTableExport } from './export-menu';
+import { useCanEdit } from '@/components/auth/role';
 
 /**
  * The one shared table (spec/surfaces.md §15.1, spec/modules.md §4).
@@ -206,6 +207,12 @@ export function DataTable<TData extends RowData>({
   initialPageSize = 25,
   className,
 }: DataTableProps<TData>) {
+  // A viewer may read a table but not take it away (spec/v3.md §28). The export
+  // runs in the browser over rows the viewer already holds — masked — so this
+  // is a promise kept rather than a boundary; the server routes that export
+  // unmasked data refuse a viewer on their own.
+  const canExport = useCanEdit();
+
   /**
    * In server mode the parent is the source of truth, so the table is told not
    * to slice, sort or filter what it was handed — it already holds exactly one
@@ -354,7 +361,7 @@ export function DataTable<TData extends RowData>({
         </div>
         <div className="flex items-center gap-2">
           <DataTableViewOptions table={table} />
-          {exportConfig && (
+          {exportConfig && canExport && (
             <DataTableExportMenu
               rows={exportRows}
               config={exportConfig}

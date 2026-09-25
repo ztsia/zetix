@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { signOut } from '@/lib/auth/actions';
-import { CONCERT_NAV, SETTINGS_ITEM } from './nav';
+import { CONCERT_NAV, PEOPLE_ITEM, SETTINGS_ITEM } from './nav';
 
 export type ConcertSummary = { id: number; name: string; season: string | null };
 
@@ -152,6 +152,16 @@ export function AppSidebar({
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={pathname === '/admin/settings/people'}
+              tooltip={PEOPLE_ITEM.label}
+              render={<Link href="/admin/settings/people" />}
+            >
+              <PEOPLE_ITEM.icon />
+              <span>{PEOPLE_ITEM.label}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={pathname === '/admin/settings'}

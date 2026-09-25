@@ -5,7 +5,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
 import { shows } from '@/db/schema/shows';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import {
   ARRIVAL_BUCKET_MINUTES,
   getArrivalBuckets,
@@ -17,6 +17,7 @@ import {
 import { getRejectedSyncs } from '@/lib/checkin/rejected-sync';
 import { CheckinDashboard } from './checkin-dashboard';
 import { nearestShowId } from './dashboard-url';
+import { maskForRole } from '@/lib/auth/mask';
 
 export const metadata: Metadata = { title: 'Check-in' };
 
@@ -54,7 +55,7 @@ export default async function CheckinPage({
   params: Promise<{ concertId: string }>;
   searchParams: Promise<Search>;
 }) {
-  await requireAdmin();
+  const user = await requireRole('ADMIN', 'VIEWER');
 
   const concertId = Number((await params).concertId);
   if (!Number.isInteger(concertId) || concertId <= 0) notFound();
@@ -154,12 +155,12 @@ export default async function CheckinPage({
       stats={stats}
       arrivals={arrivals}
       bucketMinutes={ARRIVAL_BUCKET_MINUTES}
-      operatorCounts={operatorCounts}
-      rejectedSyncs={rejectedSyncs}
+      operatorCounts={maskForRole(user.role, operatorCounts)}
+      rejectedSyncs={maskForRole(user.role, rejectedSyncs)}
       // The client omits this id from the query string, so it must be the same
       // default this page applies — otherwise a shared link reopens elsewhere.
       defaultShowId={nearestShowId(showOptions)}
-      scanLog={scanLog}
+      scanLog={maskForRole(user.role, scanLog)}
       pageIndex={pageIndex}
       pageSize={pageSize}
       sorting={sorting}

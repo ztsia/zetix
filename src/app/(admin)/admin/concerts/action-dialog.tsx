@@ -16,6 +16,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import type { FormState } from './form-state';
+import { useCanEdit } from '@/components/auth/role';
 
 /**
  * A form in a dialog, wired to one of module `A`'s Server Actions.
@@ -79,6 +80,7 @@ export function ActionDialog({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const canEdit = useCanEdit();
 
   function submit(formData: FormData) {
     setError(null);
@@ -93,6 +95,10 @@ export function ActionDialog({
       router.refresh();
     });
   }
+
+  // Every ActionDialog submits a mutation, so a viewer is not shown the
+  // trigger at all (spec/v3.md §28). The action refuses them regardless.
+  if (!canEdit) return null;
 
   return (
     <Dialog

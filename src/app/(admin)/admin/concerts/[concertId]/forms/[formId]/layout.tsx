@@ -8,6 +8,7 @@ import { getForm } from '../queries';
 import { CopyLinkButton } from './copy-link-button';
 import { FormTabs } from './form-tabs';
 import { StatusControls } from './status-controls';
+import { AdminOnly } from '@/components/auth/role';
 
 /**
  * One form, in Google Forms' frame (spec/v2.md §8.2, spec/admin.md §14.1).
@@ -101,13 +102,15 @@ export default async function FormLayout({
               appUrl={process.env.APP_URL ?? null}
             />
 
-            <StatusControls
-              concertId={concertId}
-              formId={formId}
-              status={form.status}
-              responses={form.responses}
-              title={form.title}
-            />
+            <AdminOnly>
+              <StatusControls
+                concertId={concertId}
+                formId={formId}
+                status={form.status}
+                responses={form.responses}
+                title={form.title}
+              />
+            </AdminOnly>
           </div>
         </div>
 

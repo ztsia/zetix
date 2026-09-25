@@ -35,6 +35,7 @@ import {
   runCommandAction,
 } from './actions';
 import { RunReportView } from './run-report';
+import { useCanEdit } from '@/components/auth/role';
 
 /**
  * Preview → run → report, for any command over any selection
@@ -82,6 +83,7 @@ export function CommandDialog({
   onDone?: () => void;
 }) {
   const router = useRouter();
+  const canEdit = useCanEdit();
   const [open, setOpen] = React.useState(false);
   const [stage, setStage] = React.useState<Stage>({ kind: 'loading' });
   const [reason, setReason] = React.useState('');
@@ -163,6 +165,11 @@ export function CommandDialog({
     () => new Map(preview?.rows.map((row) => [row.id, row.label]) ?? []),
     [preview],
   );
+
+  // Every command changes something, so a viewer is never offered one
+  // (spec/v3.md §28). The runner refuses them regardless; this spares them the
+  // button. After the hooks, which must run in the same order every render.
+  if (!canEdit) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

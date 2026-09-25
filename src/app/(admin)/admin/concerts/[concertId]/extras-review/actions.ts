@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { dbErrorMessage } from '@/db/errors';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { commitReview } from '@/lib/registrations/review';
 import type { FormState } from '../../form-state';
 import { confirmsOverCapacity, OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
@@ -40,7 +40,7 @@ export async function commitReviewAction(
   concertId: number,
   input: CommitReviewInput,
 ): Promise<FormState> {
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   const parsed = commitSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message, message: null };

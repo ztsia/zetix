@@ -317,7 +317,21 @@ export function isResponseSortKey(value: string): value is ResponseSortKey {
  */
 export async function getResponses(
   formId: number,
-  options: { pageIndex: number; pageSize: number; sort: ResponseSortKey; desc: boolean; search: string },
+  options: {
+    pageIndex: number;
+    pageSize: number;
+    sort: ResponseSortKey;
+    desc: boolean;
+    search: string;
+    /**
+     * The viewer's search (spec/v3.md §28): the response number only. Every
+     * answer in `raw` — phone numbers among them — is what a viewer sees
+     * masked, and a substring match on it would hand them back one character
+     * at a time. For the same reason a viewer cannot sort by `identityKey`,
+     * which is often an address.
+     */
+    idOnly?: boolean;
+  },
 ): Promise<ResponsePage> {
   const db = getDb();
 
@@ -361,7 +375,14 @@ export async function getResponses(
    * forms someone is most likely to be searching. Matching the payload's text
    * searches every answer, which is what "find this person's response" means.
    */
-  const where = search
+  const where = search && options.idOnly
+    ? and(
+        eq(formResponses.formId, formId),
+        /^\d+$/.test(search.trim())
+          ? eq(formResponses.id, Number(search.trim()))
+          : sql`false`,
+      )
+    : search
     ? and(
         eq(formResponses.formId, formId),
         or(
@@ -371,7 +392,8 @@ export async function getResponses(
       )
     : eq(formResponses.formId, formId);
 
-  const order = options.desc ? desc(RESPONSE_SORTS[options.sort]) : asc(RESPONSE_SORTS[options.sort]);
+  const sortKey = options.idOnly && options.sort === 'identityKey' ? 'submittedAt' : options.sort;
+  const order = options.desc ? desc(RESPONSE_SORTS[sortKey]) : asc(RESPONSE_SORTS[sortKey]);
 
   const [rows, [totals]] = await Promise.all([
     db

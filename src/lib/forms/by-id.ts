@@ -17,7 +17,7 @@ import type { FormKind } from './schema';
  * in it, so it resolves the concert *from* the form instead — and returns it,
  * so the caller can send the reader back to the right builder.
  *
- * That is safe here and nowhere else: `requireAdmin` runs before this, and the
+ * That is safe here and nowhere else: `requireRole` runs before this, and the
  * admin account is not scoped to a concert (`spec/checkin.md` §12.3 —
  * asymmetric auth: one shared admin, many show-scoped operators). An operator
  * must never reach this function.

@@ -7,7 +7,7 @@ import { getDb } from '@/db/client';
 import { dbErrorMessage, pgError } from '@/db/errors';
 import { players } from '@/db/schema/people';
 import { writeAuditLog } from '@/lib/audit';
-import { requireAdmin } from '@/lib/auth/guards';
+import { requireRole } from '@/lib/auth/guards';
 import { generateInviteToken } from '@/lib/invite-token';
 import { planPlayerImport, type PlayerField, type PlayerImportPlan } from '@/lib/players/import';
 import type { FormState } from '../../form-state';
@@ -83,7 +83,7 @@ export async function createPlayerAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readPlayerForm(formData);
   if (!parsed.success) {
@@ -124,7 +124,7 @@ export async function updatePlayerAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = readPlayerForm(formData);
   if (!parsed.success) {
@@ -194,7 +194,7 @@ export async function setPlayerActiveAction(
   playerId: number,
   isActive: boolean,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   const parsed = z
     .object({ playerId: z.number().int().positive(), isActive: z.boolean() })
@@ -253,7 +253,7 @@ export async function rotateInviteTokenAction(
   concertId: number,
   playerId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();
@@ -298,7 +298,7 @@ export async function deletePlayerAction(
   concertId: number,
   playerId: number,
 ): Promise<FormState> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const db = getDb();
@@ -368,7 +368,7 @@ export async function planPlayerImportAction(
   concertId: number,
   formData: FormData,
 ): Promise<PlanResult> {
-  await requireAdmin();
+  await requireRole('ADMIN');
 
   try {
     const upload = await readUpload(formData);
@@ -420,7 +420,7 @@ export async function commitPlayerImportAction(
   // The audit row is written inside the transaction, and letting
   // `writeAuditLog` resolve the actor itself would issue a nested query
   // against a `max: 1` pool the transaction already holds, hanging the import.
-  const admin = await requireAdmin();
+  const admin = await requireRole('ADMIN');
 
   let created = 0;
   let updated = 0;

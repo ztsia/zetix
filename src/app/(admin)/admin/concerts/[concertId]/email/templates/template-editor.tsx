@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { TOKENS, markdownToEmailHtml, markdownToPlainText, renderTemplate } from '@/lib/email/render';
 import { editTemplateAction } from '../actions';
+import { AdminOnly } from '@/components/auth/role';
 
 export type PreviewRecipient = { label: string; context: Record<string, string> };
 
@@ -127,10 +128,12 @@ export function TemplateEditor({
             </div>
           </div>
 
-          <Button onClick={save} disabled={pending}>
-            {pending ? <Spinner /> : null}
-            Save template
-          </Button>
+          <AdminOnly>
+            <Button onClick={save} disabled={pending}>
+              {pending ? <Spinner /> : null}
+              Save template
+            </Button>
+          </AdminOnly>
 
           {feedback?.error ? (
             <Alert variant="destructive">

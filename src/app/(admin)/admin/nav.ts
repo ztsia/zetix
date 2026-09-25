@@ -1,7 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarDays,
-  ClipboardList,
   Download,
   FileSpreadsheet,
   FileText,
@@ -17,7 +16,6 @@ import {
   UserCog,
   Users,
   UsersRound,
-  MailWarning,
 } from 'lucide-react';
 
 /**
@@ -92,26 +90,14 @@ export const CONCERT_NAV: NavGroup[] = [
     label: 'Audience',
     items: [
       {
-        slug: 'registrations',
-        label: 'Registrations',
-        icon: ClipboardList,
-        description: 'Searchable table and full manual CRUD.',
-        module: 'B',
-      },
-      {
-        slug: 'registrations/unverified',
-        label: 'Unverified',
-        icon: MailWarning,
-        description:
-          'Public registrants who have not clicked their verification link. They hold their seats; their tickets are held back.',
-        module: 'V2',
-      },
-      {
-        slug: 'extras-review',
-        label: 'Extras review',
+        // V3's one table over every party and seat (spec/v3.md §22). It replaced
+        // Registrations, Unverified and Extras review, whose old URLs redirect
+        // here with the matching view.
+        slug: 'audience',
+        label: 'Audience',
         icon: Users,
-        description: 'The batch grant screen, per segment.',
-        module: 'B',
+        description: 'Every party and seat, with its stage, its flags and the commands that move it on.',
+        module: 'S',
       },
       {
         slug: 'import',
@@ -126,10 +112,12 @@ export const CONCERT_NAV: NavGroup[] = [
     label: 'Delivery',
     items: [
       {
-        slug: 'tickets',
-        label: 'Tickets',
+        // The Tickets table became the Audience workspace's Seats grain
+        // (spec/v3.md §22.1); the designs stay here until Setup takes them (§29.1).
+        slug: 'tickets/templates',
+        label: 'Ticket designs',
         icon: Ticket,
-        description: 'Template editor, bulk regenerate, preview.',
+        description: 'Ticket design editor and preview.',
         module: 'D / E',
       },
       {
@@ -219,5 +207,10 @@ export const SETTINGS_ITEM: NavItem = {
 };
 
 export function findNavItem(slug: string): NavItem | undefined {
-  return CONCERT_NAV_ITEMS.find((item) => item.slug === slug);
+  // `tickets` finds `tickets/templates`: the breadcrumb passes only the first
+  // path segment.
+  return (
+    CONCERT_NAV_ITEMS.find((item) => item.slug === slug) ??
+    CONCERT_NAV_ITEMS.find((item) => item.slug.split('/')[0] === slug)
+  );
 }

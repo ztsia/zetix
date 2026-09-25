@@ -273,6 +273,20 @@ export type RegistrationDetails = {
   playerId?: number | null;
   roundLabel?: string | null;
   requestedAt?: Date | null;
+  /**
+   * The §24.6 verdict on `contactEmail` (`addressIssue()`), checked by the
+   * caller before the transaction, since the MX lookup is a network call.
+   * Stored only when the address actually changed.
+   */
+  emailIssue?: string | null;
+};
+
+export type DetailsResult = {
+  emailChanged: boolean;
+  /** Pending messages moved to the new address (spec/v3.md §24.3). */
+  readdressed: number;
+  /** Seats whose tickets already went to the old address — the record's resend question. */
+  deliveredToOld: number;
 };
 
 /**
@@ -284,39 +298,80 @@ export type RegistrationDetails = {
  * `registration.contact_name` is a ticket binding — it is what a placeholder
  * seat prints as "Guest of {contact_name}" (decision 32) — so correcting it
  * after tickets have gone out flags those seats for reissue (§10.6).
+ *
+ * **A changed contact email re-addresses the party's pending messages in the
+ * same transaction** (spec/v3.md §24.3): a draft or queued message would
+ * otherwise go to the address the admin just corrected. A `SENDING` message is
+ * the dispatcher's and a `SENT` one is history; neither is rewritten. The
+ * address check's result is stored with it, so `SUSPICIOUS_ADDRESS` follows the
+ * new address (§24.6).
  */
 export async function updateRegistrationDetails(
   registrationId: number,
   details: RegistrationDetails,
   options: InTx = {},
-): Promise<void> {
-  const db = options.executor ?? getDb();
+): Promise<DetailsResult> {
   try {
-    const before = await db.execute<{ contact_name: string }>(sql`
-      select contact_name from registrations where id = ${registrationId}
-    `);
+    return await within(options.executor, async (db) => {
+      const before = await db.execute<{ contact_name: string; contact_email: string | null }>(sql`
+        select contact_name, contact_email::text as contact_email
+          from registrations where id = ${registrationId} for update
+      `);
+      const newEmail = details.contactEmail ?? null;
+      const emailChanged =
+        before.length > 0 &&
+        (before[0].contact_email ?? '').toLowerCase() !== (newEmail ?? '').toLowerCase();
 
-    await db.execute(sql`
-      update registrations
-         set contact_name  = ${details.contactName},
-             contact_email = ${details.contactEmail ?? null},
-             contact_phone = ${details.contactPhone ?? null},
-             player_id     = ${details.playerId ?? null},
-             round_label   = ${details.roundLabel ?? null},
-             requested_at  = coalesce(
-               ${details.requestedAt ? details.requestedAt.toISOString() : null}::timestamptz,
-               requested_at)
-       where id = ${registrationId}
-         and deleted_at is null
-    `);
+      await db.execute(sql`
+        update registrations
+           set contact_name  = ${details.contactName},
+               contact_email = ${newEmail},
+               contact_phone = ${details.contactPhone ?? null},
+               player_id     = ${details.playerId ?? null},
+               round_label   = ${details.roundLabel ?? null},
+               requested_at  = coalesce(
+                 ${details.requestedAt ? details.requestedAt.toISOString() : null}::timestamptz,
+                 requested_at)
+         where id = ${registrationId}
+           and deleted_at is null
+      `);
 
-    if (before.length > 0 && before[0].contact_name !== details.contactName) {
-      await flagReissueForChangedFields(
-        await attendeeIdsOf(registrationId, db),
-        ['registration.contact_name'],
-        db,
-      );
-    }
+      let readdressed = 0;
+      let deliveredToOld = 0;
+      if (emailChanged) {
+        await db.execute(sql`
+          update registrations
+             set email_issue = ${newEmail ? (details.emailIssue ?? null) : null},
+                 email_checked_at = ${newEmail && details.emailIssue !== undefined ? sql`now()` : sql`null`},
+                 email_issue_accepted_at = null
+           where id = ${registrationId}
+        `);
+        if (newEmail) {
+          const moved = await db.execute<{ id: string }>(sql`
+            update email_outbox set to_email = ${newEmail}
+             where registration_id = ${registrationId}
+               and status in ('DRAFT', 'QUEUED')
+            returning id
+          `);
+          readdressed = moved.length;
+        }
+        const [delivered] = await db.execute<{ n: number }>(sql`
+          select count(*)::int as n from attendees
+           where registration_id = ${registrationId} and deleted_at is null
+             and status = 'CONFIRMED' and ticket_sent_at is not null
+        `);
+        deliveredToOld = delivered?.n ?? 0;
+      }
+
+      if (before.length > 0 && before[0].contact_name !== details.contactName) {
+        await flagReissueForChangedFields(
+          await attendeeIdsOf(registrationId, db),
+          ['registration.contact_name'],
+          db,
+        );
+      }
+      return { emailChanged, readdressed, deliveredToOld };
+    });
   } catch (error) {
     rethrowDbError(error);
   }

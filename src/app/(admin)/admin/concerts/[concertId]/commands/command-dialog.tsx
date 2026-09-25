@@ -68,8 +68,11 @@ export function CommandDialog({
   concertId,
   command,
   selection,
-  params,
+  params: initialParams,
   trigger,
+  defaultOpen = false,
+  onClosed,
+  renderOptions,
   onDone,
 }: {
   concertId: number;
@@ -77,39 +80,80 @@ export function CommandDialog({
   command: string;
   selection: Selection<unknown> | null;
   params?: unknown;
-  trigger: React.ReactElement;
+  /** The button that opens it. Omit with `defaultOpen` when a menu or a host opens it. */
+  trigger?: React.ReactElement;
+  /**
+   * Open on mount. Added by `S` for the Audience workspace's command host: a
+   * command chosen from a menu has no button of its own to stay mounted as.
+   */
+  defaultOpen?: boolean;
+  /** After the dialog closes, whatever happened — the host unmounts it. */
+  onClosed?: () => void;
+  /**
+   * The command's own choices — an override switch, a destination — shown
+   * above the preview. Changing one re-runs the preview, because the preview
+   * depends on it (§23.5: the overage is shown before the override is used).
+   */
+  renderOptions?: (params: unknown, setParams: (next: unknown) => void) => React.ReactNode;
   /** After a run finishes and the dialog closes — clear the table's selection. */
   onDone?: () => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
+  const [params, setParamsState] = React.useState<unknown>(initialParams);
   const [stage, setStage] = React.useState<Stage>({ kind: 'loading' });
   const [reason, setReason] = React.useState('');
   const [phrase, setPhrase] = React.useState('');
   const [runError, setRunError] = React.useState<string | null>(null);
   const alive = React.useRef(false);
 
-  const loadPreview = React.useCallback(async () => {
-    if (!selection) return;
-    setStage({ kind: 'loading' });
-    setRunError(null);
-    setPhrase('');
-    const result = await previewCommandAction(command, { concertId, selection, params });
-    if (!alive.current) return;
-    setStage(result.ok ? { kind: 'preview', preview: result.value } : { kind: 'error', message: result.error });
-  }, [command, concertId, selection, params]);
+  const loadPreview = React.useCallback(
+    async (withParams: unknown) => {
+      if (!selection) return;
+      setStage({ kind: 'loading' });
+      setRunError(null);
+      setPhrase('');
+      const result = await previewCommandAction(command, { concertId, selection, params: withParams });
+      if (!alive.current) return;
+      setStage(result.ok ? { kind: 'preview', preview: result.value } : { kind: 'error', message: result.error });
+    },
+    [command, concertId, selection],
+  );
+
+  function setParams(next: unknown) {
+    setParamsState(next);
+    void loadPreview(next);
+  }
 
   function onOpenChange(next: boolean) {
     setOpen(next);
     alive.current = next;
     if (next) {
       setReason('');
-      void loadPreview();
-    } else if (stage.kind === 'report' || stage.kind === 'running') {
-      router.refresh();
-      if (stage.kind === 'report') onDone?.();
+      void loadPreview(params);
+    } else {
+      if (stage.kind === 'report' || stage.kind === 'running') {
+        router.refresh();
+        if (stage.kind === 'report') onDone?.();
+      }
+      onClosed?.();
     }
   }
+
+  const openedOnMount = React.useRef(false);
+  React.useEffect(() => {
+    if (!defaultOpen) return;
+    // Re-armed on every mount: StrictMode's mount → cleanup → mount would
+    // otherwise leave `alive` false and drop the preview's answer.
+    alive.current = true;
+    if (!openedOnMount.current) {
+      openedOnMount.current = true;
+      setOpen(true);
+      void loadPreview(params);
+    }
+    // Once, on mount: a host mounts a fresh dialog per command.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   React.useEffect(() => () => {
     alive.current = false;
@@ -166,7 +210,7 @@ export function CommandDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger render={trigger} disabled={!selection} />
+      {trigger && <DialogTrigger render={trigger} disabled={!selection} />}
       <DialogContent className="flex max-h-[min(85dvh,48rem)] flex-col sm:max-w-xl">
         <DialogHeader className="shrink-0">
           <DialogTitle>{stage.kind === 'report' ? 'Done' : title}</DialogTitle>
@@ -180,6 +224,11 @@ export function CommandDialog({
         </DialogHeader>
 
         <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+          {renderOptions && (stage.kind === 'loading' || stage.kind === 'preview' || stage.kind === 'error') && (
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border p-3">
+              <CommandOptions render={renderOptions} params={params} onChange={setParams} />
+            </div>
+          )}
           {stage.kind === 'loading' && (
             <div className="flex flex-col gap-3 py-2" aria-busy>
               <Skeleton className="h-5 w-2/3" />
@@ -256,6 +305,19 @@ export function CommandDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** A component, so the options are rendered as an element rather than called during render. */
+function CommandOptions({
+  render,
+  params,
+  onChange,
+}: {
+  render: (params: unknown, setParams: (next: unknown) => void) => React.ReactNode;
+  params: unknown;
+  onChange: (next: unknown) => void;
+}) {
+  return <>{render(params, onChange)}</>;
 }
 
 const normalise = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');

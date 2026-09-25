@@ -203,7 +203,7 @@ export async function loadPartyRecord(
 
   const provenance =
     row.source === 'FORM'
-      ? `Form “${row.form_title ?? 'deleted form'}”${row.round_label ? `, ${row.round_label}` : ''}`
+      ? `Form${row.form_title ? ` “${row.form_title}”` : ''}${row.round_label ? `, ${row.round_label}` : ''}`
       : row.source === 'IMPORT'
         ? `Import ${row.import_filename ?? '(batch deleted)'}${row.round_label ? `, ${row.round_label}` : ''}`
         : `Entered by an admin${row.round_label ? `, ${row.round_label}` : ''}`;

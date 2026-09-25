@@ -134,7 +134,7 @@ export function AppSidebar({
                     return (
                       <SidebarMenuItem key={item.slug}>
                         <SidebarMenuButton
-                          isActive={pathname === href}
+                          isActive={pathname === href || pathname.startsWith(`${href}/`)}
                           tooltip={item.label}
                           render={<Link href={href} />}
                         >

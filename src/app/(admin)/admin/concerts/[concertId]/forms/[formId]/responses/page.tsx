@@ -66,10 +66,10 @@ export default async function ResponsesPage({
           <p className="text-muted-foreground text-sm">
             What people submitted, as they submitted it. Seats granted are on the{' '}
             <Link
-              href={`/admin/concerts/${concertId}/registrations`}
+              href={`/admin/concerts/${concertId}/audience`}
               className="underline underline-offset-4"
             >
-              registrations
+              Audience
             </Link>{' '}
             screen — a form asks, the allocation engine decides.
           </p>

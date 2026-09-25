@@ -192,6 +192,8 @@ export type Preview = {
   command: string;
   verb: string;
   noun: { one: string; many: string };
+  /** Cannot be undone by another command — the dialog's Run button says so. */
+  irreversible: boolean;
   /** Whether the selection was a filter, so the dialog can say it is re-resolved at run time. */
   byFilter: boolean;
   total: number;
@@ -241,6 +243,7 @@ export async function previewCommand(
         command: def.name,
         verb: def.verb,
         noun: def.noun,
+        irreversible: def.irreversible,
         byFilter: isFilterSelection(selection),
         total: ids.length,
         runnable: runnableIds.length,

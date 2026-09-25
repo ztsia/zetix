@@ -177,11 +177,17 @@ async function restoreBlast(tx: Tx, kind: TrashKind, ids: number[]): Promise<Bla
     });
   }
   if (kind === 'party') {
-    lines.push({
-      count: ids.length,
-      text: 'messages withdrawn at deletion stay cancelled. Send tickets again if needed.',
-      tone: 'neutral',
-    });
+    const [messages] = await tx.execute<{ cancelled: number }>(sql`
+      select count(*)::int as cancelled from email_outbox
+       where registration_id = any(${idArray(ids)}) and status = 'CANCELLED'
+    `);
+    if (messages.cancelled > 0) {
+      lines.push({
+        count: messages.cancelled,
+        text: 'cancelled messages stay cancelled. Send tickets again if they are needed.',
+        tone: 'neutral',
+      });
+    }
   }
   return lines;
 }

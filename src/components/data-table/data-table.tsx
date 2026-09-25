@@ -5,6 +5,7 @@ import {
   useTable,
   type Row,
   type RowData,
+  type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
 import { Search, TableProperties } from 'lucide-react';
@@ -117,6 +118,18 @@ export type DataTableProps<TData extends RowData> = {
   onSelectionChange?: (rows: TData[]) => void;
 
   /**
+   * Controlled row selection, keyed by `getRowId`.
+   *
+   * Added by module `Q` for "select all N matching" across pages (spec/v3.md
+   * §22.3): once the whole filter is selected, every row on every page shows
+   * ticked and unticking one records an exclusion, which only the caller can
+   * track — see `useTableSelection`. Optional; a table that passes neither keeps
+   * selecting internally as before.
+   */
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: (next: RowSelectionState) => void;
+
+  /**
    * Gmail's "select all N that match", for a server-paged table.
    *
    * The header checkbox can only ever mean *this page* — it is the only page
@@ -139,6 +152,8 @@ export type DataTableProps<TData extends RowData> = {
     noun?: string;
     /** Resolving the wider selection; disables both buttons. */
     busy?: boolean;
+    /** Rows unticked after selecting all of them (§22.3), for the banner copy. */
+    excluded?: number;
   };
 
   export?: DataTableExport<TData>;
@@ -180,6 +195,8 @@ export function DataTable<TData extends RowData>({
   enableSelection = false,
   onRowClick,
   onSelectionChange,
+  rowSelection,
+  onRowSelectionChange,
   selectAllMatching,
   export: exportConfig,
   isLoading = false,
@@ -195,12 +212,20 @@ export function DataTable<TData extends RowData>({
    * page. `rowCount` is what lets it still say "page 2 of 9" without the other
    * eight pages.
    */
+  const selectionControl = rowSelection
+    ? {
+        onRowSelectionChange: (updater: RowSelectionState | ((old: RowSelectionState) => RowSelectionState)) =>
+          onRowSelectionChange?.(typeof updater === 'function' ? updater(rowSelection) : updater),
+      }
+    : {};
+
   const table = useTable({
     features: dataTableFeatures,
     columns,
     data,
     getRowId,
     enableRowSelection: enableSelection,
+    ...selectionControl,
     ...(server
       ? {
           manualPagination: true,
@@ -211,6 +236,7 @@ export function DataTable<TData extends RowData>({
             pagination: { pageIndex: server.pageIndex, pageSize: server.pageSize },
             sorting: server.sorting,
             globalFilter: server.search,
+            ...(rowSelection ? { rowSelection } : {}),
           },
           onPaginationChange: (updater) => {
             const current = { pageIndex: server.pageIndex, pageSize: server.pageSize };
@@ -230,6 +256,7 @@ export function DataTable<TData extends RowData>({
         }
       : {
           initialState: { pagination: { pageIndex: 0, pageSize: initialPageSize } },
+          ...(rowSelection ? { state: { rowSelection } } : {}),
         }),
   });
 
@@ -450,7 +477,7 @@ function SelectAllBanner({
   pageCount: number;
   allPageSelected: boolean;
 }) {
-  const { selected, total, onSelect, onClear, noun = 'rows', busy = false } = config;
+  const { selected, total, onSelect, onClear, noun = 'rows', busy = false, excluded = 0 } = config;
   if (!selected && (!allPageSelected || total <= pageCount)) return null;
 
   return (
@@ -462,7 +489,13 @@ function SelectAllBanner({
         <>
           <span>
             All <span className="text-foreground font-medium">{total}</span> {noun} matching
-            these filters are selected.
+            these filters are selected
+            {excluded > 0 ? (
+              <>
+                , except <span className="text-foreground font-medium">{excluded}</span>
+              </>
+            ) : null}
+            .
           </span>
           <button
             type="button"

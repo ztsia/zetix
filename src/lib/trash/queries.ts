@@ -1,8 +1,16 @@
 import 'server-only';
 import { sql, type SQL } from 'drizzle-orm';
-import { z } from 'zod';
 import { getDb } from '@/db/client';
 import type { Tx } from '@/lib/commands/define';
+import {
+  TRASH_KINDS,
+  type TrashFilter,
+  type TrashKind,
+  type TrashPage,
+  type TrashRow,
+} from './labels';
+
+export * from './labels';
 
 /**
  * The Trash (spec/v3.md §23.6): every soft-deleted row of one concert, by kind.
@@ -22,34 +30,6 @@ import type { Tx } from '@/lib/commands/define';
  * (`command_run_items.entity_id`), and nothing deletes one yet. The first
  * module to add a delete for them owns that decision (`modules-v3.md`: `T`).
  */
-
-export const TRASH_KINDS = ['party', 'seat', 'message', 'form', 'player', 'ticket_template'] as const;
-export type TrashKind = (typeof TRASH_KINDS)[number];
-
-export const trashKindSchema = z.enum(TRASH_KINDS);
-
-export const KIND_LABEL: Record<TrashKind, { one: string; many: string; title: string }> = {
-  party: { one: 'party', many: 'parties', title: 'Parties' },
-  seat: { one: 'seat', many: 'seats', title: 'Seats' },
-  message: { one: 'message', many: 'messages', title: 'Messages' },
-  form: { one: 'form', many: 'forms', title: 'Forms' },
-  player: { one: 'player', many: 'players', title: 'Players' },
-  ticket_template: { one: 'ticket design', many: 'ticket designs', title: 'Ticket designs' },
-};
-
-/** The `entity_type` each kind is audited and targeted under, as the code already writes it. */
-export const KIND_ENTITY: Record<TrashKind, string> = {
-  party: 'registration',
-  seat: 'attendee',
-  message: 'email_outbox',
-  form: 'registration_form',
-  player: 'player',
-  ticket_template: 'ticket_template',
-};
-
-/** The filter a "select all matching" in the Trash sends. */
-export const trashFilterSchema = z.object({ search: z.string().max(200) }).strict();
-export type TrashFilter = z.infer<typeof trashFilterSchema>;
 
 /**
  * One kind's rows in one concert's Trash, as `(id, label, detail, deleted_at)`.
@@ -127,8 +107,6 @@ const searchClause = (search: string): SQL =>
 
 type Row = { id: string; label: string; detail: string | null; deleted_at: string };
 
-export type TrashRow = { id: number; label: string; detail: string | null; deletedAt: string };
-
 const toRow = (row: Row): TrashRow => ({
   id: Number(row.id),
   label: row.label,
@@ -166,12 +144,6 @@ export async function trashRowsFor(
   `);
   return new Map(rows.map((row) => [Number(row.id), toRow(row)]));
 }
-
-export type TrashPage = {
-  rows: TrashRow[];
-  total: number;
-  counts: Record<TrashKind, number>;
-};
 
 /** One page of one kind, plus the count of every kind for the tabs. */
 export async function listTrash(

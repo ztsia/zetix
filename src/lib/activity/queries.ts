@@ -1,6 +1,7 @@
 import 'server-only';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import { likePattern } from '@/lib/trash/queries';
 import { ACTIVITY_VIEWS, type ActivityRow, type Paged, type RunRow } from './labels';
 
 export * from './labels';
@@ -54,8 +55,8 @@ export async function listActivity(
        ${options.runId ? sql`and l.command_run_id = ${options.runId}` : sql``}
        ${
          search
-           ? sql`and (l.action ilike ${'%' + search + '%'}
-                      or l.reason ilike ${'%' + search + '%'}
+           ? sql`and (l.action ilike ${likePattern(search)}
+                      or l.reason ilike ${likePattern(search)}
                       or l.entity_id = ${search})`
            : sql``
        }

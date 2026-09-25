@@ -26,8 +26,15 @@ export function RunReportView({
 }) {
   const finished = report.done + report.skipped + report.failed;
   const running = report.status === 'RUNNING';
+  // Rows someone has to look at: every skip and failure, and any row that ran
+  // but whose outcome carries a `note` — "came back waitlisted" is done, and is
+  // still not what "done" would lead the admin to assume.
+  const noteOf = (item: RunReport['items'][number]) => {
+    const note = (item.outcome as { note?: unknown } | null)?.note;
+    return typeof note === 'string' && note ? note : null;
+  };
   const exceptions = report.items.filter(
-    (item) => item.status === 'FAILED' || item.status === 'SKIPPED',
+    (item) => item.status === 'FAILED' || item.status === 'SKIPPED' || noteOf(item) !== null,
   );
 
   const labelOf = (item: RunReport['items'][number]) => {
@@ -80,12 +87,18 @@ export function RunReportView({
               <span className="font-medium">{labelOf(item)}</span>
               <span
                 className={
-                  item.status === 'FAILED' ? 'text-destructive' : 'text-muted-foreground'
+                  item.status === 'FAILED'
+                    ? 'text-destructive'
+                    : item.status === 'DONE'
+                      ? 'text-foreground'
+                      : 'text-muted-foreground'
                 }
               >
                 {item.status === 'FAILED'
                   ? (item.error ?? 'Failed.')
-                  : String((item.outcome as { reason?: unknown } | null)?.reason ?? 'Skipped.')}
+                  : item.status === 'DONE'
+                    ? noteOf(item)
+                    : String((item.outcome as { reason?: unknown } | null)?.reason ?? 'Skipped.')}
               </span>
             </li>
           ))}

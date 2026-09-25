@@ -115,6 +115,10 @@ export type CommandDefinition<F, P> = {
   /**
    * Do it to one row. Throw {@link SkipItem} to record a skip decided only now;
    * throw anything else to fail the row, which rolls back what it wrote.
+   *
+   * The returned outcome is stored per row. A string `note` in it is listed in
+   * the report even though the row succeeded — use it when "done" is not what
+   * the admin would assume ("came back waitlisted: the segment is full").
    */
   apply: (tx: Tx, ctx: RunContext<P>, row: TargetRow) => Promise<Json | void>;
 };

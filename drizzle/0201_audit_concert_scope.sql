@@ -61,6 +61,9 @@ begin
     when 'players' then (select concert_id from players where id = v_id)
     when 'ticket_template' then (select concert_id from ticket_templates where id = v_id)
     when 'booklets' then (select concert_id from booklets where id = v_id)
+    when 'mapping_profile' then (
+      select s.concert_id from mapping_profiles m join shows s on s.id = m.show_id
+       where m.id = v_id)
     when 'portal_notes' then (select concert_id from portal_notes where id = v_id)
     when 'check_ins' then (
       select s.concert_id from check_ins c join shows s on s.id = c.show_id

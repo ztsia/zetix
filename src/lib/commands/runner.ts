@@ -300,9 +300,17 @@ export async function startCommand(
       const described = await def.describe(tx, ctx, ids, { lock: false });
       const runnable = described.filter((row) => row.skip === null).length;
       const confirmation = await confirmationFor(tx, def, ctx.concertId, runnable);
-      if (confirmation.required && normalisePhrase(confirmPhrase) !== confirmation.phrase) {
+      const typed = normalisePhrase(confirmPhrase);
+      if (confirmation.required && typed !== confirmation.phrase) {
+        // A phrase of the right shape with another count was a real
+        // confirmation of a different selection; anything else is a typo.
+        const verb = def.verb.toLowerCase();
+        const otherCount =
+          typed.startsWith(`${verb} `) &&
+          /^\d+ /.test(typed.slice(verb.length + 1)) &&
+          (typed.endsWith(` ${def.noun.one}`) || typed.endsWith(` ${def.noun.many}`));
         throw new CommandInputError(
-          confirmPhrase
+          otherCount
             ? `The selection now comes to ${runnable} ${runnable === 1 ? def.noun.one : def.noun.many}, ` +
                 `not what was confirmed. Preview it again, then type "${confirmation.phrase}".`
             : `Type "${confirmation.phrase}" to confirm.`,

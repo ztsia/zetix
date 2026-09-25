@@ -113,35 +113,36 @@ export function TrashTable({
         searchPlaceholder={`Search deleted ${label.many}…`}
         emptyTitle={`No deleted ${label.many}`}
         emptyDescription={`Deleted ${label.many} land here and can be restored.`}
+        // Always mounted, only disabled: a dialog unmounted by the refresh
+        // that follows its own run (the rows it restored leave the table)
+        // would take the report with it.
         toolbar={
-          count > 0 ? (
-            <ButtonGroup>
-              <CommandDialog
-                concertId={concertId}
-                command={`trash.restore.${kind}`}
-                selection={selection}
-                onDone={clear}
-                trigger={
-                  <Button variant="outline" size="sm">
-                    <RotateCcw data-icon="inline-start" />
-                    Restore {count} {noun}
-                  </Button>
-                }
-              />
-              <CommandDialog
-                concertId={concertId}
-                command={`trash.purge.${kind}`}
-                selection={selection}
-                onDone={clear}
-                trigger={
-                  <Button variant="outline" size="sm" className="text-destructive">
-                    <Trash2 data-icon="inline-start" />
-                    Delete permanently
-                  </Button>
-                }
-              />
-            </ButtonGroup>
-          ) : null
+          <ButtonGroup>
+            <CommandDialog
+              concertId={concertId}
+              command={`trash.restore.${kind}`}
+              selection={selection}
+              onDone={clear}
+              trigger={
+                <Button variant="outline" size="sm" disabled={count === 0}>
+                  <RotateCcw data-icon="inline-start" />
+                  {count > 0 ? `Restore ${count} ${noun}` : 'Restore'}
+                </Button>
+              }
+            />
+            <CommandDialog
+              concertId={concertId}
+              command={`trash.purge.${kind}`}
+              selection={selection}
+              onDone={clear}
+              trigger={
+                <Button variant="outline" size="sm" className="text-destructive" disabled={count === 0}>
+                  <Trash2 data-icon="inline-start" />
+                  Delete permanently
+                </Button>
+              }
+            />
+          </ButtonGroup>
         }
       />
     </div>

@@ -100,9 +100,13 @@ function trashRows(kind: TrashKind, concertId: number): SQL {
   }
 }
 
+/** `%` and `_` typed into the search box are text, not wildcards. */
+export const likePattern = (search: string) =>
+  `%${search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
 const searchClause = (search: string): SQL =>
   search.trim()
-    ? sql`where t.label ilike ${'%' + search.trim() + '%'} or t.detail ilike ${'%' + search.trim() + '%'}`
+    ? sql`where t.label ilike ${likePattern(search)} or t.detail ilike ${likePattern(search)}`
     : sql``;
 
 type Row = { id: string; label: string; detail: string | null; deleted_at: string };

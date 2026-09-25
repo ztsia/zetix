@@ -93,7 +93,9 @@ export function useTableSelection<F>(options: {
       rowSelection,
       onRowSelectionChange,
       selectAllMatching: {
-        selected: mode === 'all',
+        // Once nothing matches any more — the run just emptied the filter —
+        // "all 0 selected" would be a claim about nothing.
+        selected: mode === 'all' && count > 0,
         total,
         excluded: excluded.size,
         onSelect: () => {

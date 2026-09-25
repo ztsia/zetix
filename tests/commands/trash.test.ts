@@ -364,4 +364,168 @@ describe('Delete permanently', () => {
     );
     expect(preview.rows.map((row) => row.id)).toEqual([a]);
   });
+
+  it('refuses a party or player while a message to them is being sent', async () => {
+    const id = await party(1);
+    const [player] = await createPlayers(concertId, 1);
+    await sql`
+      insert into email_outbox (registration_id, to_email, template_key, purpose, subject, body_md, status)
+      values (${id}, 'a@example.com', 'tickets', 'TICKETS', 's', 'b', 'SENDING')
+    `;
+    await sql`
+      insert into email_outbox (player_id, to_email, template_key, purpose, subject, body_md, status)
+      values (${player}, 'p@example.com', 'player_invite', 'PLAYER_INVITE', 's', 'b', 'SENDING')
+    `;
+    await sql`update registrations set deleted_at = now() where id = ${id}`;
+    await sql`update players set deleted_at = now() where id = ${player}`;
+
+    expect((await run('party', 'purge', [id])).items[0].outcome).toEqual({
+      reason: 'A message to this party is being sent right now.',
+    });
+    expect((await run('player', 'purge', [player])).items[0].outcome).toEqual({
+      reason: 'A message to this player is being sent right now.',
+    });
+  });
+
+  it('keeps the form history another party shares', async () => {
+    const [form] = await sql<{ id: string }[]>`
+      insert into registration_forms (segment_id, kind, title, slug, status)
+      values (${segmentId}, 'PUBLIC', 'Round 1', 'round-1', 'OPEN') returning id
+    `;
+    const respond = async (supersedes: string | null) =>
+      (await sql<{ id: string }[]>`
+        insert into form_responses (form_id, raw, form_schema, submitted_at, supersedes_id)
+        values (${form.id}, '{}', '{"blocks":[]}', now(), ${supersedes}) returning id
+      `)[0].id;
+    const shared = await respond(null);
+    const mine = await respond(shared);
+    const theirs = await respond(shared);
+
+    const doomed = await party(1, 'Doomed');
+    const other = await party(1, 'Other');
+    await sql`update registrations set form_response_id = ${mine} where id = ${doomed}`;
+    await sql`update registrations set form_response_id = ${theirs} where id = ${other}`;
+    await deleteRegistration(doomed);
+
+    const report = await run('party', 'purge', [doomed]);
+    expect(report.items[0].outcome).toMatchObject({ responses: 1 });
+    const left = await sql<{ id: string }[]>`select id from form_responses order by id`;
+    expect(left.map((row) => row.id)).toEqual([shared, theirs]);
+  });
+
+  it('redacts the details of earlier Activity rows about what it deleted', async () => {
+    const [player] = await createPlayers(concertId, 1);
+    await sql`
+      insert into audit_log (action, entity_type, entity_id, after)
+      values ('player.created', 'player', ${String(player)},
+              '{"email":"player1@example.test","fullName":"Player 1"}')
+    `;
+    await sql`update players set deleted_at = now() where id = ${player}`;
+    const restored = await run('player', 'restore', [player]);
+    expect(restored.items[0].outcome).toMatchObject({ label: 'Player 1' });
+    await sql`update players set deleted_at = now() where id = ${player}`;
+
+    const preview = await previewCommand(command('player', 'purge'), { concertId, selection: { ids: [player] } }, null);
+    expect(preview.blastRadius).toContainEqual(
+      expect.objectContaining({ text: expect.stringMatching(/earlier Activity entries/) }),
+    );
+    await run('player', 'purge', [player]);
+
+    const rows = await sql<{ row: string }[]>`select row_to_json(l)::text as row from audit_log l`;
+    for (const row of rows) expect(row.row).not.toMatch(/player1@example\.test|Player 1/);
+    const items = await sql<{ outcome: string }[]>`select outcome::text from command_run_items`;
+    for (const item of items) expect(item.outcome ?? '').not.toMatch(/Player 1/);
+  });
+
+  it('treats % and _ in the search as text', async () => {
+    const id = await party(1, '50% Off');
+    const other = await party(1, 'Plain');
+    for (const x of [id, other]) await deleteRegistration(x);
+    const trash = await listTrash(concertId, 'party', { search: '%', pageIndex: 0, pageSize: 25 });
+    expect(trash.rows.map((row) => row.id)).toEqual([id]);
+  });
 });
+
+describe('concert scoping', () => {
+  it('never restores or deletes another concert\u2019s rows, by id or by filter', async () => {
+    const otherConcert = await createConcert('Elsewhere');
+    const otherShow = await createShow(otherConcert, 10);
+    const otherSegment = await createSegment(otherShow, {
+      audienceMode: 'PUBLIC',
+      capacity: 4,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const [foreign] = await sql<{ id: string }[]>`
+      insert into registrations (show_id, segment_id, source, contact_name, contact_email, status, requested_at, deleted_at)
+      values (${otherShow}, ${otherSegment}, 'ADMIN', 'Foreign', 'f@example.test', 'CONFIRMED', now(), now())
+      returning id
+    `;
+    const foreignId = Number(foreign.id);
+
+    for (const mode of ['restore', 'purge'] as const) {
+      const report = await run('party', mode, [foreignId]);
+      expect(report.items[0]).toMatchObject({
+        status: 'SKIPPED',
+        outcome: { reason: 'No longer exists in this concert.' },
+      });
+    }
+    const byFilter = await previewCommand(
+      command('party', 'purge'),
+      { concertId, selection: { filter: { search: 'Foreign' }, excludedIds: [] } },
+      null,
+    );
+    expect(byFilter.total).toBe(0);
+
+    const [row] = await sql<{ deleted_at: Date | null }[]>`
+      select deleted_at from registrations where id = ${foreignId}
+    `;
+    expect(row.deleted_at).not.toBeNull();
+  });
+});
+
+describe('Restore a single seat (§23.4)', () => {
+  it('waits with a party that holds no confirmed seat rather than jumping its queue', async () => {
+    const id = await party(2);
+    const seatsNow = await seats(id);
+    await sql`update attendees set status = 'WAITLIST' where registration_id = ${id}`;
+    await sql`update registrations set status = 'WAITLIST' where id = ${id}`;
+    await removeAttendee(Number(seatsNow[0].id));
+
+    const report = await run('seat', 'restore', [Number(seatsNow[0].id)]);
+    expect(report.items[0].outcome).toMatchObject({ confirmed: 0, waitlisted: 1 });
+    expect((await seats(id)).map((seat) => seat.status)).toEqual(['WAITLIST', 'WAITLIST']);
+  });
+
+  it('sends an extra in a REVIEW segment back to review', async () => {
+    const reviewSegment = await createSegment(showId, {
+      audienceMode: 'PLAYER_INVITED',
+      capacity: 4,
+      baseQuota: 1,
+      extrasPolicy: 'REVIEW',
+      allowPartialGrant: false,
+      name: 'Invited',
+    });
+    const [player] = await createPlayers(concertId, 1);
+    const id = await createRegistration({ showId, segmentId: reviewSegment, playerId: player });
+    await sql`
+      select claim_seats(${reviewSegment}::bigint, ${id}::bigint,
+        ${json([{ full_name: 'Base', allocation_type: 'BASE' }, { full_name: 'Extra', allocation_type: 'EXTRA' }])}::jsonb,
+        false)
+    `;
+    const [, extra] = await seats(id);
+    await removeAttendee(Number(extra.id));
+
+    const report = await run('seat', 'restore', [Number(extra.id)]);
+    expect(report.items[0].outcome).toMatchObject({ pendingReview: 1, note: 'Back in extras review.' });
+    expect((await seats(id))[1].status).toBe('PENDING_REVIEW');
+  });
+
+  it('says so in the report when a restored party came back waitlisted', async () => {
+    const id = await party(3);
+    await deleteRegistration(id);
+    await party(2, 'Lim Family');
+    const report = await run('party', 'restore', [id]);
+    expect((report.items[0].outcome as { note: string }).note).toMatch(/^Came back waitlisted: /);
+  });
+});
+

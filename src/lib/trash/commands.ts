@@ -239,17 +239,70 @@ async function restoreOne(tx: Tx, kind: TrashKind, id: number) {
         seats.filter((seat) => seat.was_confirmed).map((seat) => Number(seat.id)),
       );
       await recomputeStatus(tx, id);
-      return { seats: seats.length, ...decided };
+      return {
+        seats: seats.length,
+        ...decided,
+        // Shown in the report (`RunReportView`): a restore that came back
+        // waitlisted is done, but not what the admin will assume "done" means.
+        note: decided.refused ? `Came back waitlisted: ${decided.refused}` : null,
+      };
     }
     case 'seat': {
-      const [seat] = await tx.execute<{ segment_id: string; registration_id: string }>(sql`
-        update attendees set deleted_at = null, status = 'WAITLIST'
-         where id = ${id}
-        returning segment_id, registration_id
+      // The seat's status before it was removed is gone (`removeAttendee()`
+      // cancels it), so it is decided the way a new seat on this party would
+      // be, and never ahead of the party it belongs to:
+      //
+      // - an extra in a REVIEW segment goes back to review, as §7.5 requires
+      //   of every extra there;
+      // - a seat whose party holds no confirmed seat waits with its party
+      //   rather than jumping the queue the party is in;
+      // - otherwise the engine decides whether it fits.
+      const [seat] = await tx.execute<{
+        segment_id: string;
+        registration_id: string;
+        allocation_type: string;
+        policy: string | null;
+        party_confirmed: boolean;
+      }>(sql`
+        select a.segment_id, a.registration_id, a.allocation_type,
+               (resolve_setting('allocation.extras_policy', a.segment_id) #>> '{}') as policy,
+               exists (select 1 from attendees x
+                        where x.registration_id = a.registration_id
+                          and x.id <> a.id
+                          and x.status = 'CONFIRMED'
+                          and x.deleted_at is null) as party_confirmed
+          from attendees a
+         where a.id = ${id}
       `);
-      const decided = await redecide(tx, Number(seat.segment_id), [id]);
+      const review = seat.allocation_type === 'EXTRA' && seat.policy === 'REVIEW';
+      await tx.execute(sql`
+        update attendees
+           set deleted_at = null,
+               status = ${review ? 'PENDING_REVIEW' : 'WAITLIST'}::booking_status
+         where id = ${id}
+      `);
+
+      let outcome: { confirmed: number; waitlisted: number; pendingReview: number; note: string | null };
+      if (review) {
+        outcome = { confirmed: 0, waitlisted: 0, pendingReview: 1, note: 'Back in extras review.' };
+      } else if (!seat.party_confirmed) {
+        outcome = {
+          confirmed: 0,
+          waitlisted: 1,
+          pendingReview: 0,
+          note: 'Waitlisted with its party, which holds no confirmed seat.',
+        };
+      } else {
+        const decided = await redecide(tx, Number(seat.segment_id), [id]);
+        outcome = {
+          confirmed: decided.confirmed,
+          waitlisted: decided.waitlisted,
+          pendingReview: 0,
+          note: decided.refused ? `Came back waitlisted: ${decided.refused}` : null,
+        };
+      }
       await recomputeStatus(tx, Number(seat.registration_id));
-      return decided;
+      return outcome;
     }
     default:
       await tx.execute(sql`
@@ -269,6 +322,15 @@ function purgeBlocks(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blocked> {
     case 'party':
     case 'seat':
       return blocked(tx, sql`
+        ${
+          kind === 'party'
+            ? sql`select o.registration_id as id,
+                         'A message to this party is being sent right now.' as reason
+                    from email_outbox o
+                   where o.registration_id = any(${any}) and o.status = 'SENDING'
+                  union all`
+            : sql``
+        }
         select ${kind === 'party' ? sql`a.registration_id` : sql`a.id`} as id,
                count(*) || ' guest(s) admitted at the door. Undo the check-in first, '
                  || 'or the admission would be erased.' as reason
@@ -293,6 +355,10 @@ function purgeBlocks(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blocked> {
          group by fr.form_id`);
     case 'player':
       return blocked(tx, sql`
+        select o.player_id as id, 'A message to this player is being sent right now.' as reason
+          from email_outbox o
+         where o.player_id = any(${any}) and o.status = 'SENDING'
+        union all
         select r.player_id as id,
                count(*) || ' live part' || case when count(*) = 1 then 'y is' else 'ies are' end ||
                  ' linked to this player. Deleting would change their quota.' as reason
@@ -309,7 +375,12 @@ function purgeBlocks(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blocked> {
   }
 }
 
-async function purgeBlast(tx: Tx, kind: TrashKind, ids: number[]): Promise<BlastLine[]> {
+async function purgeBlast(
+  tx: Tx,
+  kind: TrashKind,
+  ids: number[],
+  concertId: number,
+): Promise<BlastLine[]> {
   const any = idArray(ids);
   const label = KIND_LABEL[kind];
   const lines: BlastLine[] = [
@@ -403,6 +474,14 @@ async function purgeBlast(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blast
     add(row.unlinked, 'parties in the Trash lose their link to the player.', 'neutral');
   }
 
+  const [history] = await tx.execute<{ n: number }>(sql`
+    select count(*)::int as n from audit_log l
+     where l.concert_id = ${concertId}
+       and (l.before is not null or l.after is not null)
+       and ${auditRefs(kind, ids)}
+  `);
+  add(history.n, 'earlier Activity entries keep what happened and when, but lose the details they recorded.', 'neutral');
+
   if (kind === 'ticket_template') {
     const [row] = await tx.execute<{ defaults: number }>(sql`
       select (select count(*)::int from shows where ticket_template_id = any(${any}))
@@ -415,23 +494,86 @@ async function purgeBlast(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blast
   return lines;
 }
 
-async function purgeOne(tx: Tx, kind: TrashKind, id: number) {
+/**
+ * The audit rows about the rows a purge removes, as a condition on `audit_log`.
+ *
+ * Deleting a person for good has to reach the history too: `player.created`
+ * holds the email it was created with, `registration.updated` the name it was
+ * changed from. Those rows are kept — the change happened, and when — but their
+ * `before` / `after` are replaced with a marker (§23.6). A party covers its
+ * seats as well. Rows written in bulk with no entity id cannot be traced to a
+ * person and are left as they are.
+ */
+function auditRefs(kind: TrashKind, ids: number[]): ReturnType<typeof sql> {
+  const texts = sql`${`{${ids.join(',')}}`}::text[]`;
+  switch (kind) {
+    case 'party':
+      return sql`(
+        (l.entity_type = 'registration' and l.entity_id = any(${texts}))
+        or (l.entity_type = 'attendee' and l.entity_id in (
+              select a.id::text from attendees a where a.registration_id = any(${idArray(ids)}))))`;
+    case 'player':
+      return sql`(l.entity_type in ('player', 'players') and l.entity_id = any(${texts}))`;
+    default:
+      return sql`(l.entity_type = ${KIND_ENTITY[kind]} and l.entity_id = any(${texts}))`;
+  }
+}
+
+const REDACTED = sql`'{"redacted":"deleted permanently"}'::jsonb`;
+
+async function redactHistory(tx: Tx, kind: TrashKind, id: number, concertId: number) {
+  await tx.execute(sql`
+    update audit_log l
+       set before = case when l.before is null then null else ${REDACTED} end,
+           after  = case when l.after  is null then null else ${REDACTED} end
+     where l.concert_id = ${concertId}
+       and ${auditRefs(kind, [id])}
+  `);
+  // A restore's report named the row it restored; the name goes too.
+  await tx.execute(sql`
+    update command_run_items i
+       set outcome = i.outcome - 'label'
+      from command_runs r
+     where r.id = i.run_id
+       and r.concert_id = ${concertId}
+       and i.entity_type = ${KIND_ENTITY[kind]}
+       and i.entity_id = ${id}
+       and i.outcome ? 'label'
+  `);
+}
+
+async function purgeOne(tx: Tx, kind: TrashKind, id: number, concertId: number) {
+  // Before the delete: a party's seats are found through the rows about to go.
+  await redactHistory(tx, kind, id, concertId);
   if (kind === 'party') {
-    // The party's form response and the edits it superseded, unless another
-    // party still points into the same chain.
+    // The party's form response and the edits it superseded — except any
+    // response another party's own chain also passes through. Two parties can
+    // share history (an edit that split a party, a merge undone), and deleting
+    // a shared ancestor would cut the other party's record of what was typed.
     const chain = await tx.execute<{ id: string }>(sql`
-      with recursive chain(id) as (
+      with recursive mine(id) as (
         select form_response_id from registrations
          where id = ${id} and form_response_id is not null
         union
         select fr.supersedes_id from form_responses fr
-          join chain c on c.id = fr.id
+          join mine m on m.id = fr.id
+         where fr.supersedes_id is not null
+      ),
+      others(id) as (
+        select r.form_response_id from registrations r
+         where r.id <> ${id}
+           and r.form_response_id is not null
+           and r.form_response_id in (
+             select x.id from form_responses x
+              where x.form_id in (select f.form_id from form_responses f where f.id in (select id from mine)))
+        union
+        select fr.supersedes_id from form_responses fr
+          join others o on o.id = fr.id
          where fr.supersedes_id is not null
       )
-      select c.id from chain c
-       where not exists (
-         select 1 from registrations r where r.form_response_id = c.id and r.id <> ${id}
-       )
+      select id from mine
+      except
+      select id from others
     `);
     const [counts] = await tx.execute<{ seats: number; messages: number }>(sql`
       select (select count(*)::int from attendees where registration_id = ${id}) as seats,
@@ -492,11 +634,11 @@ function trashCommand(kind: TrashKind, mode: 'restore' | 'purge'): AnyCommand {
         });
     },
 
-    blastRadius: (tx, _ctx, ids) =>
-      mode === 'restore' ? restoreBlast(tx, kind, ids) : purgeBlast(tx, kind, ids),
+    blastRadius: (tx, ctx, ids) =>
+      mode === 'restore' ? restoreBlast(tx, kind, ids) : purgeBlast(tx, kind, ids, ctx.concertId),
 
     async apply(tx, ctx, row) {
-      const outcome = mode === 'restore' ? await restoreOne(tx, kind, row.id) : await purgeOne(tx, kind, row.id);
+      const outcome = mode === 'restore' ? await restoreOne(tx, kind, row.id) : await purgeOne(tx, kind, row.id, ctx.concertId);
       await ctx.audit({
         action: `${entityType}.${mode === 'restore' ? 'restored' : 'purged'}`,
         entityType,

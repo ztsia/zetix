@@ -70,6 +70,12 @@ describe('audit_log_fill_concert', () => {
     expect(await audit('attendee', attendee.id)).toBe(concertId);
     expect(await audit('player', playerId)).toBe(concertId);
     expect(await audit('ticket_template', template.id)).toBe(concertId);
+
+    const [profile] = await sql<{ id: string }[]>`
+      insert into mapping_profiles (name, show_id, audience, config)
+      values ('Round 1', ${showId}, 'PUBLIC', '{}'::jsonb) returning id
+    `;
+    expect(await audit('mapping_profile', profile.id)).toBe(concertId);
   });
 
   it('scopes an outbox row through its registration', async () => {

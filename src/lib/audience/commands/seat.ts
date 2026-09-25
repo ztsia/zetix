@@ -15,7 +15,17 @@ import {
 import { recomputeStatus, removeAttendee } from '@/lib/registrations/mutations';
 import { generateQrToken, generateTicketCode, DEFAULT_TICKET_CODE_PREFIX } from '@/lib/tickets/identifiers';
 import { mintIdentifiers } from '@/lib/tickets/mint';
-import { NO_ROOM, capacityLines, filter, matchSeats, noParams, seatFacts, type SeatFacts } from './shared';
+import {
+  NO_ROOM,
+  capacityLines,
+  filter,
+  matchSeats,
+  noParams,
+  seatFacts,
+  withdrawTicketMailIfUnseated,
+  withdrawnNote,
+  type SeatFacts,
+} from './shared';
 
 /**
  * The seat-grain commands of spec/v3.md §23.2 that are the Audience
@@ -348,14 +358,15 @@ const setStatus = seatCommand({
       `);
     }
     await recomputeStatus(tx, seat.registrationId);
+    const withdrawn = target === 'CONFIRMED' ? 0 : await withdrawTicketMailIfUnseated(tx, seat.registrationId);
     await ctx.audit({
       action: 'attendee.status_set',
       entityType: 'attendee',
       entityId: seat.id,
       before: { status: seat.status },
-      after: { status: target, override: ctx.params.override },
+      after: { status: target, override: ctx.params.override, messagesWithdrawn: withdrawn },
     });
-    return {};
+    return { note: withdrawnNote(withdrawn) };
   },
 });
 
@@ -373,8 +384,14 @@ const removeSeat = seatCommand({
   },
   async apply(tx, ctx, seat) {
     await removeAttendee(seat.id, { executor: tx });
-    await ctx.audit({ action: 'attendee.removed', entityType: 'attendee', entityId: seat.id });
-    return {};
+    const withdrawn = await withdrawTicketMailIfUnseated(tx, seat.registrationId);
+    await ctx.audit({
+      action: 'attendee.removed',
+      entityType: 'attendee',
+      entityId: seat.id,
+      after: { messagesWithdrawn: withdrawn },
+    });
+    return { note: withdrawnNote(withdrawn) };
   },
 });
 

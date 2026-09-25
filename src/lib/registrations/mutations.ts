@@ -285,8 +285,12 @@ export type DetailsResult = {
   emailChanged: boolean;
   /** Pending messages moved to the new address (spec/v3.md §24.3). */
   readdressed: number;
+  /** Pending messages withdrawn because the address was cleared and they have nowhere to go. */
+  withdrawn: number;
   /** Seats whose tickets already went to the old address — the record's resend question. */
   deliveredToOld: number;
+  /** The contact as it was, for the caller's audit row. */
+  before: { contactName: string; contactEmail: string | null } | null;
 };
 
 /**
@@ -301,7 +305,8 @@ export type DetailsResult = {
  *
  * **A changed contact email re-addresses the party's pending messages in the
  * same transaction** (spec/v3.md §24.3): a draft or queued message would
- * otherwise go to the address the admin just corrected. A `SENDING` message is
+ * otherwise go to the address the admin just corrected. A cleared email
+ * withdraws them instead — there is nowhere left to send them. A `SENDING` message is
  * the dispatcher's and a `SENT` one is history; neither is rewritten. The
  * address check's result is stored with it, so `SUSPICIOUS_ADDRESS` follows the
  * new address (§24.6).
@@ -337,6 +342,7 @@ export async function updateRegistrationDetails(
       `);
 
       let readdressed = 0;
+      let withdrawn = 0;
       let deliveredToOld = 0;
       if (emailChanged) {
         await db.execute(sql`
@@ -354,6 +360,16 @@ export async function updateRegistrationDetails(
             returning id
           `);
           readdressed = moved.length;
+        } else {
+          // Cleared: a pending message has no address left to go to, and must
+          // not go to the old one the admin just removed.
+          const cancelled = await db.execute<{ id: string }>(sql`
+            update email_outbox set status = 'CANCELLED'
+             where registration_id = ${registrationId}
+               and status in ('DRAFT', 'QUEUED')
+            returning id
+          `);
+          withdrawn = cancelled.length;
         }
         const [delivered] = await db.execute<{ n: number }>(sql`
           select count(*)::int as n from attendees
@@ -370,7 +386,15 @@ export async function updateRegistrationDetails(
           db,
         );
       }
-      return { emailChanged, readdressed, deliveredToOld };
+      return {
+        emailChanged,
+        readdressed,
+        withdrawn,
+        deliveredToOld,
+        before: before[0]
+          ? { contactName: before[0].contact_name, contactEmail: before[0].contact_email }
+          : null,
+      };
     });
   } catch (error) {
     rethrowDbError(error);
@@ -453,29 +477,35 @@ export async function renameAttendee(
   attendeeId: number,
   fullName: string | null,
   options: InTx = {},
-): Promise<void> {
+): Promise<{ before: string | null }> {
   const trimmed = (fullName ?? '').trim();
-  const db = options.executor ?? getDb();
 
   try {
-    await db.execute(sql`
-      update attendees a
-         set full_name = coalesce(
-               nullif(${trimmed}, ''),
-               'Guest of ' || r.contact_name),
-             name_source = case
-               when nullif(${trimmed}, '') is null then 'PLACEHOLDER'
-               else 'PROVIDED' end::name_source
-        from registrations r
-       where r.id = a.registration_id
-         and a.id = ${attendeeId}
-         and a.deleted_at is null
-    `);
+    // One transaction: the rename and its reissue flag land together or not at
+    // all, so a name can never change on a delivered ticket unflagged.
+    return await within(options.executor, async (db) => {
+      const [previous] = await db.execute<{ full_name: string }>(sql`
+        select full_name from attendees where id = ${attendeeId} and deleted_at is null for update
+      `);
+      await db.execute(sql`
+        update attendees a
+           set full_name = coalesce(
+                 nullif(${trimmed}, ''),
+                 'Guest of ' || r.contact_name),
+               name_source = case
+                 when nullif(${trimmed}, '') is null then 'PLACEHOLDER'
+                 else 'PROVIDED' end::name_source
+          from registrations r
+         where r.id = a.registration_id
+           and a.id = ${attendeeId}
+           and a.deleted_at is null
+      `);
+      await flagReissueForChangedFields([attendeeId], ['attendee.full_name'], db);
+      return { before: previous?.full_name ?? null };
+    });
   } catch (error) {
     rethrowDbError(error);
   }
-
-  await flagReissueForChangedFields([attendeeId], ['attendee.full_name'], db);
 }
 
 /**

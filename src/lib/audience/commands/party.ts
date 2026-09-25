@@ -33,6 +33,8 @@ import {
   partyFacts,
   plural,
   walkStopped,
+  withdrawTicketMailIfUnseated,
+  withdrawnNote,
   type PartyFacts,
 } from './shared';
 
@@ -117,6 +119,19 @@ function partyCommand<P>(spec: {
 }
 
 const CANCELLED = 'Cancelled. Restore it first.';
+
+/** The preview line for ticket emails a run would withdraw (§23.3). */
+async function pendingTicketMail(tx: Tx, ids: number[]): Promise<BlastLine[]> {
+  if (ids.length === 0) return [];
+  const [row] = await tx.execute<{ n: number }>(sql`
+    select count(*)::int as n from email_outbox
+     where registration_id = any(${idArray(ids)}) and status in ('DRAFT', 'QUEUED')
+       and (purpose = 'TICKETS' or (purpose = 'EXTRAS_DECISION' and template_key = 'extras_granted'))
+  `);
+  return row.n > 0
+    ? [{ count: row.n, text: 'ticket emails waiting to be sent are withdrawn from any party left with no confirmed seat.', tone: 'neutral' }]
+    : [];
+}
 
 // ---------------------------------------------------------------------------
 // Review
@@ -409,7 +424,7 @@ const waitlist = partyCommand({
         : party.confirmed + party.pending === 0
           ? 'Already waitlisted.'
           : null,
-  async blastRadius(_tx, _ctx, parties) {
+  async blastRadius(tx, _ctx, parties) {
     const confirmed = parties.reduce((n, p) => n + p.confirmed, 0);
     const delivered = parties.reduce((n, p) => n + p.delivered, 0);
     const lines: BlastLine[] = [];
@@ -421,6 +436,7 @@ const waitlist = partyCommand({
         tone: 'danger',
       });
     }
+    lines.push(...(await pendingTicketMail(tx, parties.map((p) => p.id))));
     return lines;
   },
   async apply(tx, ctx, party) {
@@ -431,13 +447,14 @@ const waitlist = partyCommand({
       returning id
     `);
     await recomputeStatus(tx, party.id);
+    const withdrawn = await withdrawTicketMailIfUnseated(tx, party.id);
     await ctx.audit({
       action: 'registration.waitlisted',
       entityType: 'registration',
       entityId: party.id,
-      after: { seats: rows.length },
+      after: { seats: rows.length, messagesWithdrawn: withdrawn },
     });
-    return { seats: rows.length };
+    return { seats: rows.length, note: withdrawnNote(withdrawn) };
   },
 });
 

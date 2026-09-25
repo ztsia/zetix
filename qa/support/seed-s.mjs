@@ -36,7 +36,7 @@ await sql`update registrations set approved_at = null`;
 const [template] = await sql`
   insert into ticket_templates (concert_id, name, version, background_kind, page_width_pt, page_height_pt, layout, is_default)
   values (${ids.concertId}, 'Default', 1, 'NONE', 595, 280,
-          '{"canvas":{"width_pt":595,"height_pt":280,"dpi":300},"elements":[{"id":"n","type":"text","binding":"attendee.full_name","x_pt":20,"y_pt":20,"width_pt":300,"height_pt":30,"font_size_pt":18}]}'::jsonb,
+          '{"canvas":{"width_pt":595,"height_pt":280,"dpi":300},"elements":[]}'::jsonb,
           true)
   returning id`;
 

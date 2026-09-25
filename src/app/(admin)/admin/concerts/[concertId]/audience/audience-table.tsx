@@ -134,9 +134,14 @@ export function AudienceTable({
     });
   const builtIn: BuiltInView[] = [
     { id: 'all', label: 'All', query: viewQuery(null), count: counts.all },
-    ...VIEWS.filter((view) => view.kind === 'stage' || counts.views[view.id] > 0 || view.id === filter.view).map(
-      (view) => ({ id: view.id, label: view.label, query: viewQuery(view.id), count: counts.views[view.id] }),
-    ),
+    // Every stage and every flag, zeros included (§22.2): an empty Bounced view
+    // is an answer, and a view that vanished would read as not existing.
+    ...VIEWS.map((view) => ({
+      id: view.id,
+      label: view.label,
+      query: viewQuery(view.id),
+      count: counts.views[view.id],
+    })),
   ];
 
   const open = (command: string) => {

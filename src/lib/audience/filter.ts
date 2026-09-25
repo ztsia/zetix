@@ -123,7 +123,13 @@ const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
  */
 export const audienceFilterSchema = z
   .object({
-    view: z.string().max(40).optional(),
+    // Only a built-in view: an unknown one would otherwise match nothing in
+    // particular — the whole concert — and a command would run on all of it.
+    view: z
+      .string()
+      .max(40)
+      .refine((value) => findView(value) !== null, 'Unknown view.')
+      .optional(),
     search: z.string().max(200).optional(),
     showId: id.optional(),
     segmentId: id.optional(),

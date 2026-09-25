@@ -399,3 +399,132 @@ describe('scope', () => {
     expect(row.approved_at).toBeNull();
   });
 });
+
+describe('what QA found the suite would not notice', () => {
+  async function withTemplate() {
+    await sql`
+      insert into ticket_templates (concert_id, name, version, background_kind, page_width_pt, page_height_pt, layout, is_default)
+      values (${concertId}, 'Default', 1, 'NONE', 595, 280, '{"canvas":{"width_pt":595,"height_pt":280,"dpi":300},"elements":[]}', true)
+    `;
+  }
+  const queueTickets = (registrationId: number) => sql`
+    insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md, status)
+    values (${registrationId}, 'TICKETS', 'public_ticket', 'party@example.test', 's', 'b', 'QUEUED')
+  `;
+  const mailStatus = async (registrationId: number) =>
+    (await sql<{ status: string }[]>`select status from email_outbox where registration_id = ${registrationId}`)[0]
+      ?.status;
+
+  it('Reissue never touches the QR token or the ticket code (decision 28)', async () => {
+    await withTemplate();
+    const a = await party(publicSeg, 1, 'EXTRA');
+    await run('seats.issue', byFilter({}));
+    const [before] = await sql<{ qr_token: string; ticket_code: string }[]>`
+      select qr_token, ticket_code from attendees where registration_id = ${a}`;
+    await sql`update attendees set ticket_sent_at = now() where registration_id = ${a}`;
+    const report = await run('seats.reissue', byFilter({}));
+    expect(report.done).toBe(1);
+    const [after] = await sql<{ qr_token: string; ticket_code: string }[]>`
+      select qr_token, ticket_code from attendees where registration_id = ${a}`;
+    expect(after).toEqual(before);
+  });
+
+  it('seat commands never reach another concert’s seats', async () => {
+    await withTemplate();
+    const otherConcert = await createConcert('Elsewhere');
+    const otherShow = await createShow(otherConcert, 10);
+    const otherSeg = await createSegment(otherShow, { audienceMode: 'PUBLIC', capacity: 5, extrasPolicy: 'AUTO_FCFS' });
+    const theirs = await party(otherSeg, 1, 'EXTRA');
+    const [seat] = await sql<{ id: string }[]>`select id from attendees where registration_id = ${theirs}`;
+    await sql`update attendees set qr_token = 'AAAAAAAAAAAAAAAAAAAAAA', ticket_code = 'ORC-ZZZZ' where id = ${seat.id}`;
+
+    for (const command of ['seats.void_qr', 'seats.delete', 'seats.check_in', 'seats.set_status']) {
+      const params = command === 'seats.set_status' ? { status: 'WAITLIST' } : {};
+      const report = await run(command, { ids: [Number(seat.id)] }, params, 'void and re-issue 0 seats');
+      expect(report.done, command).toBe(0);
+    }
+    const [row] = await sql<{ qr_token: string; status: string; deleted_at: Date | null; admitted: number }[]>`
+      select qr_token, status, deleted_at,
+             (select count(*)::int from check_ins where attendee_id = a.id) as admitted
+        from attendees a where id = ${seat.id}`;
+    expect(row).toEqual({ qr_token: 'AAAAAAAAAAAAAAAAAAAAAA', status: 'CONFIRMED', deleted_at: null, admitted: 0 });
+  });
+
+  it('checks a guest in once; a second run skips them', async () => {
+    const a = await party(publicSeg, 1, 'EXTRA');
+    await run('seats.check_in', byFilter({}));
+    const again = await run('seats.check_in', byFilter({}));
+    expect(again.skipped).toBe(1);
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from check_ins c join attendees x on x.id = c.attendee_id
+       where x.registration_id = ${a} and c.reverted_at is null`;
+    expect(row.n).toBe(1);
+  });
+
+  it('Waitlist withdraws the pending ticket email of a party left with no seat', async () => {
+    const a = await party(publicSeg, 2, 'EXTRA');
+    await queueTickets(a);
+    const report = await run('audience.waitlist', { ids: [a] });
+    expect(JSON.stringify(report.items[0].outcome)).toContain('withdrawn');
+    expect(await mailStatus(a)).toBe('CANCELLED');
+  });
+
+  it('Set status withdraws it only once no seat is confirmed', async () => {
+    const a = await party(publicSeg, 2, 'EXTRA');
+    await queueTickets(a);
+    const seatIds = (await sql<{ id: string }[]>`select id from attendees where registration_id = ${a} order by id`).map(
+      (r) => Number(r.id),
+    );
+    await run('seats.set_status', { ids: [seatIds[0]] }, { status: 'CANCELLED' });
+    expect(await mailStatus(a)).toBe('QUEUED');
+    await run('seats.set_status', { ids: [seatIds[1]] }, { status: 'CANCELLED' });
+    expect(await mailStatus(a)).toBe('CANCELLED');
+  });
+
+  it('a filter naming no view is refused, not read as the whole concert', async () => {
+    await party(publicSeg, 1, 'EXTRA', { approved: false });
+    await expect(run('audience.approve', byFilter({ view: 'no-such-view' }))).rejects.toThrow(/malformed/);
+  });
+});
+
+describe('editing the contact email (§24.3, §24.6)', () => {
+  it('re-addresses pending messages, never sent ones, and stores the check', async () => {
+    const { updateRegistrationDetails } = await import('@/lib/registrations/mutations');
+    const a = await party(publicSeg, 1, 'EXTRA');
+    await sql`
+      insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md, status, sent_at)
+      values (${a}, 'TICKETS', 'public_ticket', 'party@example.test', 's', 'b', 'SENT', now()),
+             (${a}, 'REMINDER', 'reminder', 'party@example.test', 's', 'b', 'QUEUED', null)
+    `;
+    const result = await updateRegistrationDetails(a, {
+      contactName: 'Party',
+      contactEmail: 'new@gmail.con',
+      emailIssue: 'We could not find the mail server for “gmail.con”.',
+    });
+    expect(result).toMatchObject({ emailChanged: true, readdressed: 1 });
+    const mail = await sql<{ status: string; to_email: string }[]>`
+      select status, to_email from email_outbox where registration_id = ${a} order by id`;
+    expect(mail).toEqual([
+      { status: 'SENT', to_email: 'party@example.test' },
+      { status: 'QUEUED', to_email: 'new@gmail.con' },
+    ]);
+    expect((await stage(a)).flags).toContain('SUSPICIOUS_ADDRESS');
+  });
+
+  it('withdraws pending messages when the address is cleared', async () => {
+    const { updateRegistrationDetails } = await import('@/lib/registrations/mutations');
+    const a = await party(publicSeg, 1, 'EXTRA');
+    await queueTicketsFor(a);
+    const result = await updateRegistrationDetails(a, { contactName: 'Party', contactEmail: null });
+    expect(result.withdrawn).toBe(1);
+    const [mail] = await sql<{ status: string }[]>`select status from email_outbox where registration_id = ${a}`;
+    expect(mail.status).toBe('CANCELLED');
+  });
+});
+
+function queueTicketsFor(registrationId: number) {
+  return sql`
+    insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md, status)
+    values (${registrationId}, 'TICKETS', 'public_ticket', 'party@example.test', 's', 'b', 'QUEUED')
+  `;
+}

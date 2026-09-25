@@ -237,7 +237,15 @@ export async function flagReissueForChangedFields(
 
   const affected = rows
     .filter((row) => {
-      const used = bindingsUsed(parseLayout(row.layout));
+      let used: Set<string>;
+      try {
+        used = bindingsUsed(parseLayout(row.layout));
+      } catch {
+        // A layout that no longer parses cannot prove it does not print the
+        // field, so the ticket is flagged: a needless flag is dismissed in one
+        // click, a missing one is a guest holding a stale ticket.
+        return true;
+      }
       return changedFields.some((field) => used.has(field));
     })
     .map((row) => Number(row.id));

@@ -5,6 +5,7 @@ import { requireAdmin } from '@/lib/auth/guards';
 import {
   AUDIENCE_URL_KEYS,
   filterFromUrl,
+  findView,
   grainFromUrl,
   partyFilter,
 } from '@/lib/audience/filter';
@@ -49,6 +50,9 @@ export default async function AudiencePage({
   const timeZone = concert.timezone ?? 'UTC';
 
   const state = parseTableState(await searchParams, { extraKeys: AUDIENCE_URL_KEYS });
+  // A hand-edited `?view=` that names no view is dropped, so the page shows
+  // All and says so, rather than listing everything under an unknown name.
+  if (state.extra.view && !findView(state.extra.view)) delete state.extra.view;
   const grain = grainFromUrl(state.extra);
   const filter = filterFromUrl(state.extra, state.search);
   const paging = { pageIndex: state.pageIndex, pageSize: state.pageSize, sorting: state.sorting };

@@ -295,7 +295,7 @@ export async function updateRegistrationAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const parsed = detailsSchema.safeParse({
     contactName: formData.get('contactName') ?? '',
@@ -321,12 +321,31 @@ export async function updateRegistrationAction(
       requestedAt: toInstant(parsed.data.requestedAt, timeZone),
       emailIssue,
     });
+    // The record's Activity (spec/v3.md §22.4). The email edit re-addresses
+    // pending mail, so it is the one edit that must never go unrecorded.
+    await writeAuditLog({
+      action: 'registration.updated',
+      entityType: 'registration',
+      entityId: registrationId,
+      before: result.before,
+      after: {
+        contactName: parsed.data.contactName,
+        contactEmail: parsed.data.contactEmail,
+        ...(result.emailChanged
+          ? { emailIssue, readdressed: result.readdressed, withdrawn: result.withdrawn }
+          : {}),
+      },
+      actorId: admin.id,
+    });
     refresh(concertId);
     if (!result.emailChanged) return ok('Saved.');
     return ok(
       [
         'Saved.',
         emailIssue ? `The new address looks wrong: ${emailIssue}` : null,
+        result.withdrawn > 0
+          ? `${result.withdrawn} message${result.withdrawn === 1 ? '' : 's'} waiting to be sent ${result.withdrawn === 1 ? 'was' : 'were'} withdrawn: the party has no address now.`
+          : null,
         result.readdressed > 0
           ? `${result.readdressed} message${result.readdressed === 1 ? '' : 's'} waiting to be sent will go to the new address.`
           : null,
@@ -415,7 +434,7 @@ export async function renameAttendeeAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const parsed = z
     .object({ fullName: z.preprocess(blankToNull, z.string().trim().max(200).nullable()) })
@@ -427,7 +446,15 @@ export async function renameAttendeeAction(
   }
 
   try {
-    await renameAttendee(attendeeId, parsed.data.fullName);
+    const result = await renameAttendee(attendeeId, parsed.data.fullName);
+    await writeAuditLog({
+      action: 'attendee.renamed',
+      entityType: 'attendee',
+      entityId: attendeeId,
+      before: { fullName: result.before },
+      after: { fullName: parsed.data.fullName },
+      actorId: admin.id,
+    });
     refresh(concertId);
     return ok('Renamed.');
   } catch (error) {

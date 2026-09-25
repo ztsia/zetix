@@ -318,3 +318,40 @@ export async function capacityLines(
 export function flagList(flags: Flag[]): string {
   return flags.map((flag) => FLAG_LABEL[flag]).join(', ');
 }
+
+// ---------------------------------------------------------------------------
+// Pending mail follows the seats
+// ---------------------------------------------------------------------------
+
+/**
+ * Withdraw a party's pending ticket-bearing messages once it holds no
+ * confirmed seat — the same thing Cancel does (`allocation.md` §7.9), for every
+ * other way a party can lose its seats: Waitlist, Set status, Delete seat.
+ *
+ * The dispatcher sends any `QUEUED` row, so a ticket email left behind would
+ * reach a guest who no longer holds a seat. While at least one seat is still
+ * confirmed the message stays: its attachments are built when it is sent, from
+ * the seats the party then holds. `SENDING` is the dispatcher's and is left.
+ *
+ * Returns how many were withdrawn, for the run's report.
+ */
+export async function withdrawTicketMailIfUnseated(tx: Tx, registrationId: number): Promise<number> {
+  const rows = await tx.execute<{ id: string }>(sql`
+    update email_outbox o
+       set status = 'CANCELLED'
+     where o.registration_id = ${registrationId}
+       and o.status in ('DRAFT', 'QUEUED')
+       and (o.purpose = 'TICKETS'
+            or (o.purpose = 'EXTRAS_DECISION' and o.template_key = 'extras_granted'))
+       and not exists (
+         select 1 from attendees a
+          where a.registration_id = o.registration_id
+            and a.status = 'CONFIRMED'
+            and a.deleted_at is null)
+    returning o.id
+  `);
+  return rows.length;
+}
+
+export const withdrawnNote = (n: number) =>
+  n > 0 ? `${n} ticket email${n === 1 ? '' : 's'} waiting to be sent ${n === 1 ? 'was' : 'were'} withdrawn: no seat is confirmed now.` : null;

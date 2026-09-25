@@ -209,6 +209,36 @@ describe('0200 on a database that already holds V2 data', () => {
     ).rejects.toThrow(/outbox_no_duplicate_pending/);
   });
 
+  it('keeps a confirmed QUEUED row over a newer DRAFT nobody confirmed', async () => {
+    const db = scratch!;
+    const { r1, message } = await seedV2(db);
+    const queued = await message({ registration: r1 }, 'public_ticket', 'QUEUED', '2026-09-05T00:00:00Z');
+    const draft = await message({ registration: r1 }, 'player_confirmation', 'DRAFT', '2026-09-06T00:00:00Z');
+
+    await applyV3(db);
+
+    const rows = await db<{ id: string; status: string }[]>`
+      select id, status from email_outbox order by id`;
+    expect(rows.map((r) => [Number(r.id), r.status])).toEqual([
+      [queued, 'QUEUED'],
+      [draft, 'CANCELLED'],
+    ]);
+  });
+
+  it('refuses to run while two messages for one party and purpose are both SENDING', async () => {
+    // Cancelling one would not stop it; the dispatch has to finish first.
+    const db = scratch!;
+    const { r1, message } = await seedV2(db);
+    await message({ registration: r1 }, 'public_ticket', 'SENDING', '2026-09-05T00:00:00Z');
+    await message({ registration: r1 }, 'player_confirmation', 'SENDING', '2026-09-06T00:00:00Z');
+
+    const error = await applyV3(db).then(
+      () => null,
+      (e: unknown) => e as Error & { cause?: Error },
+    );
+    expect(error?.cause?.message ?? error?.message).toMatch(/both SENDING/);
+  });
+
   it('approves every existing party as of its creation, and dates every seat from its party', async () => {
     const db = scratch!;
     const { r1, r2 } = await seedV2(db);

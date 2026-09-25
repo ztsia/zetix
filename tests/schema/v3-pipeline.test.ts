@@ -186,6 +186,26 @@ describe('party_pipeline — stages (§21.1)', () => {
     expect(await pipeline(id)).toMatchObject({ stage: 'SENT', admitted_seats: 0 });
   });
 
+  it('ADMITTED is the last step, so an unfinished earlier step still wins', async () => {
+    // One guest is inside; a seat added later has no ticket yet. The party's
+    // next action is Send tickets for that seat, and reading it as ADMITTED
+    // would hide it from the Needs tickets queue (§21.1, "the first step it has
+    // not finished").
+    const id = await publicParty(1);
+    await issueTickets(concertId, showId);
+    await deliverAll(id);
+    const [{ attendee }] = await sql<{ attendee: string }[]>`
+      select min(id) as attendee from attendees where registration_id = ${id}
+    `;
+    await sql`
+      insert into check_ins (attendee_id, show_id, scanned_at, source)
+      values (${attendee}, ${showId}, now(), 'MANUAL')
+    `;
+    await claim(publicSegmentId, id, ['EXTRA']);
+
+    expect(await pipeline(id)).toMatchObject({ stage: 'NEEDS_TICKETS', admitted_seats: 1 });
+  });
+
   it('WAITLISTED: no confirmed seats, at least one on the waitlist', async () => {
     // Fill the public segment, then a party of two cannot fit and waits whole.
     await publicParty(40);
@@ -289,6 +309,33 @@ describe('party_pipeline — flags (§21.2)', () => {
     expect((await pipeline(id))?.flags).not.toContain('SEND_FAILED');
   });
 
+  it('SEND_FAILED clears once every ticket reached the party another way', async () => {
+    const id = await publicParty(1);
+    await issueTickets(concertId, showId);
+    await outbox(id, { purpose: 'TICKETS', template: 'public_ticket', status: 'FAILED' });
+    expect((await pipeline(id))?.flags).toContain('SEND_FAILED');
+
+    // Mark as delivered by hand (email.md §11.6).
+    await sql`
+      update attendees set ticket_sent_at = now(), ticket_sent_source = 'MANUAL'
+       where registration_id = ${id}
+    `;
+    expect(await pipeline(id)).toMatchObject({ stage: 'SENT' });
+    expect((await pipeline(id))?.flags).not.toContain('SEND_FAILED');
+  });
+
+  it('BOUNCED is not raised by a message that carried no ticket', async () => {
+    const id = await publicParty(1);
+    await outbox(id, {
+      purpose: 'EXTRAS_DECISION',
+      template: 'extras_declined',
+      status: 'CANCELLED',
+      sentAt: new Date(Date.now() - 60_000).toISOString(),
+      bouncedAt: new Date().toISOString(),
+    });
+    expect((await pipeline(id))?.flags).not.toContain('BOUNCED');
+  });
+
   it('SUSPICIOUS_ADDRESS: the address check found a problem nobody accepted', async () => {
     const id = await publicParty(1);
     await sql`
@@ -321,6 +368,23 @@ describe('party_pipeline — flags (§21.2)', () => {
 
     // "Not a duplicate" sticks, and clears the flag.
     await sql`update duplicate_candidates set status = 'DISMISSED' where id = ${cand.id}`;
+    expect((await pipeline(a))?.flags).not.toContain('POSSIBLE_DUPLICATE');
+  });
+
+  it('POSSIBLE_DUPLICATE needs both parties live, and the candidate itself', async () => {
+    const a = await publicParty(1);
+    const b = await publicParty(1);
+    const c = await publicParty(1);
+    await sql`
+      insert into duplicate_candidates (show_id, registration_a_id, registration_b_id,
+                                        reasons, status)
+      values (${showId}, ${a}, ${b}, array['EMAIL'], 'OPEN'),
+             (${showId}, ${a}, ${c}, array['PHONE'], 'OPEN')
+    `;
+    // "A pair of live parties" (§25.5): deleting one side ends the pair.
+    await sql`update registrations set deleted_at = now() where id = ${b}`;
+    expect((await pipeline(a))?.flags).toContain('POSSIBLE_DUPLICATE');
+    await sql`update duplicate_candidates set deleted_at = now() where registration_b_id = ${c}`;
     expect((await pipeline(a))?.flags).not.toContain('POSSIBLE_DUPLICATE');
   });
 

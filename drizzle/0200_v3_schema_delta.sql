@@ -74,6 +74,31 @@ begin
       'mapping in 0200 (spec/v3.md §24.2) before re-running; nothing has been changed.',
       v_unmapped;
   end if;
+
+  -- Two messages for one party and purpose **both** in flight cannot be
+  -- resolved by cancelling one: the dispatcher is already sending it, and a
+  -- CANCELLED row that then goes out is a lie in the history. Only a dispatch
+  -- running at this moment produces this, so the answer is to wait for it.
+  if exists (
+    select 1 from email_outbox
+     where status = 'SENDING'
+     group by registration_id, player_id,
+              case template_key
+                when 'player_confirmation' then 'TICKETS'
+                when 'public_ticket'       then 'TICKETS'
+                when 'extras_granted'      then 'EXTRAS_DECISION'
+                when 'extras_declined'     then 'EXTRAS_DECISION'
+                when 'feedback_request'    then 'FEEDBACK'
+                when 'feedback_form_link'  then 'FEEDBACK'
+                else template_key
+              end
+    having count(*) > 1
+  ) then
+    raise exception
+      'two messages for the same party and purpose are both SENDING. Let the '
+      'dispatch finish (or recover the stale rows, spec/email.md §11.2) and re-run; '
+      'nothing has been changed.';
+  end if;
 end
 $$;--> statement-breakpoint
 
@@ -271,9 +296,14 @@ ALTER TABLE "email_outbox" ADD CONSTRAINT "email_outbox_superseded_by_fk" FOREIG
 -- with `superseded_by_id` pointing at it, and each is written to `audit_log`
 -- so the change is visible rather than silent.
 --
--- "Newest" with one exception: a row already SENDING is kept over a newer
--- draft. It is in the dispatcher's hands, and cancelling it underneath would
--- not stop the send — it would only lose the record that it went.
+-- **The survivor is the row furthest along, then the newest.** SENDING beats
+-- everything: it is in the dispatcher's hands, and cancelling it underneath
+-- would not stop the send, only lose the record that it went (two SENDING rows
+-- are refused by the precondition above). QUEUED beats DRAFT: an admin
+-- reviewed and confirmed it, and a newer DRAFT nobody confirmed must not
+-- replace it — the queue banner does not even show drafts. Within one status,
+-- the newest wins; a tie on `created_at` falls to the higher id, which is the
+-- later insert.
 --
 -- `partition by registration_id, player_id` is safe because exactly one of the
 -- two is ever set (`email_outbox_one_addressee`). REPLY is excluded, as it is
@@ -287,7 +317,8 @@ with ranked as (
      and purpose <> 'REPLY'
   window w as (
     partition by registration_id, player_id, purpose
-    order by (status = 'SENDING') desc, created_at desc, id desc)
+    order by case status when 'SENDING' then 0 when 'QUEUED' then 1 else 2 end,
+             created_at desc, id desc)
 ),
 superseded as (
   update email_outbox o
@@ -961,6 +992,17 @@ begin
 
   perform set_config('zetix.granting', 'off', true);
 
+  -- `registrations.requested_at` stays the party's earliest seat (spec/v3.md
+  -- §21.3) — it is still the ordering key for party-level screens. A seat
+  -- given an earlier time than its party (a merge bringing an older request
+  -- along) pulls the party back to it; a later one leaves it alone.
+  update registrations r
+     set requested_at = e.earliest
+    from (select min((q ->> 'requested_at')::timestamptz) as earliest
+            from jsonb_array_elements(p_requests) q) e
+   where r.id = p_registration_id
+     and e.earliest < r.requested_at;
+
   return jsonb_build_object(
     'granted_base',  v_granted_base,
     'granted_extra', v_granted_extra,
@@ -1164,7 +1206,6 @@ revoke all on function promote_seats(bigint, bigint[], boolean) from public, ano
 --
 --   CANCELLED      no live seats, and the party or a seat is cancelled
 --   (null)         no seats at all — off the line
---   ADMITTED       a live seat has a check-in that was not reverted
 --   NEEDS_REVIEW   not approved, or a seat is PENDING_REVIEW
 --   WAITLISTED     no confirmed seat, at least one WAITLIST
 --   UNVERIFIED     a public party sent a link it has not clicked, and no admin
@@ -1172,10 +1213,14 @@ revoke all on function promote_seats(bigint, bigint[], boolean) from public, ano
 --                  (`queue.ts` IS_VERIFIED: token set, verified_at null)
 --   NEEDS_TICKETS  a confirmed seat has no issued ticket
 --   READY_TO_SEND  every confirmed seat issued, at least one undelivered
+--   ADMITTED       every confirmed seat delivered, and a live seat has a
+--                  check-in that was not reverted
 --   SENT           every confirmed seat delivered, by email or by hand
 --
--- ADMITTED is checked before review: a party at the door is past every step
--- whatever the record says, and the door is the one truth nobody argues with.
+-- **The first step not finished wins, and ADMITTED is the last step**, so it is
+-- reached only once everything before it is done. A party with one guest
+-- inside and a second seat still unticketed is NEEDS_TICKETS: that seat is the
+-- work, and reading the party as ADMITTED would hide it from that queue.
 -- NEEDS_REVIEW is checked before WAITLISTED because approval is the earlier
 -- step; a waitlisted party still has to be approved before it can be ticketed.
 --
@@ -1262,7 +1307,10 @@ base as (
         from email_outbox o
        where o.registration_id = r.id
          and o.deleted_at is null
-         and o.purpose in ('TICKETS', 'EXTRAS_DECISION')
+         -- Ticket-bearing: TICKETS, and the granted half of EXTRAS_DECISION
+         -- (§24.2). A bounced decline carried no ticket.
+         and (o.purpose = 'TICKETS'
+              or (o.purpose = 'EXTRAS_DECISION' and o.template_key = 'extras_granted'))
          and o.sent_at is not null
          and o.to_email = r.contact_email
        order by o.sent_at desc, o.id desc
@@ -1279,15 +1327,27 @@ base as (
               and later.deleted_at is null
               and later.purpose = f.purpose
               and later.status = 'SENT'
-              and later.id > f.id)) as flag_send_failed,
+              and later.id > f.id)
+         -- A failed ticket message whose tickets all reached the party anyway —
+         -- by hand, or in another message — is history, not a problem.
+         and not (f.purpose in ('TICKETS', 'EXTRAS_DECISION')
+                  and coalesce(x.confirmed_seats, 0) > 0
+                  and x.delivered_seats >= x.confirmed_seats)) as flag_send_failed,
 
     (r.email_issue is not null and r.email_issue_accepted_at is null) as flag_suspicious_address,
     coalesce(x.any_needs_reissue, false) as flag_changed_after_send,
 
+    -- A candidate is "a pair of live parties" (§25.5): once either side is
+    -- deleted or merged away, the survivor is no longer anyone's duplicate.
     exists (
       select 1 from duplicate_candidates d
+        join registrations other
+          on other.id = case when d.registration_a_id = r.id
+                             then d.registration_b_id else d.registration_a_id end
        where d.status = 'OPEN'
-         and r.id in (d.registration_a_id, d.registration_b_id)) as flag_possible_duplicate,
+         and d.deleted_at is null
+         and r.id in (d.registration_a_id, d.registration_b_id)
+         and other.deleted_at is null) as flag_possible_duplicate,
 
     coalesce(x.any_placeholder, false) as flag_unnamed_guests,
 
@@ -1333,12 +1393,12 @@ select
     when b.live_seats = 0 and (b.cancelled_seats > 0 or b.registration_status = 'CANCELLED')
       then 'CANCELLED'
     when b.live_seats = 0 then null
-    when b.admitted_seats > 0 then 'ADMITTED'
     when b.approved_at is null or b.pending_seats > 0 then 'NEEDS_REVIEW'
     when b.confirmed_seats = 0 and b.waitlisted_seats > 0 then 'WAITLISTED'
     when b.unverified then 'UNVERIFIED'
     when b.issued_seats < b.confirmed_seats then 'NEEDS_TICKETS'
     when b.delivered_seats < b.confirmed_seats then 'READY_TO_SEND'
+    when b.admitted_seats > 0 then 'ADMITTED'
     else 'SENT'
   end as stage,
   array_remove(array[

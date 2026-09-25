@@ -231,6 +231,37 @@ describe('claim_seats() — each seat carries its own requested_at (v3.md §21.3
     ]);
   });
 
+  it('keeps the party at its earliest seat when an earlier one arrives', async () => {
+    const concertId = await createConcert();
+    const showId = await createShow(concertId, 10);
+    const segmentId = await createSegment(showId, {
+      audienceMode: 'PUBLIC',
+      capacity: 10,
+      extrasPolicy: 'AUTO_FCFS',
+    });
+    const registrationId = await createRegistration({
+      showId,
+      segmentId,
+      requestedAt: new Date('2026-09-10T00:00:00.000Z'),
+    });
+    const party = async () => {
+      const [row] = await sql<{ requested_at: Date }[]>`
+        select requested_at from registrations where id = ${registrationId}
+      `;
+      return new Date(row.requested_at).toISOString();
+    };
+
+    await claim(segmentId, registrationId, [
+      { full_name: 'Later', allocation_type: 'EXTRA', requested_at: '2026-09-12T00:00:00.000Z' },
+    ]);
+    expect(await party()).toBe('2026-09-10T00:00:00.000Z');
+
+    await claim(segmentId, registrationId, [
+      { full_name: 'Earlier', allocation_type: 'EXTRA', requested_at: '2026-09-01T00:00:00.000Z' },
+    ]);
+    expect(await party()).toBe('2026-09-01T00:00:00.000Z');
+  });
+
   it('refuses a request time that is not a timestamp', async () => {
     const concertId = await createConcert();
     const showId = await createShow(concertId, 10);

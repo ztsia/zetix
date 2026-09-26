@@ -215,10 +215,8 @@ export async function adviseOnAddress(email: string): Promise<{
  */
 export async function addressIssue(email: string): Promise<string | null> {
   const address = email.trim();
-  if (/\s/.test(address)) return 'The address contains a space.';
-  if (!ADDRESS_SHAPE.test(address) || address.includes('..')) {
-    return 'This is not a valid email address.';
-  }
+  const shape = addressShapeIssue(address);
+  if (shape) return shape;
   const { blocking, suggestion } = await adviseOnAddress(address);
   if (blocking) return blocking;
   if (suggestion) {
@@ -233,3 +231,15 @@ export async function addressIssue(email: string): Promise<string | null> {
  * accepted `gmail..com` (§24.6).
  */
 const ADDRESS_SHAPE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+/**
+ * The synchronous half of {@link addressIssue} — syntax only, no DNS — for a
+ * path that checks many rows at once and cannot wait on a lookup per row (the
+ * import staging grid, spec/v3.md §25.7). Same verdicts, same words.
+ */
+export function addressShapeIssue(email: string): string | null {
+  const address = email.trim();
+  if (/\s/.test(address)) return 'The address contains a space.';
+  if (!ADDRESS_SHAPE.test(address) || address.includes('..')) return 'This is not a valid email address.';
+  return null;
+}

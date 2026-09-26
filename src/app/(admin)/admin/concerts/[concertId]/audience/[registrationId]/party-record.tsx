@@ -45,7 +45,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { STAGE_NEXT } from '@/lib/audience/filter';
 import type { PartyRecord as Record_, RecordSeat } from '@/lib/audience/record';
 import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
+import type { MessageStatus } from '@/lib/delivery/message-filter';
 import { ActionDialog } from '../../../action-dialog';
+import { MessageActions } from '../messages/message-actions';
 import { RegistrationFormDialog } from '../../registrations/registration-form-dialog';
 import { addAttendeesAction, renameAttendeeAction } from '../../registrations/actions';
 import type { PlayerOption, RegistrationRow, SegmentOption } from '../../registrations/queries';
@@ -74,12 +76,15 @@ export function PartyRecord({
   record,
   segments,
   players,
+  reviewOptional = false,
 }: {
   concertId: number;
   timeZone: string;
   record: Record_;
   segments: SegmentOption[];
   players: PlayerOption[];
+  /** A one-party send may skip the wizard's review steps (`delivery.review_single_party`, §24.1). */
+  reviewOptional?: boolean;
 }) {
   const { party, seats } = record;
   const runCommand = useRunCommand();
@@ -87,9 +92,17 @@ export function PartyRecord({
   const canEdit = useCanEdit();
   const format = React.useMemo(() => formatter(timeZone), [timeZone]);
   const [notice, setNotice] = React.useState<string | null>(null);
+  // §22.4: the email changed after tickets went to the old address.
+  const [resendOffer, setResendOffer] = React.useState(false);
 
   const partyRun = (command: string, params?: unknown) =>
-    runCommand({ command, selection: { ids: [party.id] }, params });
+    // §24.1: only a one-party *resend* may skip the review steps.
+    runCommand({
+      command,
+      selection: { ids: [party.id] },
+      params,
+      reviewOptional: reviewOptional && command === 'delivery.resend',
+    });
   const seatRun = (command: string, ids: number[], params?: unknown) =>
     ids.length > 0 && runCommand({ command, selection: { ids }, params });
 
@@ -110,11 +123,13 @@ export function PartyRecord({
       primary.push({ label: 'Send reminder', onClick: () => partyRun('audience.remind_verification') });
       break;
     case 'NEEDS_TICKETS':
-      primary.push({ label: 'Issue tickets', onClick: () => seatRun('seats.issue', confirmedUnissued) });
-      primary.push({ label: 'Send tickets', href: `/admin/concerts/${concertId}/email`, icon: <Send data-icon="inline-start" /> });
+      // Send tickets issues what is unissued in the same run (§24.1); Issue
+      // alone stays for tickets wanted before any email goes.
+      primary.push({ label: 'Send tickets', onClick: () => partyRun('delivery.send_tickets'), icon: <Send data-icon="inline-start" /> });
+      primary.push({ label: 'Issue only', onClick: () => seatRun('seats.issue', confirmedUnissued) });
       break;
     case 'READY_TO_SEND':
-      primary.push({ label: 'Send tickets', href: `/admin/concerts/${concertId}/email`, icon: <Send data-icon="inline-start" /> });
+      primary.push({ label: 'Send tickets', onClick: () => partyRun('delivery.send_tickets'), icon: <Send data-icon="inline-start" /> });
       break;
     case 'WAITLISTED':
       primary.push({ label: 'Promote from waitlist', onClick: () => partyRun('audience.promote') });
@@ -130,6 +145,14 @@ export function PartyRecord({
   if (party.flags.includes('CHANGED_AFTER_SEND') && changed.length > 0) {
     primary.push({ label: 'Reissue changed tickets', onClick: () => seatRun('seats.reissue', changed) });
     primary.push({ label: 'Dismiss as cosmetic', onClick: () => seatRun('seats.dismiss_reissue', changed) });
+  }
+
+  // A delivery problem offers its repair beside the stage's step (§24.4).
+  if (
+    (party.flags.includes('BOUNCED') || party.flags.includes('SEND_FAILED')) &&
+    (party.stage === 'SENT' || party.stage === 'ADMITTED')
+  ) {
+    primary.push({ label: 'Resend tickets', onClick: () => partyRun('delivery.resend'), icon: <Send data-icon="inline-start" /> });
   }
 
   const partyCommands = COMMAND_ENTRIES.filter((e) => e.grain === 'parties');
@@ -231,6 +254,7 @@ export function PartyRecord({
                   </Button>
                 ) : (
                   <Button key={action.label} size="sm" onClick={action.onClick}>
+                    {action.icon}
                     {action.label}
                   </Button>
                 ),
@@ -241,7 +265,10 @@ export function PartyRecord({
                 segments={segments}
                 players={players}
                 registration={asRow}
-                onSuccess={(result) => setNotice(result.message ?? null)}
+                onSuccess={(result) => {
+                  setNotice(result.message ?? null);
+                  setResendOffer(result.resendOffer === true);
+                }}
                 trigger={
                   <Button size="sm" variant="outline">
                     <Pencil data-icon="inline-start" />
@@ -289,6 +316,29 @@ export function PartyRecord({
         {notice && (
           <Alert role="status">
             <AlertDescription>{notice}</AlertDescription>
+          </Alert>
+        )}
+
+        {resendOffer && canEdit && (
+          <Alert>
+            <Send />
+            <AlertTitle>Tickets were sent to the old address. Resend them to the new one?</AlertTitle>
+            <AlertDescription>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setResendOffer(false);
+                    partyRun('delivery.resend');
+                  }}
+                >
+                  Resend tickets
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setResendOffer(false)}>
+                  Not now
+                </Button>
+              </div>
+            </AlertDescription>
           </Alert>
         )}
 
@@ -412,7 +462,7 @@ export function PartyRecord({
           </TabsTrigger>
         </TabsList>
         <TabsContent value="conversation" className="pt-3">
-          <Conversation record={record} format={format} />
+          <Conversation concertId={concertId} record={record} format={format} />
         </TabsContent>
         <TabsContent value="responses" className="pt-3">
           <Responses record={record} format={format} />
@@ -675,7 +725,15 @@ const PURPOSE_LABEL: Record<string, string> = {
   REPLY: 'Reply',
 };
 
-function Conversation({ record, format }: { record: Record_; format: Intl.DateTimeFormat }) {
+function Conversation({
+  concertId,
+  record,
+  format,
+}: {
+  concertId: number;
+  record: Record_;
+  format: Intl.DateTimeFormat;
+}) {
   if (record.messages.length === 0) {
     return (
       <p className="text-muted-foreground flex items-center gap-2 text-sm">
@@ -711,6 +769,14 @@ function Conversation({ record, format }: { record: Record_; format: Intl.DateTi
               </>
             )}
             <span className="text-muted-foreground ml-auto tabular-nums">{format.format(new Date(m.at))}</span>
+            {m.direction === 'OUTBOUND' && m.outboxId !== null && m.status && (
+              <MessageActions
+                concertId={concertId}
+                messageId={m.outboxId}
+                status={(m.bounce ? 'BOUNCED' : m.status) as MessageStatus}
+                toParty
+              />
+            )}
           </div>
           <p className="font-medium">{m.subject}</p>
           {m.text && <p className="text-muted-foreground line-clamp-4 text-sm whitespace-pre-wrap">{m.text}</p>}

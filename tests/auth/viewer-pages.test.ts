@@ -78,8 +78,11 @@ const PAGES: Array<[string, Record<string, string>]> = [
   ['audience', { q: 'secret' }],
   ['import', {}],
   ['tickets/templates', {}],
-  ['email', {}],
-  ['email/delivery', {}],
+  // Email and Email › Delivery redirect to Audience › Messages now
+  // (spec/v3.md §24.4); these are its tabs and its search.
+  ['audience/messages', {}],
+  ['audience/messages', { status: 'FAILED' }],
+  ['audience/messages', { q: 'secret' }],
   ['email/templates', {}],
   ['checkin', {}],
   ['operators', {}],
@@ -287,12 +290,12 @@ describe('every admin page, rendered for a VIEWER', () => {
 });
 
 describe('the same pages for an ADMIN — the check above has something to find', () => {
-  it('Registrations, Delivery, Players, Trash, Activity and the designer show the real values', async () => {
+  it('Registrations, Messages, Players, Trash, Activity and the designer show the real values', async () => {
     sessionUser.mockResolvedValue(ADMIN);
     const all = [
       ...strings(await render('audience', {})),
       ...strings(await render('audience', { grain: 'seats' })),
-      ...strings(await render('email/delivery', {})),
+      ...strings(await render('audience/messages', {})),
       ...strings(await render('players', {})),
       ...strings(await render('trash', { kind: 'party' })),
       ...strings(await render('activity', {})),

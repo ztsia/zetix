@@ -33,6 +33,17 @@ export const TEMPLATE_KEYS = [
    * unsure of, and this goes to somebody who already came.
    */
   'feedback_request',
+  /**
+   * V3. What a form sends on submit: what was received, and that tickets
+   * follow once the organisers confirm (spec/v3.md §25.3). Module `V` queues it
+   * and folds the verification link into it for public forms.
+   */
+  'registration_receipt',
+  /**
+   * V3. The optional email inviting a player to share their form's link
+   * (spec/v3.md §25.2). Player-addressed, like the notes digest.
+   */
+  'player_invite',
 ] as const;
 
 export type TemplateKey = (typeof TEMPLATE_KEYS)[number];
@@ -61,6 +72,8 @@ export const TEMPLATE_PURPOSE = {
   reminder: 'REMINDER',
   player_notes_digest: 'NOTES_DIGEST',
   feedback_request: 'FEEDBACK',
+  registration_receipt: 'RECEIPT',
+  player_invite: 'PLAYER_INVITE',
 } as const satisfies Record<TemplateKey, MessagePurpose>;
 
 /**
@@ -97,3 +110,11 @@ export const TICKET_BEARING: ReadonlySet<TemplateKey> = new Set<TemplateKey>([
 export function carriesTickets(key: string): boolean {
   return TICKET_BEARING.has(key as TemplateKey);
 }
+
+/**
+ * The line under every ticket-bearing message, telling the reader what to
+ * bring. One constant, because the dispatcher, the wizard's preview and the
+ * Messages view's View must all show the same message the guest gets.
+ */
+export const TICKET_FOOTER =
+  'Your ticket is the attached PDF. Show its QR code to the registration crew at the door — every guest needs their own.';

@@ -6,6 +6,7 @@ import {
   FileText,
   Gauge,
   History,
+  Inbox,
   Mail,
   MessageSquareQuote,
   ScanLine,
@@ -85,6 +86,23 @@ export const CONCERT_NAV: NavGroup[] = [
         description: 'Form builder, preview, open and close, response list.',
         module: 'V2',
       },
+      {
+        // The Tickets table became the Audience workspace's Seats grain
+        // (spec/v3.md §22.1). The design and wording editors are setup, not
+        // delivery (§29.1), so they sit here; `W` gives them their Setup home.
+        slug: 'tickets/templates',
+        label: 'Ticket designs',
+        icon: Ticket,
+        description: 'Ticket design editor and preview.',
+        module: 'D / E',
+      },
+      {
+        slug: 'email/templates',
+        label: 'Email templates',
+        icon: Mail,
+        description: 'The wording of every message, with merge fields and a preview.',
+        module: 'F',
+      },
     ],
   },
   {
@@ -101,6 +119,16 @@ export const CONCERT_NAV: NavGroup[] = [
         module: 'S',
       },
       {
+        // Every message of the concert, in every status, with its exit
+        // (spec/v3.md §24.4). It replaced Email and Email › Delivery, whose old
+        // URLs redirect here.
+        slug: 'audience/messages',
+        label: 'Messages',
+        icon: Inbox,
+        description: 'Every message in every state, and what can be done with each.',
+        module: 'T',
+      },
+      {
         slug: 'import',
         label: 'Import',
         icon: FileSpreadsheet,
@@ -112,22 +140,6 @@ export const CONCERT_NAV: NavGroup[] = [
   {
     label: 'Delivery',
     items: [
-      {
-        // The Tickets table became the Audience workspace's Seats grain
-        // (spec/v3.md §22.1); the designs stay here until Setup takes them (§29.1).
-        slug: 'tickets/templates',
-        label: 'Ticket designs',
-        icon: Ticket,
-        description: 'Ticket design editor and preview.',
-        module: 'D / E',
-      },
-      {
-        slug: 'email',
-        label: 'Email',
-        icon: Mail,
-        description: 'Templates, outbox, blast and send log.',
-        module: 'F',
-      },
       {
         slug: 'checkin',
         label: 'Check-in',

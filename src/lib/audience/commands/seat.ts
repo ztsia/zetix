@@ -14,6 +14,7 @@ import {
 } from '@/lib/commands/define';
 import { recomputeStatus, removeAttendee } from '@/lib/registrations/mutations';
 import { generateQrToken, generateTicketCode, DEFAULT_TICKET_CODE_PREFIX } from '@/lib/tickets/identifiers';
+import { designFor } from '@/lib/tickets/design';
 import { mintIdentifiers } from '@/lib/tickets/mint';
 import {
   NO_ROOM,
@@ -82,44 +83,6 @@ const notTicketable = (seat: SeatFacts) =>
     : seat.status !== 'CONFIRMED'
       ? 'Only a confirmed seat holds a ticket.'
       : null;
-
-/**
- * The ticket design a seat is issued with: the segment's default, then the
- * show's, then the concert's through the cascade, then the concert's seeded
- * default (`tickets.md` §10.5, v3 §24.2). Read in the row's own transaction.
- */
-async function designFor(tx: Tx, seatId: number): Promise<{ id: number; version: number }> {
-  const [row] = await tx.execute<{ id: string | null; version: number | null }>(sql`
-    with seat as (
-      select a.segment_id, a.show_id, s.concert_id, g.default_ticket_template_id, s.ticket_template_id
-        from attendees a
-        join shows s on s.id = a.show_id
-        join show_segments g on g.id = a.segment_id
-       where a.id = ${seatId}
-    ),
-    chosen as (
-      select t.id, t.version, 1 as rank from seat
-        join ticket_templates t on t.id = seat.default_ticket_template_id and t.deleted_at is null
-      union all
-      select t.id, t.version, 2 from seat
-        join ticket_templates t on t.id = seat.ticket_template_id and t.deleted_at is null
-      union all
-      select t.id, t.version, 3 from seat
-        join ticket_templates t
-          on t.id = (resolve_setting('ticket.default_template_id', null, null, seat.concert_id)
-                      #>> '{}')::bigint
-         and t.deleted_at is null
-      union all
-      select t.id, t.version, 4 from seat
-        join ticket_templates t on t.concert_id = seat.concert_id and t.is_default and t.deleted_at is null
-    )
-    select id, version from chosen order by rank, version desc limit 1
-  `);
-  if (!row?.id) {
-    throw new Error('This concert has no ticket design yet. Open Ticket designs once to create the default.');
-  }
-  return { id: Number(row.id), version: row.version! };
-}
 
 // ---------------------------------------------------------------------------
 // Tickets (tickets.md §10.5, §10.6)

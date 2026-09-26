@@ -2,15 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
 /**
- * Do module `F`'s Server Actions still **call** `requireAdmin()`?
+ * Do the email and delivery Server Actions still **call** their guard?
  *
  * A different claim from "the guard works", and the one an independent QA pass
  * caught `D` and `F2` missing — deleting a guard call left both suites entirely
  * green. A Server Action is its own entry point: the page's guard does not
  * cover it and the proxy never reads a role (modules.md §5.2.1).
  *
- * These actions send email to the audience, clear delivery stamps and rewrite
- * message wording, so an unguarded one is not a small mistake.
+ * These actions rewrite message wording, change a party's address and send
+ * it mail, and render a guest's email, so an unguarded one is not a small
+ * mistake. V1's blast actions went with the Email screen (spec/v3.md §24.1);
+ * the send wizard's and the Messages view's took their place here.
  */
 class RedirectSignal extends Error {
   constructor(readonly to: string) {
@@ -34,39 +36,51 @@ vi.mock('@/lib/auth/session', () => ({
   recordLogin: async () => {},
 }));
 
-/** Every mutation is stubbed: this file is about reaching them, not what they do. */
+/** Every mutation and read is stubbed: this file is about reaching them, not what they do. */
 const stub = {
-  queueBlast: vi.fn(async () => ({ queued: 1, unknownTokens: [] as string[] })),
-  confirmBatch: vi.fn(async () => ({ queued: 1 })),
-  discardDrafts: vi.fn(async () => ({ discarded: 1 })),
-  editMessage: vi.fn(async () => ({ updated: true })),
   editTemplateAndRerender: vi.fn(async () => ({ rerendered: 1, preserved: 0 })),
-  markDelivered: vi.fn(async () => ({ marked: 1 })),
-  clearDeliveryForResend: vi.fn(async () => ({ cleared: 1 })),
-  seedDefaultTemplates: vi.fn(async () => ({ inserted: 0 })),
+  selectedParties: vi.fn(async () => [1]),
+  renderEmailPreview: vi.fn(async () => ({ toEmail: 'a@x', subject: 's', html: '', unknown: [], unissued: 0 })),
+  loadMessage: vi.fn(async () => ({ id: 1, registrationId: 1, status: 'FAILED', subject: 's', bodyMd: 'b' })),
+  startCommand: vi.fn(async () => ({ items: [{ status: 'DONE', outcome: {}, error: null }] })),
+  changeContactEmail: vi.fn(async () => ({ issue: null, readdressed: 0 })),
+  loadSegmentDelivery: vi.fn(async () => ({ segmentId: 1 })),
+  saveSegmentDelivery: vi.fn(async () => {}),
 };
 
-vi.mock('@/lib/email/queue', () => ({ queueBlast: () => stub.queueBlast() }));
-vi.mock('@/lib/email/defaults', () => ({ seedDefaultTemplates: () => stub.seedDefaultTemplates() }));
 vi.mock('@/lib/email/mutations', () => ({
-  confirmBatch: () => stub.confirmBatch(),
-  discardDrafts: () => stub.discardDrafts(),
-  editMessage: () => stub.editMessage(),
   editTemplateAndRerender: () => stub.editTemplateAndRerender(),
-  markDelivered: () => stub.markDelivered(),
-  clearDeliveryForResend: () => stub.clearDeliveryForResend(),
-  ReasonRequiredError: class extends Error {},
+}));
+vi.mock('@/lib/email/defaults', () => ({ seedDefaultTemplates: async () => ({ inserted: 0 }) }));
+vi.mock('@/lib/delivery/wizard', () => ({
+  selectedParties: () => stub.selectedParties(),
+  checkUncheckedAddresses: async () => ({ checked: 0, flagged: 0, left: 0 }),
+  wizardSetup: async () => ({ segments: [], designs: [], templates: [], recipients: [] }),
+  renderEmailPreview: () => stub.renderEmailPreview(),
+}));
+vi.mock('@/lib/delivery/messages', async (original) => ({
+  ...(await original<typeof import('@/lib/delivery/messages')>()),
+  loadMessage: () => stub.loadMessage(),
+}));
+vi.mock('@/lib/delivery/address', () => ({ changeContactEmail: () => stub.changeContactEmail() }));
+vi.mock('@/lib/delivery/defaults', () => ({
+  DeliveryDefaultsError: class extends Error {},
+  loadSegmentDelivery: () => stub.loadSegmentDelivery(),
+  saveSegmentDelivery: () => stub.saveSegmentDelivery(),
+}));
+vi.mock('@/lib/commands/runner', async (original) => ({
+  ...(await original<typeof import('@/lib/commands/runner')>()),
+  startCommand: () => stub.startCommand(),
 }));
 
-const actions = await import(
-  '@/app/(admin)/admin/concerts/[concertId]/email/actions'
-);
-const { RESEND_PHRASE } = await import(
-  '@/app/(admin)/admin/concerts/[concertId]/email/confirmation'
-);
+const templates = await import('@/app/(admin)/admin/concerts/[concertId]/email/actions');
+const wizard = await import('@/app/(admin)/admin/concerts/[concertId]/audience/send/actions');
+const messages = await import('@/app/(admin)/admin/concerts/[concertId]/audience/messages/actions');
+const segments = await import('@/app/(admin)/admin/concerts/[concertId]/shows/delivery-actions');
 
 const admin = { id: randomUUID(), role: 'ADMIN' as const, email: 'a@test', displayName: 'Admin' };
 const operator = { ...admin, id: randomUUID(), role: 'OPERATOR' as const };
+const viewer = { ...admin, id: randomUUID(), role: 'VIEWER' as const };
 
 function form(entries: Record<string, string>): FormData {
   const data = new FormData();
@@ -75,45 +89,46 @@ function form(entries: Record<string, string>): FormData {
 }
 
 /** Each action, with input that would otherwise succeed. */
-const CALLS: { name: string; run: () => Promise<unknown>; mutation: () => unknown }[] = [
+const CALLS: { name: string; run: () => Promise<unknown>; reached: () => unknown }[] = [
   {
-    name: 'prepareBlastAction',
-    run: () => actions.prepareBlastAction({ segmentId: 1, templateKey: 'public_ticket' }),
-    mutation: () => stub.queueBlast,
+    name: 'editTemplateAction',
+    run: () => templates.editTemplateAction(form({ templateKey: 'public_ticket', subject: 's', bodyMd: 'b' })),
+    reached: () => stub.editTemplateAndRerender,
   },
   {
-    name: 'confirmBatchAction',
-    run: () => actions.confirmBatchAction({ segmentId: 1, templateKey: 'public_ticket' }),
-    mutation: () => stub.confirmBatch,
+    name: 'sendWizardSetupAction',
+    run: () => wizard.sendWizardSetupAction(1, { ids: [1] }),
+    reached: () => stub.selectedParties,
   },
   {
-    name: 'discardDraftsAction',
-    run: () => actions.discardDraftsAction({ segmentId: 1, templateKey: 'public_ticket' }),
-    mutation: () => stub.discardDrafts,
+    name: 'emailPreviewAction',
+    run: () => wizard.emailPreviewAction(1, 1, 'public_ticket', null),
+    reached: () => stub.renderEmailPreview,
+  },
+  {
+    name: 'loadMessageAction',
+    run: () => messages.loadMessageAction(1, 1),
+    reached: () => stub.loadMessage,
   },
   {
     name: 'editMessageAction',
-    run: () => actions.editMessageAction(form({ outboxId: '1', subject: 's', bodyMd: 'b' })),
-    mutation: () => stub.editMessage,
+    run: () => messages.editMessageAction(1, 1, 'Subject', 'Body'),
+    reached: () => stub.startCommand,
   },
   {
-    name: 'editTemplateAction',
-    run: () =>
-      actions.editTemplateAction(form({ templateKey: 'public_ticket', subject: 's', bodyMd: 'b' })),
-    mutation: () => stub.editTemplateAndRerender,
+    name: 'fixAddressAction',
+    run: () => messages.fixAddressAction(1, 1, 'new@example.test'),
+    reached: () => stub.changeContactEmail,
   },
   {
-    name: 'markDeliveredAction',
-    run: () => actions.markDeliveredAction(form({ attendeeIds: '[1]', reason: 'handed over' })),
-    mutation: () => stub.markDelivered,
+    name: 'segmentDeliveryAction',
+    run: () => segments.segmentDeliveryAction(1, 1),
+    reached: () => stub.loadSegmentDelivery,
   },
   {
-    name: 'resendTicketsAction',
-    run: () =>
-      actions.resendTicketsAction(
-        form({ attendeeIds: '[1]', reason: 'deleted it', confirmation: RESEND_PHRASE }),
-      ),
-    mutation: () => stub.clearDeliveryForResend,
+    name: 'saveSegmentDeliveryAction',
+    run: () => segments.saveSegmentDeliveryAction(1, 1, { designId: null, ticketTemplate: null }),
+    reached: () => stub.saveSegmentDelivery,
   },
 ];
 
@@ -121,93 +136,30 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe.each(CALLS)('$name', ({ run, mutation }) => {
-  it('redirects an anonymous caller to the login form and mutates nothing', async () => {
+describe.each(CALLS)('$name', ({ run, reached }) => {
+  it('redirects an anonymous caller to the login form and reaches nothing', async () => {
     sessionUser.mockResolvedValue(null);
     await expect(run()).rejects.toThrow(RedirectSignal);
-    expect(mutation()).not.toHaveBeenCalled();
+    expect(reached()).not.toHaveBeenCalled();
   });
 
   /** An operator is signed in — the case a bare session check waves through. */
-  it('turns a signed-in operator away and mutates nothing', async () => {
+  it('turns a signed-in operator away and reaches nothing', async () => {
     sessionUser.mockResolvedValue(operator);
-    await expect(run()).rejects.toThrow(RedirectSignal);
-    expect(mutation()).not.toHaveBeenCalled();
+    await expect(run()).rejects.toThrow();
+    expect(reached()).not.toHaveBeenCalled();
+  });
+
+  /** A viewer reads the console but never sends, edits or sees a ticket link (spec/v3.md §28). */
+  it('turns a viewer away and reaches nothing', async () => {
+    sessionUser.mockResolvedValue(viewer);
+    await expect(run()).rejects.toThrow();
+    expect(reached()).not.toHaveBeenCalled();
   });
 
   it('lets the admin through', async () => {
     sessionUser.mockResolvedValue(admin);
     await run();
-    expect(mutation()).toHaveBeenCalled();
-  });
-});
-
-describe('the typed confirmation on resend', () => {
-  /**
-   * §11.4: a resend "is never the default path, and never operates on a whole
-   * segment at once without a typed confirmation". The check must sit behind
-   * the guard *and* in front of the mutation.
-   */
-  it('refuses the wrong phrase without touching a delivery stamp', async () => {
-    sessionUser.mockResolvedValue(admin);
-
-    const result = await actions.resendTicketsAction(
-      form({ attendeeIds: '[1]', reason: 'oops', confirmation: 'yes' }),
-    );
-
-    expect(result.error).toContain(RESEND_PHRASE);
-    expect(stub.clearDeliveryForResend).not.toHaveBeenCalled();
-  });
-
-  it('accepts the exact phrase', async () => {
-    sessionUser.mockResolvedValue(admin);
-
-    const result = await actions.resendTicketsAction(
-      form({ attendeeIds: '[1]', reason: 'deleted it', confirmation: RESEND_PHRASE }),
-    );
-
-    expect(result.error).toBeNull();
-    expect(stub.clearDeliveryForResend).toHaveBeenCalled();
-  });
-});
-
-describe('a reason is required before a stamp moves', () => {
-  it('refuses a blank reason on mark-delivered', async () => {
-    sessionUser.mockResolvedValue(admin);
-
-    const result = await actions.markDeliveredAction(form({ attendeeIds: '[1]', reason: '  ' }));
-
-    expect(result.error).toContain('reason');
-    expect(stub.markDelivered).not.toHaveBeenCalled();
-  });
-});
-
-describe('malformed input is an error, not a stack', () => {
-  /**
-   * The selection travels through a hidden field as JSON, so it arrives as an
-   * untrusted string. `JSON.parse` running before `zod` and outside a `try`
-   * throws a raw `SyntaxError` across the Server Action boundary — where every
-   * other failure here returns a structured error (`CLAUDE.md` conventions).
-   */
-  const HOSTILE = ['oops', '{', 'null', '"1"', '[1,', 'undefined'];
-
-  it.each(HOSTILE)('rejects %j on mark-delivered without throwing', async (raw) => {
-    sessionUser.mockResolvedValue(admin);
-
-    const result = await actions.markDeliveredAction(form({ attendeeIds: raw, reason: 'x' }));
-
-    expect(result.error).toBeTruthy();
-    expect(stub.markDelivered).not.toHaveBeenCalled();
-  });
-
-  it.each(HOSTILE)('rejects %j on resend without throwing', async (raw) => {
-    sessionUser.mockResolvedValue(admin);
-
-    const result = await actions.resendTicketsAction(
-      form({ attendeeIds: raw, reason: 'x', confirmation: RESEND_PHRASE }),
-    );
-
-    expect(result.error).toBeTruthy();
-    expect(stub.clearDeliveryForResend).not.toHaveBeenCalled();
+    expect(reached()).toHaveBeenCalled();
   });
 });

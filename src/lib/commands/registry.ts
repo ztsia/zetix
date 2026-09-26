@@ -1,5 +1,7 @@
 import 'server-only';
 import { AUDIENCE_COMMANDS } from '@/lib/audience/commands';
+import { DELIVERY_COMMANDS } from '@/lib/delivery/commands';
+import { MESSAGE_COMMANDS } from '@/lib/delivery/messages';
 import { TRASH_COMMANDS } from '@/lib/trash/commands';
 import type { AnyCommand } from './define';
 import { continueCommandRuns, type ContinueSummary } from './runner';
@@ -18,7 +20,7 @@ import { continueCommandRuns, type ContinueSummary } from './runner';
  * different operation: a run paused under the old meaning would be continued
  * under the new one.
  */
-const COMMANDS: readonly AnyCommand[] = [...TRASH_COMMANDS, ...AUDIENCE_COMMANDS];
+const COMMANDS: readonly AnyCommand[] = [...TRASH_COMMANDS, ...AUDIENCE_COMMANDS, ...DELIVERY_COMMANDS, ...MESSAGE_COMMANDS];
 
 const byName = new Map(COMMANDS.map((command) => [command.name, command]));
 if (byName.size !== COMMANDS.length) {

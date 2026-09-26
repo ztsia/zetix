@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
+import { outboxBacklog } from '@/lib/email/dispatch';
+import { QueueScope } from '../../blast-queue';
 
 /**
  * Everything under a concert.
@@ -28,5 +30,14 @@ export default async function ConcertLayout({
     .limit(1);
   if (rows.length === 0) notFound();
 
-  return <>{children}</>;
+  // The shell's queue banner counts this concert's messages, not every
+  // concert's (spec/v3.md §24.5, `local.md` §14.1).
+  const backlog = await outboxBacklog(id);
+
+  return (
+    <>
+      <QueueScope concertId={id} backlog={backlog} />
+      {children}
+    </>
+  );
 }

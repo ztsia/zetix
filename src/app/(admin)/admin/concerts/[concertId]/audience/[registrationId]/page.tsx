@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
+import { resolveSetting } from '@/db/settings';
 import { requireRole } from '@/lib/auth/guards';
 import { maskForRole, maskPhonesInText, masksContacts } from '@/lib/auth/mask';
 import { audienceOptions } from '@/lib/audience/queries';
@@ -81,10 +82,13 @@ export default async function PartyRecordPage({
     );
   }
 
-  const [options, segments, players] = await Promise.all([
+  const [options, segments, players, reviewSingleParty] = await Promise.all([
     audienceOptions(concertId),
     listSegmentOptions(concertId),
     listPlayerOptions(concertId),
+    // §24.1: whether a one-party resend must pass the wizard's review steps.
+    // Unset reads as "must": skipping review is the setting's to allow.
+    resolveSetting<boolean>('delivery.review_single_party', { concertId }),
   ]);
 
   return (
@@ -95,6 +99,7 @@ export default async function PartyRecordPage({
         record={maskForRole(user.role, forViewer(record, masksContacts(user.role)))}
         segments={segments}
         players={players}
+        reviewOptional={reviewSingleParty === false}
       />
     </CommandHost>
   );

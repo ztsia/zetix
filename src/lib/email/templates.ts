@@ -110,3 +110,11 @@ export const TICKET_BEARING: ReadonlySet<TemplateKey> = new Set<TemplateKey>([
 export function carriesTickets(key: string): boolean {
   return TICKET_BEARING.has(key as TemplateKey);
 }
+
+/**
+ * The line under every ticket-bearing message, telling the reader what to
+ * bring. One constant, because the dispatcher, the wizard's preview and the
+ * Messages view's View must all show the same message the guest gets.
+ */
+export const TICKET_FOOTER =
+  'Your ticket is the attached PDF. Show its QR code to the registration crew at the door — every guest needs their own.';

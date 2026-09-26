@@ -103,7 +103,8 @@ function parse(def: AnyCommand, input: CommandInput, actorId: string | null): Pa
   });
   const result = shape.safeParse({ ...input, params: input.params ?? {} });
   if (!result.success) {
-    throw new CommandInputError(`That request to ${def.verb.toLowerCase()} was malformed.`);
+    // Not built from the verb: "to send tickets to was malformed" reads as a typo.
+    throw new CommandInputError(`That request (${def.name}) was malformed. Close this and try again.`);
   }
   const { concertId, selection, params, reason, confirmPhrase } = result.data;
   return {

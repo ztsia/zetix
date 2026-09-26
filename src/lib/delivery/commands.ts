@@ -113,6 +113,8 @@ export function sendSkip(party: DeliveryFacts, params: SendParams, mode: Mode): 
     waiting.seatCount === party.confirmed &&
     waiting.toEmail.toLowerCase() === party.contactEmail.toLowerCase() &&
     party.issued === party.confirmed &&
+    // Nothing else carrying these tickets is waiting to be replaced.
+    party.withdrawable <= 1 &&
     !hasOverrides(party, params)
   ) {
     return 'A ticket email is already waiting to be sent.';
@@ -127,7 +129,7 @@ function sendDetail(party: DeliveryFacts, mode: Mode): string | null {
   if (mode === 'resend' && party.delivered > 0) {
     parts.push(`Sends all ${plural(party.confirmed, 'ticket', 'tickets')} again.`);
   }
-  if (party.pendingTickets) parts.push('Replaces the ticket email waiting to be sent.');
+  if (party.withdrawable > 0) parts.push('Replaces the ticket email waiting to be sent.');
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
@@ -200,6 +202,15 @@ export async function sendTicketsToParty(
   `);
   if (!template) throw new Error(`There is no “${templateKey}” email template. Restore it or choose another.`);
 
+  // A granted-extras email carries the same tickets (§24.2). One in flight
+  // would deliver them beside this one, so the party waits for it.
+  const [extrasInFlight] = await tx.execute<{ n: number }>(sql`
+    select count(*)::int as n from email_outbox
+     where registration_id = ${party.id} and purpose = 'EXTRAS_DECISION'
+       and template_key = 'extras_granted' and status = 'SENDING'
+  `);
+  if (extrasInFlight.n > 0) throw new SkipItem('An email carrying these tickets is being sent right now.');
+
   const { issued, repinned, designId } = await issueParty(tx, ctx.concertId, party, ctx.params);
 
   const recipient = await partyRecipient(tx, party.id);
@@ -231,6 +242,29 @@ export async function sendTicketsToParty(
     if (error instanceof MessageInFlightError) throw new SkipItem(error.message);
     throw error;
   }
+
+  /**
+   * **A waiting granted-extras email is superseded too.** It is another
+   * purpose, so the pending index does not see the two as one, but it carries
+   * the party's tickets: left alone, the party would get them twice. This
+   * message carries every confirmed seat, extras included, so nothing is lost.
+   */
+  const extras = await tx.execute<{ id: string }>(sql`
+    update email_outbox
+       set status = 'CANCELLED', superseded_by_id = ${queued.id}, updated_at = now()
+     where registration_id = ${party.id} and purpose = 'EXTRAS_DECISION'
+       and template_key = 'extras_granted' and status in ('DRAFT', 'QUEUED')
+    returning id
+  `);
+  for (const row of extras) {
+    await ctx.audit({
+      action: 'email.message_superseded',
+      entityType: 'email_outbox',
+      entityId: Number(row.id),
+      after: { status: 'CANCELLED', supersededById: queued.id, templateKey },
+    });
+  }
+  queued.superseded.push(...extras.map((row) => Number(row.id)));
 
   await ctx.audit({
     action: mode === 'resend' ? 'email.tickets_resent' : 'email.tickets_queued',
@@ -305,7 +339,7 @@ async function sendBlast(parties: DeliveryFacts[], mode: Mode): Promise<BlastLin
   const lines: BlastLine[] = [];
   const unissued = parties.reduce((n, p) => n + (p.confirmed - p.issued), 0);
   const tickets = parties.reduce((n, p) => n + p.confirmed, 0);
-  const replaced = parties.filter((p) => p.pendingTickets).length;
+  const replaced = parties.filter((p) => p.withdrawable > 0).length;
   const again = parties.reduce((n, p) => n + p.delivered, 0);
   lines.push({ count: parties.length, text: `ticket ${parties.length === 1 ? 'email' : 'emails'} queued, carrying ${plural(tickets, 'ticket', 'tickets')}.`, tone: 'neutral' });
   if (unissued > 0) {

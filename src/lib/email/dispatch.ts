@@ -6,7 +6,7 @@ import { requireSetting } from '@/db/settings';
 import { buildPartyAttachments, encodedSizeBytes, UnissuedTicketError } from './attachments';
 import { createConfiguredTransport } from './config';
 import { markdownToEmailHtml, markdownToPlainText } from './render';
-import { carriesTickets } from './templates';
+import { carriesTickets, TICKET_FOOTER } from './templates';
 import type { MailTransport } from './transport';
 
 /**
@@ -611,7 +611,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
              * attachments were built at all, so the two cannot disagree.
              */
             footer: carriesTickets(row.templateKey)
-              ? 'Your ticket is the attached PDF. Show its QR code to the registration crew at the door — every guest needs their own.'
+              ? TICKET_FOOTER
               : undefined,
           }),
           text: markdownToPlainText(row.bodyMd),

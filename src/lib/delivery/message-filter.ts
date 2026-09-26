@@ -35,19 +35,21 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
 /**
  * The exits per status (§24.4), the one table the view's menus and the
  * record's Conversation tab both read. `SENDING` has none: the dispatcher
- * resolves it.
+ * resolves it. View is offered for every other status, since reading changes
+ * nothing.
  */
 export const MESSAGE_EXITS: Record<MessageStatus, readonly MessageExit[]> = {
-  DRAFT: ['edit', 'cancel', 'delete'],
-  QUEUED: ['edit', 'cancel', 'delete'],
+  DRAFT: ['view', 'edit', 'cancel', 'delete'],
+  QUEUED: ['view', 'edit', 'cancel', 'delete'],
+  // §24.4: none. The dispatcher holds it and resolves it either way.
   SENDING: [],
-  FAILED: ['retry', 'fix-address', 'edit', 'cancel', 'delete'],
-  SENT: ['resend', 'delete'],
-  BOUNCED: ['fix-address', 'delete'],
-  CANCELLED: ['delete'],
+  FAILED: ['view', 'retry', 'fix-address', 'edit', 'cancel', 'delete'],
+  SENT: ['view', 'resend', 'delete'],
+  BOUNCED: ['view', 'fix-address', 'delete'],
+  CANCELLED: ['view', 'delete'],
 };
 
-export type MessageExit = 'edit' | 'cancel' | 'delete' | 'retry' | 'fix-address' | 'resend';
+export type MessageExit = 'view' | 'edit' | 'cancel' | 'delete' | 'retry' | 'fix-address' | 'resend';
 
 export const messageFilterSchema = z
   .object({

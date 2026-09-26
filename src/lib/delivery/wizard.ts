@@ -9,7 +9,7 @@ import { isFilterSelection, type Selection } from '@/lib/commands/selection';
 import { addressIssue } from '@/lib/email/address';
 import { partyRecipient } from '@/lib/email/queue';
 import { escapeMergeValues, markdownToEmailHtml, markdownToPlainText, renderTemplate } from '@/lib/email/render';
-import { carriesTickets, TEMPLATE_PURPOSE } from '@/lib/email/templates';
+import { carriesTickets, TEMPLATE_PURPOSE, TICKET_FOOTER } from '@/lib/email/templates';
 import { designForSegment, NoTicketDesignError } from '@/lib/tickets/design';
 import { defaultTemplateFor } from './purposes';
 
@@ -267,7 +267,7 @@ export async function renderEmailPreview(
     html: markdownToEmailHtml(body.text, {
       preheader: markdownToPlainText(body.text).split('\n')[0],
       footer: carriesTickets(templateKey)
-        ? 'Your ticket is the attached PDF. Show its QR code to the registration crew at the door — every guest needs their own.'
+        ? TICKET_FOOTER
         : undefined,
     }),
     unknown: [...new Set([...subject.unknown, ...body.unknown])],

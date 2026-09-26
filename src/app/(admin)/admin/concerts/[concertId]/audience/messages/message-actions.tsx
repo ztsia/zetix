@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, MailCheck, MoreHorizontal, PencilLine, Repeat, RotateCw, Trash2, TriangleAlert } from 'lucide-react';
+import { Ban, Eye, MailCheck, MoreHorizontal, PencilLine, Repeat, RotateCw, Trash2, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,6 +40,7 @@ import { editMessageAction, fixAddressAction, loadMessageAction } from './action
  */
 
 const EXIT: Record<MessageExit, { label: string; icon: typeof Ban; command?: string; destructive?: boolean }> = {
+  view: { label: 'View', icon: Eye },
   retry: { label: 'Retry', icon: RotateCw, command: 'messages.retry' },
   'fix-address': { label: 'Fix address…', icon: MailCheck },
   edit: { label: 'Edit…', icon: PencilLine },
@@ -64,7 +65,7 @@ export function MessageActions({
 }) {
   const canEdit = useCanEdit();
   const runCommand = useRunCommand();
-  const [open, setOpen] = React.useState<'edit' | 'fix-address' | null>(null);
+  const [open, setOpen] = React.useState<'view' | 'edit' | 'fix-address' | null>(null);
   const exits = MESSAGE_EXITS[status].filter((exit) => exit !== 'fix-address' || toParty);
   if (!canEdit || exits.length === 0) return null;
 
@@ -88,7 +89,7 @@ export function MessageActions({
                 onClick={() =>
                   e.command
                     ? runCommand({ command: e.command, selection: { ids: [messageId] }, onDone })
-                    : setOpen(exit as 'edit' | 'fix-address')
+                    : setOpen(exit as 'view' | 'edit' | 'fix-address')
                 }
               >
                 <e.icon />
@@ -98,6 +99,9 @@ export function MessageActions({
           })}
         </DropdownMenuContent>
       </DropdownMenu>
+      {open === 'view' && (
+        <ViewMessageDialog concertId={concertId} messageId={messageId} onClose={() => setOpen(null)} />
+      )}
       {open === 'edit' && (
         <EditMessageDialog concertId={concertId} messageId={messageId} onClose={() => setOpen(null)} />
       )}
@@ -110,6 +114,86 @@ export function MessageActions({
         />
       )}
     </>
+  );
+}
+
+/**
+ * **View**: the message as the guest got it (§24.4) — the stored subject and
+ * body, rendered the way the dispatcher renders them, with who it went to and
+ * what happened to it. Tickets are attachments and are not shown here; the
+ * record's seats carry them.
+ */
+function ViewMessageDialog({
+  concertId,
+  messageId,
+  onClose,
+}: {
+  concertId: number;
+  messageId: number;
+  onClose: () => void;
+}) {
+  const [message, setMessage] = React.useState<Awaited<ReturnType<typeof loadMessageAction>> | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    void loadMessageAction(concertId, messageId).then((result) => {
+      if (live) setMessage(result);
+    });
+    return () => {
+      live = false;
+    };
+  }, [concertId, messageId]);
+
+  const m = message?.ok ? message.value : null;
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="flex max-h-[min(90dvh,56rem)] flex-col sm:max-w-2xl">
+        <DialogHeader className="shrink-0">
+          <DialogTitle>{m?.subject ?? 'Message'}</DialogTitle>
+          {m && (
+            <DialogDescription>
+              To {m.addressee} &lt;{m.toEmail}&gt; · {m.status.toLowerCase()}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+          {!message && <Skeleton className="h-64 w-full" />}
+          {message && !message.ok && (
+            <Alert variant="destructive">
+              <TriangleAlert />
+              <AlertDescription>{message.error}</AlertDescription>
+            </Alert>
+          )}
+          {m && (
+            <div className="flex flex-col gap-3">
+              {m.lastError && m.status === 'FAILED' && (
+                <Alert variant="destructive">
+                  <TriangleAlert />
+                  <AlertDescription>
+                    Failed after {m.attempts} attempt{m.attempts === 1 ? '' : 's'}: {m.lastError}
+                  </AlertDescription>
+                </Alert>
+              )}
+              {m.status === 'BOUNCED' && (m.bounceCode || m.bounceDetail) && (
+                <Alert variant="destructive">
+                  <TriangleAlert />
+                  <AlertDescription>{[m.bounceCode, m.bounceDetail].filter(Boolean).join(' ')}</AlertDescription>
+                </Alert>
+              )}
+              <iframe
+                srcDoc={m.html}
+                sandbox=""
+                title="The message as sent"
+                className="h-[28rem] w-full rounded-lg border bg-white"
+              />
+            </div>
+          )}
+        </div>
+        <DialogFooter className="shrink-0">
+          <Button onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

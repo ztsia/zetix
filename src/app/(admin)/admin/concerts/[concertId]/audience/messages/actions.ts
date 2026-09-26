@@ -10,6 +10,8 @@ import { CommandInputError, startCommand, type RunReport } from '@/lib/commands/
 import { idSchema } from '@/lib/commands/selection';
 import { changeContactEmail } from '@/lib/delivery/address';
 import { editParams, loadMessage, type MessageRow } from '@/lib/delivery/messages';
+import { markdownToEmailHtml, markdownToPlainText } from '@/lib/email/render';
+import { carriesTickets, TICKET_FOOTER } from '@/lib/email/templates';
 
 /**
  * The Messages exits that are more than a command over a selection
@@ -54,13 +56,23 @@ const ref = z.object({ concertId: idSchema, messageId: idSchema });
 export async function loadMessageAction(
   concertId: number,
   messageId: number,
-): Promise<ActionResult<MessageRow & { bodyMd: string }>> {
+): Promise<ActionResult<MessageRow & { bodyMd: string; html: string }>> {
   await requireRole('ADMIN');
   const parsed = ref.safeParse({ concertId, messageId });
   if (!parsed.success) return { ok: false, error: 'That message reference was malformed.' };
   try {
     const message = await loadMessage(getDb(), parsed.data.concertId, parsed.data.messageId);
-    return message ? { ok: true, value: message } : { ok: false, error: 'That message no longer exists.' };
+    if (!message) return { ok: false, error: 'That message no longer exists.' };
+    // View shows what the guest received: the stored words, rendered the way
+    // the dispatcher renders them (spec/email.md §11.5).
+    const html = markdownToEmailHtml(message.bodyMd, {
+      preheader: markdownToPlainText(message.bodyMd).split('\n')[0],
+      footer:
+        message.templateKey && carriesTickets(message.templateKey)
+          ? TICKET_FOOTER
+          : undefined,
+    });
+    return { ok: true, value: { ...message, html } };
   } catch (error) {
     return failure(error);
   }

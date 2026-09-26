@@ -96,7 +96,13 @@ export function PartyRecord({
   const [resendOffer, setResendOffer] = React.useState(false);
 
   const partyRun = (command: string, params?: unknown) =>
-    runCommand({ command, selection: { ids: [party.id] }, params, reviewOptional });
+    // §24.1: only a one-party *resend* may skip the review steps.
+    runCommand({
+      command,
+      selection: { ids: [party.id] },
+      params,
+      reviewOptional: reviewOptional && command === 'delivery.resend',
+    });
   const seatRun = (command: string, ids: number[], params?: unknown) =>
     ids.length > 0 && runCommand({ command, selection: { ids }, params });
 

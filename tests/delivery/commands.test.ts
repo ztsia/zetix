@@ -294,3 +294,64 @@ describe('Cancel sending', () => {
     expect(mail.sent).toHaveLength(0);
   });
 });
+
+/**
+ * tickets.md §10.5 (non-negotiable): a ticket someone holds never changes
+ * silently. A design chosen in the wizard repins only seats not yet delivered;
+ * a delivered seat keeps the version it was sent with, on Send and on Resend.
+ */
+describe('a design chosen for one send never repins a delivered ticket', () => {
+  async function pins(id: number) {
+    return (
+      await sql<{ ticket_template_id: string; delivered: boolean; qr_token: string }[]>`
+        select ticket_template_id, ticket_sent_at is not null as delivered, qr_token
+          from attendees where registration_id = ${id} order by id`
+    ).map((r) => ({ design: Number(r.ticket_template_id), delivered: r.delivered, token: r.qr_token }));
+  }
+
+  it('on Send tickets to a party with a guest added since, and on Resend', async () => {
+    const [gala] = await sql<{ id: string }[]>`
+      insert into ticket_templates (concert_id, name, version, background_kind, page_width_pt, page_height_pt, layout, is_default)
+      values (${concertId}, 'Gala', 1, 'NONE', 595, 280, '{"canvas":{"width_pt":595,"height_pt":280,"dpi":300},"elements":[]}', false)
+      returning id`;
+    const galaId = Number(gala.id);
+    const id = await party(publicSeg, 2);
+    await run('delivery.send_tickets', { ids: [id] });
+    await dispatchBatch({ transport: transport() });
+    const delivered = await pins(id);
+
+    await sql`select claim_seats(${publicSeg}::bigint, ${id}::bigint,
+                ${JSON.stringify([{ full_name: 'Late guest', allocation_type: 'EXTRA' }])}::text::jsonb, false)`;
+    await run('delivery.send_tickets', { ids: [id] }, { designs: { [publicSeg]: galaId } });
+    const afterSend = await pins(id);
+    expect(afterSend.map((s) => s.design)).toEqual([designId, designId, galaId]);
+    expect(afterSend.slice(0, 2).map((s) => s.token)).toEqual(delivered.map((s) => s.token));
+
+    await dispatchBatch({ transport: transport() });
+    await run('delivery.resend', { ids: [id] }, { designs: { [publicSeg]: galaId } });
+    expect((await pins(id)).map((s) => s.design)).toEqual([designId, designId, galaId]);
+  });
+});
+
+describe('a waiting granted-extras email (§24.2)', () => {
+  it('is superseded by Send tickets, so the party gets its tickets once', async () => {
+    const id = await party(publicSeg, 2);
+    await sql`insert into email_outbox (registration_id, purpose, template_key, to_email, subject, body_md, status, context)
+              values (${id}, 'EXTRAS_DECISION', 'extras_granted', 'party@example.test', 'Granted', 'b', 'QUEUED',
+                      '{"attendee_count":"2"}')`;
+    const p = await preview('delivery.send_tickets', { ids: [id] });
+    expect(p.rows[0].detail).toMatch(/Replaces/);
+
+    await run('delivery.send_tickets', { ids: [id] });
+    const rows = await messages(id);
+    expect(rows.map((m) => [m.template_key, m.status])).toEqual([
+      ['extras_granted', 'CANCELLED'],
+      ['public_ticket', 'QUEUED'],
+    ]);
+    expect(rows[0].superseded_by_id).toBe(rows[1].id);
+
+    const mail = transport();
+    await dispatchBatch({ transport: mail });
+    expect(mail.sent).toHaveLength(1);
+  });
+});

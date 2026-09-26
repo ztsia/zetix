@@ -66,9 +66,9 @@ export async function designFor(executor: Executor, seatId: number): Promise<Des
 
 /**
  * A design the admin chose by id, at its current version — or null when it is
- * gone or belongs to another concert (a global design, `concert_id` null, is
- * anyone's), so a stale choice from an open wizard
- * cannot pin a design from somewhere else.
+ * gone or belongs to another concert, so a stale choice from an open wizard
+ * cannot pin a design from somewhere else. Only the concert's own designs are
+ * offered (`listTemplates`), so only those are accepted.
  */
 export async function chosenDesign(
   executor: Executor,
@@ -77,8 +77,7 @@ export async function chosenDesign(
 ): Promise<Design | null> {
   const [row] = await executor.execute<{ id: string; version: number }>(sql`
     select id, version from ticket_templates
-     where id = ${templateId} and deleted_at is null
-       and (concert_id = ${concertId} or concert_id is null)
+     where id = ${templateId} and concert_id = ${concertId} and deleted_at is null
   `);
   return row ? { id: Number(row.id), version: row.version } : null;
 }

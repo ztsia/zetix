@@ -17,6 +17,11 @@ export type FormState = {
   error: string | null;
   /** Set on success so a form can confirm what happened without a toast. */
   message?: string | null;
+  /**
+   * The contact email changed after tickets were delivered to the old one: the
+   * record asks whether to resend them (spec/v3.md §22.4).
+   */
+  resendOffer?: boolean;
 };
 
 export const NO_FORM_STATE: FormState = { error: null, message: null };

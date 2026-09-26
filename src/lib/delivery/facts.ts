@@ -38,6 +38,8 @@ export type DeliveryFacts = {
     /** The seat count its wording states. */
     seatCount: number | null;
   } | null;
+  /** The latest ticket email to the current address bounced (`BOUNCED`, §21.2). */
+  bounced: boolean;
   /** Ticket-bearing messages still `DRAFT` or `QUEUED` — what Cancel sending would withdraw. */
   withdrawable: number;
 };
@@ -82,9 +84,10 @@ export async function deliveryFacts(
     pending_to: string | null;
     pending_count: string | null;
     withdrawable: number;
+    bounced: boolean;
   }>(sql`
     select p.registration_id as id, p.contact_name, r.status, p.segment_id, p.audience_mode,
-           p.stage, (p.approved_at is not null) as approved,
+           p.stage, (p.approved_at is not null) as approved, p.flag_bounced as bounced,
            (r.verification_token is not null and r.email_verified_at is null) as unverified,
            r.contact_email::text as contact_email,
            case when r.email_issue is not null and r.email_issue_accepted_at is null
@@ -142,6 +145,7 @@ export async function deliveryFacts(
             }
           : null,
         withdrawable: row.withdrawable,
+        bounced: row.bounced,
       },
     ]),
   );

@@ -339,7 +339,7 @@ export async function updateRegistrationAction(
     });
     refresh(concertId);
     if (!result.emailChanged) return ok('Saved.');
-    return ok(
+    const saved = ok(
       [
         'Saved.',
         emailIssue ? `The new address looks wrong: ${emailIssue}` : null,
@@ -349,15 +349,13 @@ export async function updateRegistrationAction(
         result.readdressed > 0
           ? `${result.readdressed} message${result.readdressed === 1 ? '' : 's'} waiting to be sent will go to the new address.`
           : null,
-        // §22.4's question. Sending is the send wizard's; until then the
-        // Email screen resends.
-        result.deliveredToOld > 0
-          ? `Tickets were sent to the old address. Resend them to the new one from the Email screen.`
-          : null,
       ]
         .filter(Boolean)
         .join(' '),
     );
+    // §22.4's question — "Tickets were sent to the old address. Resend them to
+    // the new one?" — is asked by the record, which runs Resend on a yes.
+    return result.deliveredToOld > 0 && parsed.data.contactEmail ? { ...saved, resendOffer: true } : saved;
   } catch (error) {
     return fail(dbErrorMessage(error));
   }

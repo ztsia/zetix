@@ -314,6 +314,10 @@ async function sendBlast(parties: DeliveryFacts[], mode: Mode): Promise<BlastLin
   if (replaced > 0) {
     lines.push({ count: replaced, text: 'ticket emails already waiting are replaced by this send, not sent beside it.', tone: 'neutral' });
   }
+  const bounced = parties.filter((p) => p.bounced).length;
+  if (bounced > 0) {
+    lines.push({ count: bounced, text: 'parties’ last ticket email bounced at this same address, so this may bounce too. Fix the address on the record first if it is wrong.', tone: 'warning' });
+  }
   if (mode === 'resend' && again > 0) {
     lines.push({ count: again, text: 'tickets already delivered are sent again. Each guest gets a second copy of the same ticket.', tone: 'warning' });
   }

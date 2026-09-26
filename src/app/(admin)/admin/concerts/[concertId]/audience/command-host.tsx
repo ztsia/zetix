@@ -25,13 +25,21 @@ import {
   UserCheck,
   Hourglass,
   Tags,
+  Send,
+  Repeat,
+  HandHelping,
+  MailX,
+  RotateCw,
+  Ban,
 } from 'lucide-react';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import type { Selection } from '@/lib/commands/selection';
+import type { AudienceFilter } from '@/lib/audience/filter';
 import { CommandDialog } from '../commands/command-dialog';
+import { SendWizard } from './send/send-wizard';
 
 /**
  * The Audience workspace's commands, as the screens offer them
@@ -52,17 +60,21 @@ export type CommandEntry = {
   command: string;
   label: string;
   icon: LucideIcon;
-  grain: Grain;
-  group: 'Review' | 'Allocation' | 'Verification' | 'Address' | 'Tickets' | 'Door' | 'Records';
+  /** `messages` entries act on outbox rows: the record's Conversation and the Messages view. */
+  grain: Grain | 'messages';
+  group: 'Review' | 'Allocation' | 'Verification' | 'Address' | 'Tickets' | 'Delivery' | 'Messages' | 'Door' | 'Records';
   options?: OptionsKind;
+  /** Opens the send wizard (spec/v3.md §24.1) rather than the plain command dialog. */
+  wizard?: boolean;
   params?: unknown;
   destructive?: boolean;
 };
 
 /**
  * Every command the Audience workspace offers, grouped as §23.2 groups them.
- * Delivery and Messages are the send wizard's (module `T`), and Merge parties
- * and Not a duplicate are duplicate review's (module `V`).
+ * Delivery is the send wizard's (module `T`; Messages act on messages, in the
+ * Messages view), and Merge parties and Not a duplicate are duplicate
+ * review's (module `V`).
  */
 export const COMMAND_ENTRIES: CommandEntry[] = [
   { command: 'audience.approve', label: 'Approve', icon: BadgeCheck, grain: 'parties', group: 'Review', options: 'include-flagged', params: { includeFlagged: false } },
@@ -90,6 +102,17 @@ export const COMMAND_ENTRIES: CommandEntry[] = [
   { command: 'seats.dismiss_reissue', label: 'Dismiss reissue flag', icon: Eraser, grain: 'seats', group: 'Tickets' },
   { command: 'seats.void_qr', label: 'Void and re-issue QR', icon: ShieldAlert, grain: 'seats', group: 'Tickets', destructive: true },
 
+  { command: 'delivery.send_tickets', label: 'Send tickets…', icon: Send, grain: 'parties', group: 'Delivery', wizard: true },
+  { command: 'delivery.resend', label: 'Resend tickets…', icon: Repeat, grain: 'parties', group: 'Delivery', wizard: true },
+  { command: 'delivery.mark_delivered', label: 'Mark delivered by hand', icon: HandHelping, grain: 'parties', group: 'Delivery' },
+  { command: 'delivery.cancel_sending', label: 'Cancel sending', icon: MailX, grain: 'parties', group: 'Delivery' },
+
+  // Messages (§24.4). Edit and Fix address open their own dialog (`messages/message-actions.tsx`).
+  { command: 'messages.retry', label: 'Retry', icon: RotateCw, grain: 'messages', group: 'Messages' },
+  { command: 'messages.resend', label: 'Resend', icon: Repeat, grain: 'messages', group: 'Messages' },
+  { command: 'messages.cancel', label: 'Cancel', icon: Ban, grain: 'messages', group: 'Messages' },
+  { command: 'messages.delete', label: 'Delete', icon: Trash2, grain: 'messages', group: 'Messages', destructive: true },
+
   { command: 'seats.check_in', label: 'Check in', icon: DoorOpen, grain: 'seats', group: 'Door' },
   { command: 'seats.undo_check_in', label: 'Undo check-in', icon: Undo2, grain: 'seats', group: 'Door' },
 
@@ -113,6 +136,8 @@ type Request = {
   selection: Selection<unknown>;
   params?: unknown;
   onDone?: () => void;
+  /** The send wizard may skip its review steps (a one-party resend, §24.1). */
+  reviewOptional?: boolean;
 };
 
 const HostContext = React.createContext<((request: Request) => void) | null>(null);
@@ -145,7 +170,18 @@ export function CommandHost({
   return (
     <HostContext.Provider value={run}>
       {children}
-      {active && current && (
+      {active && current?.wizard && (
+        <SendWizard
+          key={active.key}
+          concertId={concertId}
+          command={active.command as 'delivery.send_tickets' | 'delivery.resend'}
+          selection={active.selection as Selection<AudienceFilter>}
+          reviewOptional={active.reviewOptional}
+          onDone={active.onDone}
+          onClosed={() => setActive(null)}
+        />
+      )}
+      {active && current && !current.wizard && (
         <CommandDialog
           key={active.key}
           concertId={concertId}
@@ -343,6 +379,8 @@ export const GROUP_ICON: Record<CommandEntry['group'], LucideIcon> = {
   Verification: UserCheck,
   Address: MailQuestion,
   Tickets: Ticket,
+  Delivery: Send,
+  Messages: MailCheck,
   Door: DoorOpen,
   Records: PencilLine,
 };

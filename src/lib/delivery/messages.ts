@@ -78,7 +78,6 @@ export type MessageRow = {
   purpose: Purpose;
   templateKey: string | null;
   subject: string;
-  bodyMd: string;
   status: MessageStatus;
   attempts: number;
   lastError: string | null;
@@ -100,7 +99,6 @@ type RawMessage = {
   purpose: Purpose;
   template_key: string | null;
   subject: string;
-  body_md: string;
   status: MessageStatus;
   attempts: number;
   last_error: string | null;
@@ -115,7 +113,7 @@ type RawMessage = {
 
 const MESSAGE_COLUMNS = sql`
   o.id, o.registration_id, o.player_id, coalesce(r.contact_name, pl.full_name) as addressee,
-  o.to_email::text as to_email, o.purpose, o.template_key, o.subject, o.body_md, o.status, o.attempts,
+  o.to_email::text as to_email, o.purpose, o.template_key, o.subject, o.status, o.attempts,
   o.last_error, o.bounce_code, o.bounce_detail, o.superseded_by_id,
   o.sent_at::text as sent_at, o.scheduled_for::text as scheduled_for,
   o.created_at::text as created_at, o.updated_at::text as updated_at
@@ -130,7 +128,6 @@ const toRow = (row: RawMessage): MessageRow => ({
   purpose: row.purpose,
   templateKey: row.template_key,
   subject: row.subject,
-  bodyMd: row.body_md,
   status: row.status,
   attempts: row.attempts,
   lastError: row.last_error,
@@ -191,6 +188,24 @@ export async function partyMessages(executor: Executor, concertId: number, regis
      order by o.created_at, o.id
   `);
   return rows.map(toRow);
+}
+
+/**
+ * One message with its body, for Edit and View. **An admin's read only**: a
+ * ticket email's body carries `/t/{token}` links, and a viewer holds no access
+ * token (spec/v3.md §28).
+ */
+export async function loadMessage(
+  executor: Executor,
+  concertId: number,
+  id: number,
+): Promise<(MessageRow & { bodyMd: string }) | null> {
+  const [row] = await executor.execute<RawMessage & { body_md: string }>(sql`
+    select ${MESSAGE_COLUMNS}, o.body_md
+      ${FROM_MESSAGES}
+     where o.id = ${id} and ${IN_CONCERT(concertId)} and o.deleted_at is null
+  `);
+  return row ? { ...toRow(row), bodyMd: row.body_md } : null;
 }
 
 // ---------------------------------------------------------------------------

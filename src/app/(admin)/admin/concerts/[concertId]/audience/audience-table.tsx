@@ -75,7 +75,10 @@ const TICKET_LABEL: Record<(typeof TICKET_STATES)[number], string> = {
 const VIEW_ACTIONS: Record<string, { parties: string[]; seats: string[] }> = {
   'needs-review': { parties: ['audience.approve', 'audience.grant_extras', 'audience.decline_extras'], seats: [] },
   unverified: { parties: ['audience.release', 'audience.remind_verification'], seats: [] },
-  'needs-tickets': { parties: [], seats: ['seats.issue'] },
+  'needs-tickets': { parties: ['delivery.send_tickets'], seats: ['seats.issue'] },
+  'ready-to-send': { parties: ['delivery.send_tickets', 'delivery.cancel_sending'], seats: [] },
+  bounced: { parties: ['delivery.resend'], seats: [] },
+  'send-failed': { parties: ['delivery.send_tickets', 'delivery.mark_delivered'], seats: [] },
   waitlisted: { parties: ['audience.promote', 'audience.confirm_seats'], seats: [] },
   cancelled: { parties: ['audience.restore'], seats: [] },
   'suspicious-address': { parties: ['audience.check_address', 'audience.accept_address'], seats: [] },

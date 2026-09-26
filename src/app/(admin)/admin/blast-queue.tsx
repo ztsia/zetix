@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { MailIcon, XIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -58,7 +59,12 @@ type BlastQueue = {
   start: () => void;
 };
 
+type Scope = { concertId: number; backlog: OutboxBacklog };
+
 type BlastQueueState = BlastQueue & {
+  /** The concert in view and its backlog, or null outside a concert (§24.5). */
+  scope: Scope | null;
+  setScope: (scope: Scope | null) => void;
   backlog: OutboxBacklog;
   progress: Progress | null;
   outcome: Outcome | null;
@@ -81,14 +87,21 @@ export function useBlastQueue(): BlastQueue {
   return { sending: context.sending, start: context.start };
 }
 
-export function BlastQueueProvider({
-  backlog,
-  children,
-}: {
-  backlog: OutboxBacklog;
-  children: React.ReactNode;
-}) {
+const NO_BACKLOG: OutboxBacklog = { resumable: 0, retrying: 0, inFlight: 0, failed: 0 };
+
+/**
+ * **The banner reads the backlog of the concert in view** (spec/v3.md §24.5,
+ * `local.md` §14.1). The concert layout reads it on every render and hands it
+ * here through {@link QueueScope}; outside a concert there is no concert to
+ * attribute a count to, so only this tab's own run is shown. The loop itself
+ * still drains the whole queue — a due message is due whatever is on screen.
+ */
+export function BlastQueueProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const [scope, setScope] = useState<Scope | null>(null);
+  const backlog = scope?.backlog ?? NO_BACKLOG;
+  const concertRef = useRef<number | null>(null);
+  concertRef.current = scope?.concertId ?? null;
 
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -135,7 +148,11 @@ export function BlastQueueProvider({
          * short functions rather than one that times out.
          */
         for (;;) {
-          const response = await fetch('/api/outbox/dispatch', { method: 'POST' });
+          const concertId = concertRef.current;
+          const response = await fetch(
+            concertId ? `/api/outbox/dispatch?concertId=${concertId}` : '/api/outbox/dispatch',
+            { method: 'POST' },
+          );
           const result = await response.json().catch(() => ({}));
 
           if (!response.ok) {
@@ -184,7 +201,7 @@ export function BlastQueueProvider({
               kind: 'done',
               message:
                 `${sent} sent` +
-                (failed > 0 ? `, ${failed} failed — see Last error in the outbox table` : '') +
+                (failed > 0 ? `, ${failed} failed — Messages › Failed says why` : '') +
                 '.',
             });
             break;
@@ -208,6 +225,8 @@ export function BlastQueueProvider({
       value={{
         sending,
         start,
+        scope,
+        setScope,
         backlog,
         progress,
         outcome,
@@ -219,6 +238,22 @@ export function BlastQueueProvider({
       {children}
     </BlastQueueContext.Provider>
   );
+}
+
+/**
+ * Rendered by the concert layout with that concert's backlog, read on the
+ * server on every render. Registers it with the shell's provider while the
+ * concert is on screen, and withdraws it on leaving, so the banner never shows
+ * one concert's count on another's page.
+ */
+export function QueueScope({ concertId, backlog }: { concertId: number; backlog: OutboxBacklog }) {
+  const context = useContext(BlastQueueContext);
+  const setScope = context?.setScope;
+  useEffect(() => {
+    setScope?.({ concertId, backlog });
+  }, [setScope, concertId, backlog]);
+  useEffect(() => () => setScope?.(null), [setScope]);
+  return null;
 }
 
 type Tone = 'sending' | 'capped' | 'error' | 'stalled' | 'retrying' | 'inflight' | 'failed' | 'done';
@@ -249,7 +284,8 @@ export function BlastQueueBanner() {
   const canEdit = useCanEdit();
   if (!context) return null;
 
-  const { backlog, sending, progress, outcome, liveBacklog, dismissed, dismiss, start } = context;
+  const { scope, backlog, sending, progress, outcome, liveBacklog, dismissed, dismiss, start } = context;
+  const failedHref = scope ? `/admin/concerts/${scope.concertId}/audience/messages?status=FAILED` : null;
   // A viewer sees the queue's state but cannot drive it (spec/v3.md §28): the
   // dispatch route refuses them, so Resume would be a button that fails.
 
@@ -372,7 +408,7 @@ export function BlastQueueBanner() {
         title: 'Messages that failed for good',
         description:
           `${permanentlyFailed} message(s) ran out of attempts and were never delivered. ` +
-          'Read Last error in the outbox table, then resend them.',
+          'Open Messages › Failed to see why, and retry or fix the address.',
         canResume: false,
       };
     }
@@ -383,7 +419,7 @@ export function BlastQueueBanner() {
         label: failed > 0 ? 'Finished with failures' : 'Sent',
         title: 'Blast finished',
         description: counts
-          ? `${counts}.${failed > 0 ? ' See Last error in the outbox table.' : ''}`
+          ? `${counts}.${failed > 0 ? ' Messages › Failed says why.' : ''}`
           : outcome.message,
         canResume: false,
       };
@@ -417,6 +453,11 @@ export function BlastQueueBanner() {
         <ItemDescription aria-live="polite">{view.description}</ItemDescription>
       </ItemContent>
       <ItemActions>
+        {(view.tone === 'failed' || failed > 0) && failedHref ? (
+          <Button variant="outline" nativeButton={false} render={<Link href={failedHref} />}>
+            Open failed
+          </Button>
+        ) : null}
         {view.canResume && canEdit ? (
           <Button variant="outline" onClick={start}>
             Resume

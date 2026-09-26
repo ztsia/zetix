@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { Mail } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { parseTableState } from '@/components/data-table/url-state';
 import { requireRole } from '@/lib/auth/guards';
 import { maskForRole, masksContacts } from '@/lib/auth/mask';
@@ -83,12 +86,22 @@ export default async function AudiencePage({
               for its record.
             </p>
           </div>
-          <NewParty
-            concertId={concertId}
-            timeZone={concert.timezone}
-            segments={segments}
-            players={players}
-          />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/admin/concerts/${concertId}/audience/messages`} />}
+            >
+              <Mail data-icon="inline-start" />
+              Messages
+            </Button>
+            <NewParty
+              concertId={concertId}
+              timeZone={concert.timezone}
+              segments={segments}
+              players={players}
+            />
+          </div>
         </div>
         <AudienceTable
           concertId={concertId}

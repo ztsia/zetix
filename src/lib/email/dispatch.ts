@@ -384,7 +384,23 @@ export type OutboxBacklog = {
  * end. The split by reclaim age is what keeps Resume honest: it is offered only
  * for rows a dispatch could actually pick up.
  */
-export async function outboxBacklog(): Promise<OutboxBacklog> {
+export async function outboxBacklog(concertId?: number): Promise<OutboxBacklog> {
+  /**
+   * **For the concert in view** (spec/v3.md §24.5, `local.md` §14.1). The
+   * banner once said "34 messages ran out of attempts" on a concert that had
+   * none: the count was real, the concert it was shown against was not. A
+   * message belongs to a concert through its party's show, or its player.
+   * Without a concert the count is table-wide, which is what the dispatcher
+   * itself works through.
+   */
+  const scope =
+    concertId === undefined
+      ? sql``
+      : sql`and exists (
+          select 1 from registrations r join shows s on s.id = r.show_id
+           where r.id = o.registration_id and s.concert_id = ${concertId}
+          union all
+          select 1 from players p where p.id = o.player_id and p.concert_id = ${concertId})`;
   const rows = await getDb().execute<{
     resumable: number;
     retrying: number;
@@ -405,9 +421,10 @@ export async function outboxBacklog(): Promise<OutboxBacklog> {
           and updated_at >= now() - (interval '1 second' * ${RECLAIM_AFTER_SECONDS})
       )::int as in_flight,
       count(*) filter (where status = 'FAILED')::int as failed
-      from email_outbox
+      from email_outbox o
      where status in ('QUEUED', 'SENDING', 'FAILED')
        and deleted_at is null
+       ${scope}
   `);
   const row = rows[0];
   return {
@@ -423,6 +440,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export type DispatchOptions = {
   /** Injected by tests; production builds one from the environment. */
   transport?: MailTransport;
+  /**
+   * Which concert's backlog to report back (the banner's, §24.5). The
+   * dispatcher itself always works the whole queue: a message is due whatever
+   * concert the admin happens to be looking at.
+   */
+  backlogConcertId?: number;
   /**
    * Overrides {@link SEND_WINDOW_MS}. Injected by tests, which cannot spend
    * forty-five seconds proving that the loop stops after forty-five seconds.
@@ -465,7 +488,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       dailyCapReached: true,
       warnings: [],
       reclaimed,
-      backlog: await outboxBacklog(),
+      backlog: await outboxBacklog(options.backlogConcertId),
     };
   }
 
@@ -479,7 +502,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
       dailyCapReached: false,
       warnings: [],
       reclaimed,
-      backlog: await outboxBacklog(),
+      backlog: await outboxBacklog(options.backlogConcertId),
     };
   }
 
@@ -635,6 +658,6 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     dailyCapReached: false,
     warnings,
     reclaimed,
-    backlog: await outboxBacklog(),
+    backlog: await outboxBacklog(options.backlogConcertId),
   };
 }

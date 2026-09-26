@@ -101,7 +101,11 @@ async function runDispatch(
   }
 
   try {
-    const result = await dispatchBatch();
+    // The banner asks for its own concert's backlog back (spec/v3.md §24.5).
+    const concertId = Number(new URL(request.url).searchParams.get('concertId'));
+    const result = await dispatchBatch(
+      Number.isSafeInteger(concertId) && concertId > 0 ? { backlogConcertId: concertId } : {},
+    );
     return NextResponse.json({ ...result, completions, sweepError });
   } catch (error) {
     /**

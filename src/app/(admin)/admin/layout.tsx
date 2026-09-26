@@ -5,7 +5,6 @@ import { requireRole } from '@/lib/auth/guards';
 import { RoleProvider } from '@/components/auth/role';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
-import { outboxBacklog } from '@/lib/email/dispatch';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { AppSidebar } from './app-sidebar';
 import { BlastQueueBanner, BlastQueueProvider } from './blast-queue';
@@ -34,7 +33,8 @@ export const metadata: Metadata = {
  * the dispatch loop behind it (spec/email.md §11.2.1, surfaces.md §15.1). They
  * are here because the loop has to outlive the screen that starts it — a blast
  * runs for about five minutes and an admin will navigate away inside that. The
- * backlog is read on every render, which is what makes the banner survive a
+ * backlog it reports is the concert in view's (spec/v3.md §24.5), read by the
+ * concert layout on every render, which is what makes the banner survive a
  * reload rather than only a route change.
  */
 export default async function AdminLayout({
@@ -44,21 +44,18 @@ export default async function AdminLayout({
 }) {
   const user = await requireRole('ADMIN', 'VIEWER');
 
-  const [rows, backlog] = await Promise.all([
-    getDb()
-      .select({ id: concerts.id, name: concerts.name, season: concerts.season })
-      .from(concerts)
-      .where(isNull(concerts.deletedAt))
-      .orderBy(asc(concerts.startsOn), asc(concerts.name)),
-    outboxBacklog(),
-  ]);
+  const rows = await getDb()
+    .select({ id: concerts.id, name: concerts.name, season: concerts.season })
+    .from(concerts)
+    .where(isNull(concerts.deletedAt))
+    .orderBy(asc(concerts.startsOn), asc(concerts.name));
 
   return (
     <RoleProvider role={user.role}>
       <SidebarProvider>
         <AppSidebar concerts={rows} userLabel={user.displayName ?? user.email} />
         <SidebarInset>
-          <BlastQueueProvider backlog={backlog}>
+          <BlastQueueProvider>
             <AdminHeader />
             {user.role === 'VIEWER' ? <ReadOnlyBanner /> : null}
             <BlastQueueBanner />

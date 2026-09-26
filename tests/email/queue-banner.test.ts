@@ -222,3 +222,30 @@ describe('the backlog the queue banner renders', () => {
     expect(await outboxBacklog()).toEqual({ ...EMPTY, retrying: 1 });
   });
 });
+
+/**
+ * spec/v3.md §24.5, `local.md` §14.1: the banner once reported 34 failed
+ * messages on a concert that had none. The backlog is counted for the concert
+ * in view; the dispatcher still works the whole queue.
+ */
+describe('the backlog of one concert', () => {
+  it('counts only that concert’s messages, party- and player-addressed', async () => {
+    const { concertId } = await seedWorld(2);
+    await sql`update email_outbox set status = 'QUEUED' where status = 'DRAFT'`;
+    const other = await createConcert('Another concert');
+    const [player] = await sql<{ id: string }[]>`
+      insert into players (concert_id, full_name, email, invite_token)
+      values (${concertId}, 'Pat', 'pat@example.test', 'tok-pat') returning id`;
+    await sql`insert into email_outbox (player_id, purpose, template_key, to_email, subject, body_md, status)
+              values (${player.id}, 'NOTES_DIGEST', 'player_notes_digest', 'pat@example.test', 's', 'b', 'FAILED')`;
+
+    expect(await outboxBacklog(concertId)).toEqual({ ...EMPTY, resumable: 2, failed: 1 });
+    expect(await outboxBacklog(other)).toEqual(EMPTY);
+    expect(await outboxBacklog()).toEqual({ ...EMPTY, resumable: 2, failed: 1 });
+
+    // A dispatch asked for the other concert's backlog still sends this one's mail.
+    const result = await dispatchBatch({ transport: recorder(), backlogConcertId: other });
+    expect(result.sent).toBe(2);
+    expect(result.backlog).toEqual(EMPTY);
+  });
+});

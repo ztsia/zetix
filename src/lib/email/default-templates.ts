@@ -1,7 +1,8 @@
 import type { TemplateKey } from './templates';
 
 /**
- * Seeded default wording for the nine §11.3 message types, so the system can
+ * Seeded default wording for every message type (§11.3, and V3's receipt and
+ * player invite), so the system can
  * send before anyone opens the editor — the same argument decision 10 makes for
  * ticket templates.
  *
@@ -158,6 +159,37 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '',
       'With thanks,',
       'The {{ concert.name }} team',
+    ].join('\n'),
+  },
+  /**
+   * V3 (spec/v3.md §25.3). States what was received and that tickets follow;
+   * module `V` queues it on submit and folds the verification link in for a
+   * public form.
+   */
+  registration_receipt: {
+    name: 'Registration received',
+    subject: 'We have your registration for {{ concert.name }}',
+    bodyMd: [
+      'Dear {{ registration.contact_name }},',
+      '',
+      'Thank you — we have your registration for **{{ show.name }}**: {{ attendee_count }} seat(s), for {{ attendee_names }}.',
+      '',
+      'Your tickets will follow by email once the organisers have confirmed your registration.',
+      'Please check your spam folder if you do not see them, and add this address to your contacts.',
+    ].join('\n'),
+  },
+  /** V3 (spec/v3.md §25.2). Player-addressed, so it greets through `{{ player.name }}`. */
+  player_invite: {
+    name: 'Invite your guests',
+    subject: 'Invite your guests to {{ concert.name }}',
+    bodyMd: [
+      'Dear {{ player.name }},',
+      '',
+      'Registration for **{{ concert.name }}** is open. This link opens the form with your name already chosen:',
+      '',
+      '[Register your guests]({{ invite_url }})',
+      '',
+      'Share it with your family and friends.',
     ].join('\n'),
   },
 };

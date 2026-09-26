@@ -152,6 +152,10 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
         from email_outbox
        where status = 'QUEUED'
          and (scheduled_for is null or scheduled_for <= now())
+         -- A message in the Trash is not sent (spec/v3.md §23.6). Deleting one
+         -- cancels it first (Messages › Delete), so this is the second door,
+         -- for a row that reached the Trash some other way.
+         and deleted_at is null
        order by created_at, id
        for update skip locked
        limit ${limit}
@@ -329,7 +333,7 @@ async function reclaimStranded(): Promise<number> {
 
 async function remainingQueued(): Promise<number> {
   const rows = await getDb().execute<{ n: number }>(sql`
-    select count(*)::int as n from email_outbox where status = 'QUEUED'
+    select count(*)::int as n from email_outbox where status = 'QUEUED' and deleted_at is null
   `);
   return rows[0]?.n ?? 0;
 }
@@ -403,6 +407,7 @@ export async function outboxBacklog(): Promise<OutboxBacklog> {
       count(*) filter (where status = 'FAILED')::int as failed
       from email_outbox
      where status in ('QUEUED', 'SENDING', 'FAILED')
+       and deleted_at is null
   `);
   const row = rows[0];
   return {

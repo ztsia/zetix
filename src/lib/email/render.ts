@@ -90,6 +90,14 @@ export const TOKENS: { token: string; description: string }[] = [
       'The notes written to this player, as a list. Only resolves on the notes digest',
   },
   {
+    token: 'invite_url',
+    /**
+     * The player's own prefilled form link, `/f/{slug}?k={token}`
+     * (spec/v3.md §25.2). Only the player invite carries it.
+     */
+    description: "The player's own form link. Only resolves on the player invite",
+  },
+  {
     token: 'notes_count',
     description: 'How many notes the digest carries. Only resolves on the notes digest',
   },

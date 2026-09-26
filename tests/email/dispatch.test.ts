@@ -602,3 +602,26 @@ describe('the reviewed message must match what is attached', () => {
     expect(registrationId).toBeGreaterThan(0);
   });
 });
+
+/**
+ * spec/v3.md §23.6: a message in the Trash is not sent. Messages › Delete
+ * cancels before it deletes; this is the dispatcher's own refusal, for a row
+ * that reached the Trash any other way.
+ */
+describe('a queued message in the Trash', () => {
+  it('is neither claimed nor counted in the backlog', async () => {
+    const { registrationId } = await seedParty({ seats: 1 });
+    await sql`update email_outbox set deleted_at = now() where registration_id = ${registrationId}`;
+
+    const transport = recordingTransport();
+    const result = await dispatchBatch({ transport });
+
+    expect(transport.messages).toHaveLength(0);
+    expect(result.remaining).toBe(0);
+    expect(result.backlog.resumable).toBe(0);
+    const [row] = await sql<{ status: string }[]>`
+      select status from email_outbox where registration_id = ${registrationId}
+    `;
+    expect(row.status).toBe('QUEUED');
+  });
+});

@@ -11,6 +11,7 @@ import { formatShowTime } from '../../local-time';
 import { deleteSegmentAction, deleteShowAction } from './actions';
 import { DeleteButton } from './delete-button';
 import { MoveCapacityDialog } from './move-capacity-dialog';
+import { SegmentDeliveryDialog } from './segment-delivery-dialog';
 import { SegmentFormDialog } from './segment-form-dialog';
 import { GenerateFeedbackButton } from './generate-feedback-button';
 import { ShowFormDialog } from './show-form-dialog';
@@ -296,6 +297,8 @@ function SegmentRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {/* The ticket design and email Send tickets starts from (spec/v3.md §24.2). */}
+        <SegmentDeliveryDialog concertId={concertId} segmentId={segment.id} segmentName={segment.name} />
         <SegmentFormDialog
           concertId={concertId}
           showId={showId}

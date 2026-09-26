@@ -125,7 +125,7 @@ export type WizardSetup = {
   recipients: { id: number; label: string; segmentId: number }[];
 };
 
-/** A render limit on the "preview as" list, not an operational value. */
+/** A render limit on each segment's "preview as" list, not an operational value. */
 const RECIPIENTS_SHOWN = 100;
 
 export async function wizardSetup(concertId: number, partyIds: number[]): Promise<WizardSetup> {
@@ -195,11 +195,17 @@ export async function wizardSetup(concertId: number, partyIds: number[]): Promis
      order by name
   `);
 
+  // Capped per segment, so every segment's email can be previewed however the
+  // selection is spread across them.
   const recipients = await db.execute<{ id: string; label: string; segment_id: string }>(sql`
-    select r.id, r.contact_name as label, r.segment_id from registrations r
-     where r.id = any(${idArray(ids)}) and r.deleted_at is null
-     order by r.requested_at, r.id
-     limit ${RECIPIENTS_SHOWN}
+    select id, label, segment_id from (
+      select r.id, r.contact_name as label, r.segment_id, r.requested_at,
+             row_number() over (partition by r.segment_id order by r.requested_at, r.id) as n
+        from registrations r
+       where r.id = any(${idArray(ids)}) and r.deleted_at is null
+    ) ranked
+     where n <= ${RECIPIENTS_SHOWN}
+     order by requested_at, id
   `);
 
   return {

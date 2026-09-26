@@ -24,8 +24,16 @@ export class NoTicketDesignError extends Error {
   }
 }
 
-/** The default design for every seat in `segmentId`. */
-export async function designForSegment(executor: Executor, segmentId: number): Promise<Design> {
+/**
+ * The default design for every seat in `segmentId`. `aboveSegment` skips the
+ * segment's own choice — what the segment would inherit without one, for the
+ * editor that sets it.
+ */
+export async function designForSegment(
+  executor: Executor,
+  segmentId: number,
+  options: { aboveSegment?: boolean } = {},
+): Promise<Design> {
   const [row] = await executor.execute<{ id: string | null; version: number | null }>(sql`
     with segment as (
       select g.id, s.concert_id, g.default_ticket_template_id, s.ticket_template_id
@@ -36,6 +44,7 @@ export async function designForSegment(executor: Executor, segmentId: number): P
     chosen as (
       select t.id, t.version, 1 as rank from segment
         join ticket_templates t on t.id = segment.default_ticket_template_id and t.deleted_at is null
+       ${options.aboveSegment ? sql`where false` : sql``}
       union all
       select t.id, t.version, 2 from segment
         join ticket_templates t on t.id = segment.ticket_template_id and t.deleted_at is null

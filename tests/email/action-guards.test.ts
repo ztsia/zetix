@@ -44,6 +44,8 @@ const stub = {
   loadMessage: vi.fn(async () => ({ id: 1, registrationId: 1, status: 'FAILED', subject: 's', bodyMd: 'b' })),
   startCommand: vi.fn(async () => ({ items: [{ status: 'DONE', outcome: {}, error: null }] })),
   changeContactEmail: vi.fn(async () => ({ issue: null, readdressed: 0 })),
+  loadSegmentDelivery: vi.fn(async () => ({ segmentId: 1 })),
+  saveSegmentDelivery: vi.fn(async () => {}),
 };
 
 vi.mock('@/lib/email/mutations', () => ({
@@ -61,6 +63,11 @@ vi.mock('@/lib/delivery/messages', async (original) => ({
   loadMessage: () => stub.loadMessage(),
 }));
 vi.mock('@/lib/delivery/address', () => ({ changeContactEmail: () => stub.changeContactEmail() }));
+vi.mock('@/lib/delivery/defaults', () => ({
+  DeliveryDefaultsError: class extends Error {},
+  loadSegmentDelivery: () => stub.loadSegmentDelivery(),
+  saveSegmentDelivery: () => stub.saveSegmentDelivery(),
+}));
 vi.mock('@/lib/commands/runner', async (original) => ({
   ...(await original<typeof import('@/lib/commands/runner')>()),
   startCommand: () => stub.startCommand(),
@@ -69,6 +76,7 @@ vi.mock('@/lib/commands/runner', async (original) => ({
 const templates = await import('@/app/(admin)/admin/concerts/[concertId]/email/actions');
 const wizard = await import('@/app/(admin)/admin/concerts/[concertId]/audience/send/actions');
 const messages = await import('@/app/(admin)/admin/concerts/[concertId]/audience/messages/actions');
+const segments = await import('@/app/(admin)/admin/concerts/[concertId]/shows/delivery-actions');
 
 const admin = { id: randomUUID(), role: 'ADMIN' as const, email: 'a@test', displayName: 'Admin' };
 const operator = { ...admin, id: randomUUID(), role: 'OPERATOR' as const };
@@ -111,6 +119,16 @@ const CALLS: { name: string; run: () => Promise<unknown>; reached: () => unknown
     name: 'fixAddressAction',
     run: () => messages.fixAddressAction(1, 1, 'new@example.test'),
     reached: () => stub.changeContactEmail,
+  },
+  {
+    name: 'segmentDeliveryAction',
+    run: () => segments.segmentDeliveryAction(1, 1),
+    reached: () => stub.loadSegmentDelivery,
+  },
+  {
+    name: 'saveSegmentDeliveryAction',
+    run: () => segments.saveSegmentDeliveryAction(1, 1, { designId: null, ticketTemplate: null }),
+    reached: () => stub.saveSegmentDelivery,
   },
 ];
 

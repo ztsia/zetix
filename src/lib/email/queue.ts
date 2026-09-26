@@ -1,6 +1,7 @@
 import 'server-only';
 
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
+import type { Executor } from '@/db/allocation';
 import { getDb } from '@/db/client';
 import { rethrowDbError } from '@/db/errors';
 import { toNameCase } from '../names';
@@ -265,7 +266,7 @@ export class MissingTemplateError extends Error {
   }
 }
 
-type Recipient = {
+export type Recipient = {
   registrationId: number;
   contactName: string | null;
   context: MergeContext;
@@ -273,7 +274,29 @@ type Recipient = {
 
 /** Everything a message needs about its recipient, in one query. */
 async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
-  const rows = await getDb().execute<{
+  return recipientsWhere(
+    getDb(),
+    sql`r.segment_id = ${target.segmentId}
+       and ${IS_LIVE_REGISTRATION}
+       and ${HAS_UNDELIVERED_SEAT}
+       ${requireVerified(target.templateKey)}
+       ${excludeUnissued(target.templateKey)}`,
+  );
+}
+
+/**
+ * One party's merge context, for the send wizard (spec/v3.md §24.1), which
+ * decides eligibility itself and renders a message per party inside its own
+ * transaction — after issuing, so `ticket_links` carries the seats it just
+ * issued. The same query as the blast's, so the two word a message alike.
+ */
+export async function partyRecipient(executor: Executor, registrationId: number): Promise<Recipient | null> {
+  const [recipient] = await recipientsWhere(executor, sql`r.id = ${registrationId}`);
+  return recipient ?? null;
+}
+
+async function recipientsWhere(executor: Executor, where: SQL): Promise<Recipient[]> {
+  const rows = await executor.execute<{
     registration_id: string;
     contact_name: string | null;
     contact_email: string;
@@ -324,11 +347,7 @@ async function loadRecipients(target: BlastTarget): Promise<Recipient[]> {
            and a.status = 'CONFIRMED'
            and a.deleted_at is null
       ) counts on true
-     where r.segment_id = ${target.segmentId}
-       and ${IS_LIVE_REGISTRATION}
-       and ${HAS_UNDELIVERED_SEAT}
-       ${requireVerified(target.templateKey)}
-       ${excludeUnissued(target.templateKey)}
+     where ${where}
      order by r.requested_at, r.id
   `);
 

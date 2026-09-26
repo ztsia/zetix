@@ -92,7 +92,7 @@ export async function draftSuperseding(
       ${registrationId}, ${playerId}, ${message.purpose}::message_purpose, ${message.templateKey},
       ${message.toEmail}, ${message.toName}, ${message.subject}, ${message.bodyMd},
       ${message.context ? JSON.stringify(message.context) : null}::jsonb,
-      ${message.status}::outbox_status, ${message.scheduledFor ?? null}
+      ${message.status}::outbox_status, ${message.scheduledFor?.toISOString() ?? null}::timestamptz
     )
     returning id
   `);

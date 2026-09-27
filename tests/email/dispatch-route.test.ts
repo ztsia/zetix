@@ -77,13 +77,9 @@ describe('the verb the daily cron actually sends', () => {
     expect(autoCompleteShows).not.toHaveBeenCalled();
   });
 
-  it('points vercel.json at this path, so the cron and the handler agree', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const vercel = JSON.parse(await readFile('vercel.json', 'utf8')) as {
-      crons: { path: string }[];
-    };
-    expect(vercel.crons.map((c) => c.path)).toContain('/api/outbox/dispatch');
-  });
+  // The daily cron moved to `/api/scheduler/tick` (spec/v3.md §27.2), which
+  // sends what is due in the same way; `tests/scheduler/tick-route.test.ts`
+  // pins that path. This GET stays for anyone still calling it.
 });
 
 describe('the show sweep rides the cron, not the Send button', () => {

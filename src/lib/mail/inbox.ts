@@ -27,6 +27,13 @@ export type FolderListing = {
   uidValidity: number;
   /** UIDs to read, ascending. */
   uids: number[];
+  /**
+   * The highest UID the folder had when it was listed (`UIDNEXT - 1`), or 0
+   * for an empty folder. A sync that has read every listed UID moves its
+   * cursor here, so a first sync over an empty window does not leave a cursor
+   * of 0 that makes the next one read the whole mailbox.
+   */
+  highestUid: number;
 };
 
 export type ListOptions =

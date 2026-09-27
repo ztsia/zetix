@@ -60,7 +60,7 @@ export class MemoryInbox implements MailInbox {
       .filter((m) => ('afterUid' in options ? m.uid > options.afterUid : m.internalDate >= options.since))
       .map((m) => m.uid)
       .sort((a, b) => a - b);
-    return { path, uidValidity: folder.uidValidity, uids };
+    return { path, uidValidity: folder.uidValidity, uids, highestUid: folder.nextUid - 1 };
   }
 
   async fetch(path: string, uids: readonly number[]): Promise<RawMessage[]> {

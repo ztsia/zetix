@@ -1,6 +1,8 @@
 import 'server-only';
 
 import { env } from '@/lib/env';
+import { connectImap, type ImapConfig } from '@/lib/mail/imap';
+import type { MailInbox } from '@/lib/mail/inbox';
 import { createSmtpTransport, type MailTransport, type SmtpConfig } from '@/lib/mail/transport';
 
 /**
@@ -75,4 +77,40 @@ export function resolveSmtpConfig(): SmtpConfig {
 
 export function createConfiguredTransport(): MailTransport {
   return createSmtpTransport(resolveSmtpConfig());
+}
+
+/** Gmail's IMAP, implicit TLS (spec/v3.md §26.3). */
+export const GMAIL_IMAP_HOST = 'imap.gmail.com';
+export const GMAIL_IMAP_PORT = 993;
+
+/**
+ * Where the inbox sync reads from — the same account the transport sends as.
+ *
+ * Throws {@link MailNotConfiguredError} exactly as the transport does when the
+ * credential is absent, which is the normal state of every cloud and CI
+ * environment; the sync reports that as "not configured" rather than failing
+ * the tick it runs in.
+ */
+export function resolveImapConfig(): ImapConfig {
+  const e = env();
+  const user = e.GMAIL_USER;
+  if (!user) throw new MailNotConfiguredError('GMAIL_USER');
+
+  const host = e.IMAP_HOST ?? GMAIL_IMAP_HOST;
+  const port = e.IMAP_PORT ?? GMAIL_IMAP_PORT;
+  const secure = e.IMAP_SECURE ?? port === 993;
+  const isOverridden = e.IMAP_HOST !== undefined;
+  const pass = e.GMAIL_APP_PASSWORD ? normalizeAppPassword(e.GMAIL_APP_PASSWORD) : '';
+  if (!pass && !isOverridden) throw new MailNotConfiguredError('GMAIL_APP_PASSWORD');
+
+  return { host, port, secure, user, pass, connectTimeoutMs: 10_000 };
+}
+
+/** The mailbox tags are minted for and replies are matched against. */
+export function configuredMailbox(): string | null {
+  return env().GMAIL_USER ?? null;
+}
+
+export function connectConfiguredInbox(): Promise<MailInbox> {
+  return connectImap(resolveImapConfig());
 }

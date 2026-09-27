@@ -81,7 +81,12 @@ export async function connectImap(config: ImapConfig): Promise<MailInbox> {
         } else if (mailbox.exists > 0) {
           found = ((await client.search({ since: options.since }, { uid: true })) || []) as number[];
         }
-        return { path, uidValidity, uids: [...new Set(found)].sort((a, b) => a - b) };
+        return {
+          path,
+          uidValidity,
+          uids: [...new Set(found)].sort((a, b) => a - b),
+          highestUid: Math.max(0, (mailbox.uidNext ?? 1) - 1),
+        };
       } finally {
         lock.release();
       }

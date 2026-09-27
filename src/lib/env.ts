@@ -63,6 +63,19 @@ const schema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+
+  /**
+   * IMAP coordinates for the inbox sync (spec/v3.md §26.3), overriding Gmail's
+   * the same way `SMTP_*` do: unset in production, set in development to point
+   * the same adapter at a local test server. The credential is the same
+   * `GMAIL_USER` / `GMAIL_APP_PASSWORD`; app passwords cover IMAP.
+   */
+  IMAP_HOST: z.string().optional(),
+  IMAP_PORT: z.coerce.number().int().positive().optional(),
+  IMAP_SECURE: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export type Env = z.infer<typeof schema>;

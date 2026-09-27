@@ -67,6 +67,7 @@ describe('the IMAP adapter', () => {
     const all = await i.list('INBOX', { afterUid: 0 });
     expect(all.uids).toEqual([1, 2, 3]);
     expect(all.uidValidity).toBeGreaterThan(0);
+    expect(all.highestUid).toBe(3);
     expect((await i.list('INBOX', { afterUid: 1 })).uids).toEqual([2, 3]);
     // `4:*` matches the highest UID on a real server; the adapter must not return it.
     expect((await i.list('INBOX', { afterUid: 3 })).uids).toEqual([]);

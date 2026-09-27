@@ -8,7 +8,7 @@ import type { FolderRole, MailInbox, RawMessage } from '@/lib/mail/inbox';
 import { parseMessage, type ParsedMessage } from '@/lib/mail/parse';
 import type { Addressee } from '@/lib/mail/tagging';
 import { findByMessageId, matchByHeaders, matchInbound } from './match';
-import { appendMessage, ensureThread, markThreadHandled } from './threads';
+import { appendMessage, ensureThread, markThreadHandled, storable } from './threads';
 
 /**
  * The inbox sync (spec/v3.md §26.3–§26.5).
@@ -90,6 +90,47 @@ async function writeCursor(path: string, uidValidity: number, lastUid: number, e
            updated_at = now()`);
 }
 
+/**
+ * An error in words a person can act on, and a database can store.
+ *
+ * Drizzle wraps a failed statement as `Failed query: <the SQL> params: <values>`
+ * — the values being a stranger's mail — with the reason in `cause`. The
+ * Inbox shows this text to every console user, so it gets the reason alone,
+ * without NULs (which Postgres refuses in text) and bounded in length.
+ */
+export function errorText(error: unknown): string {
+  let e: unknown = error;
+  while (e instanceof Error && /^Failed query/.test(e.message) && e.cause) e = e.cause;
+  const text = e instanceof Error ? e.message : String(e);
+  return (storable(text) ?? '').slice(0, 500);
+}
+
+/**
+ * The parsed message with every NUL removed. Postgres refuses NUL in `text`
+ * and in `jsonb` alike, and the audit row quotes the subject, so this is done
+ * once here rather than at each place a field is written.
+ */
+function storableMessage(m: ParsedMessage): ParsedMessage {
+  return {
+    ...m,
+    from: m.from && { address: storable(m.from.address)!, name: storable(m.from.name) },
+    recipients: m.recipients.map((r) => storable(r)!),
+    to: storable(m.to),
+    subject: storable(m.subject),
+    text: storable(m.text),
+    html: storable(m.html),
+  };
+}
+
+/** SQLSTATE class 22 (data exception) or 54 (program limit): the data, not the moment, is the problem. */
+function isDataError(error: unknown): boolean {
+  for (let e: unknown = error; e; e = e instanceof Error ? e.cause : undefined) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === 'string' && /^(22|54)/.test(code)) return true;
+  }
+  return false;
+}
+
 async function recordError(path: string, error: string): Promise<void> {
   await getDb().execute(sql`
     insert into mail_sync_state (folder, last_error, last_synced_at) values (${path}, ${error}, now())
@@ -125,7 +166,7 @@ async function processInbound(
 
   if (parsed.bounce) {
     if (parsed.bounce.action !== 'failed' || !parsed.bounce.originalMessageId) return 'skipped';
-    const original = await findByMessageId(parsed.bounce.originalMessageId);
+    const original = await findByMessageId(parsed.bounce.originalMessageId, { outboundOnly: true });
     if (!original) return 'skipped';
 
     const code = parsed.bounce.status;
@@ -210,13 +251,16 @@ async function processInbound(
       messageAt,
       folder: path,
       uid: message.uid,
+      // An out-of-office is part of the conversation but asks nothing: it
+      // never raises REPLY_WAITING (§26.5).
+      handledAt: parsed.autoReply ? messageAt : null,
     });
     if (stored === null) return 'skipped';
     await writeAuditLog(
       {
         action: 'email.reply_received',
         ...entityOf(match.addressee),
-        after: { messageId, from: parsed.from?.address ?? null, subject: parsed.subject, matchedBy: match.via },
+        after: { messageId, from: parsed.from?.address ?? null, subject: parsed.subject, matchedBy: match.via, autoReply: parsed.autoReply },
         actorId: null,
       },
       tx,
@@ -261,8 +305,14 @@ async function processSent(
       uid: message.uid,
     });
     if (stored === null) return 'skipped';
-    // Someone answered in Gmail: the questions before it are handled (§26.5).
-    await markThreadHandled(tx, threadId, null, messageAt);
+    // Someone answered in Gmail: the questions up to the one it answers are
+    // handled (§26.5) — or, answering one of our sends, those before it went.
+    await markThreadHandled(
+      tx,
+      threadId,
+      null,
+      match.messageRowId !== null ? { messageId: match.messageRowId } : messageAt,
+    );
     return 'stored-sent';
   });
 }
@@ -305,16 +355,27 @@ async function syncFolder(role: FolderRole, path: string, opts: SyncOptions): Pr
       report.read += 1;
       let parsed: ParsedMessage | null = null;
       try {
-        parsed = await parseMessage(message.raw);
+        parsed = storableMessage(await parseMessage(message.raw));
       } catch {
         // A message that cannot be parsed never will be; stepping past it keeps it from blocking the folder.
         parseErrors += 1;
       }
       if (parsed) {
-        const outcome =
-          role === 'inbox'
-            ? await processInbound(message, parsed, path, opts)
-            : await processSent(message, parsed, path, opts);
+        let outcome: Outcome;
+        try {
+          outcome =
+            role === 'inbox'
+              ? await processInbound(message, parsed, path, opts)
+              : await processSent(message, parsed, path, opts);
+        } catch (error) {
+          // A message the database refuses as data will be refused on every
+          // sync; stepping past it keeps one stranger's mail from stopping the
+          // folder for good. Anything else — a dropped connection — stops here
+          // without moving the cursor, and the next sync retries this message.
+          if (!isDataError(error)) throw error;
+          parseErrors += 1;
+          outcome = 'skipped';
+        }
         if (outcome === 'skipped') report.skipped += 1;
         else {
           report.stored += 1;
@@ -343,7 +404,7 @@ async function syncFolder(role: FolderRole, path: string, opts: SyncOptions): Pr
       path,
       uidValidity,
       Math.max(lastDone ?? 0, listing.highestUid),
-      parseErrors > 0 ? `${parseErrors} message(s) could not be parsed and were skipped.` : null,
+      parseErrors > 0 ? `${parseErrors} message(s) could not be read or stored and were skipped.` : null,
     );
   }
   return report;
@@ -363,8 +424,8 @@ export async function syncMailbox(opts: SyncOptions): Promise<SyncReport> {
       if (!path) continue;
       folders.push(await syncFolder(role, path, opts));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (path) await recordError(path, message.slice(0, 2000));
+      const message = errorText(error);
+      if (path) await recordError(path, message);
       folders.push({
         role,
         path: path ?? role,

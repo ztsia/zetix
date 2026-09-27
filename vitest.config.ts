@@ -49,5 +49,10 @@ export default defineConfig({
     // lie about what they proved.
     fileParallelism: false,
     testTimeout: 30_000,
+    // Hooks get the same ceiling. `tests/schema/v3-migration.test.ts` drops and
+    // creates a scratch database in `beforeEach`, and both force a checkpoint:
+    // after a write-heavy run of earlier files that checkpoint alone can outlast
+    // vitest's 10s hook default (seen waiting on `CheckpointDone`).
+    hookTimeout: 30_000,
   },
 });

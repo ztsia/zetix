@@ -82,6 +82,25 @@ describe('one tick', () => {
     expect(beat.error).toContain('inbox: IMAP refused');
   });
 
+  it('records a mailbox folder that could not be read as a failed step', async () => {
+    runInboxSync.mockResolvedValue({
+      status: 'synced',
+      folders: [{ role: 'inbox', path: 'INBOX', read: 0, stored: 0, bounces: 0, replies: 0, skipped: 0, reset: false, complete: false, error: 'IMAP down' }],
+    });
+    const report = await runTick({ source: 'manual' });
+    const [beat] = await sql<{ error: string }[]>`select error from scheduler_heartbeat where id = ${report.heartbeatId}`;
+    expect(beat.error).toBe('inbox INBOX: IMAP down');
+  });
+
+  it('can store a step error that quotes a NUL byte', async () => {
+    dispatchBatch.mockRejectedValue(new Error('bad \u0000 byte'));
+    const report = await runTick({ source: 'manual' });
+    const [beat] = await sql<{ error: string; finished_at: string | null }[]>`
+      select error, finished_at from scheduler_heartbeat where id = ${report.heartbeatId}`;
+    expect(beat.finished_at).not.toBeNull();
+    expect(beat.error).toBe('send: bad  byte');
+  });
+
   it('trims heartbeats older than scheduler.history_days, and only those', async () => {
     await sql`insert into scheduler_heartbeat (source, started_at) values
       ('pg_cron', now() - interval '8 days'), ('pg_cron', now() - interval '6 days')`;

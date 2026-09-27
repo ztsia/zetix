@@ -73,13 +73,24 @@ export function InboxList({
         <CheckNowButton concertId={concertId} />
       </div>
 
+      {heartbeat?.error && (
+        // A login the mailbox refused never reaches a folder, so it is only here.
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>The last scheduler run had a problem</AlertTitle>
+          <AlertDescription>
+            <span className="block break-words [overflow-wrap:anywhere]">{heartbeat.error}</span>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {failing.length > 0 && (
         <Alert variant="destructive">
           <AlertTriangle />
           <AlertTitle>The mailbox could not be read</AlertTitle>
           <AlertDescription>
             {failing.map((f) => (
-              <span key={f.folder} className="block">
+              <span key={f.folder} className="block break-words [overflow-wrap:anywhere]">
                 {f.folder}: {f.lastError}
               </span>
             ))}

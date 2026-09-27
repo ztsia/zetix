@@ -66,7 +66,7 @@ export default async function InboxPage({
         counts={counts}
         threads={maskForRole(user.role, shown)}
         mailbox={maskForRole(user.role, mailbox)}
-        heartbeat={heartbeat}
+        heartbeat={maskForRole(user.role, heartbeat)}
       />
     </div>
   );

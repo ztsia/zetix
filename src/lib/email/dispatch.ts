@@ -260,7 +260,15 @@ async function markSent(
         text: reply.text,
         messageAt: sentAt,
       });
-      await markThreadHandled(tx, threadId, null, sentAt);
+      /**
+       * Up to the message answered, never up to now: a question that arrived
+       * while this reply sat in the queue — a retry, the daily cap — is still
+       * waiting (U's QA, finding 2). `sendReply()` has already handled these,
+       * with the admin's name; this covers a reply queued any other way.
+       */
+      if (reply.answeredMessageId !== null) {
+        await markThreadHandled(tx, threadId, null, { messageId: reply.answeredMessageId });
+      }
     }
     if (attendeeIds.length > 0) {
       /**
@@ -287,6 +295,8 @@ type SentReply = {
   addressee: Addressee;
   /** The thread of the message answered, when there is one. */
   threadId: number | null;
+  /** The `email_messages` row answered. */
+  answeredMessageId: number | null;
   threading: OutgoingThreading;
   from: string | null;
   to: string;
@@ -760,6 +770,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
             ? {
                 addressee: addresseeOf(row),
                 threadId,
+                answeredMessageId: row.inReplyToMessageId,
                 threading,
                 from: transport.sender ?? null,
                 to: row.toEmail,

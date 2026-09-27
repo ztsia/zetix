@@ -107,8 +107,14 @@ export function normalizeMessageId(value: string | null | undefined): string | n
   const bracketed = /<([^<>\s]+)>/.exec(trimmed);
   const bare = bracketed ? bracketed[1] : trimmed;
   if (!bare || /\s/.test(bare) || !bare.includes('@')) return null;
+  // No real id is this long (RFC 5322 caps a header line at 998), and one that
+  // is would not fit a unique index: a stranger could stall any store keyed on it.
+  if (bare.length > MAX_MESSAGE_ID) return null;
   return `<${bare}>`;
 }
+
+/** The longest `Message-ID` accepted, in characters. RFC 5322's line limit. */
+export const MAX_MESSAGE_ID = 998;
 
 /** Every `<id>` in a `References`-style header, in order, normalised. */
 export function parseMessageIdList(value: string | readonly string[] | null | undefined): string[] {

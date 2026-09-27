@@ -56,6 +56,8 @@ export type NewMessage = {
   messageAt: Date;
   folder?: string | null;
   uid?: number | null;
+  /** Stored already handled: an auto-reply, which nobody needs to answer. */
+  handledAt?: Date | null;
 };
 
 /**
@@ -63,7 +65,29 @@ export type NewMessage = {
  * both INBOX and Sent Mail, or by two overlapping syncs, lands a single row.
  * Returns the new row's id, or `null` when it was already there.
  */
-export async function appendMessage(db: Executor, m: NewMessage): Promise<number | null> {
+/**
+ * Text Postgres will store. A `text` column refuses the NUL character, and a
+ * quoted-printable `=00` in a stranger's mail decodes to exactly that — one
+ * such message would otherwise fail every sync that reached it.
+ */
+export function storable(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  return value.replace(/\u0000/g, '');
+}
+
+export async function appendMessage(db: Executor, input: NewMessage): Promise<number | null> {
+  const m: NewMessage = {
+    ...input,
+    messageId: storable(input.messageId),
+    inReplyTo: storable(input.inReplyTo),
+    referenceIds: input.referenceIds?.map((r) => storable(r)!).filter((r) => r.length > 0),
+    fromEmail: storable(input.fromEmail),
+    fromName: storable(input.fromName),
+    toEmail: storable(input.toEmail),
+    subject: storable(input.subject),
+    text: storable(input.text),
+    html: storable(input.html),
+  };
   const refs =
     m.referenceIds && m.referenceIds.length > 0
       ? sql`array[${sql.join(
@@ -75,12 +99,13 @@ export async function appendMessage(db: Executor, m: NewMessage): Promise<number
     insert into email_messages
       (thread_id, direction, outbox_id, message_id, in_reply_to, reference_ids,
        from_email, from_name, to_email, subject, text, html, is_bounce,
-       message_at, folder, uid)
+       message_at, folder, uid, handled_at)
     values
       (${m.threadId}, ${m.direction}, ${m.outboxId ?? null}, ${m.messageId}, ${m.inReplyTo ?? null}, ${refs},
        ${m.fromEmail ?? null}, ${m.fromName ?? null}, ${m.toEmail ?? null}, ${m.subject ?? null},
        ${m.text ?? null}, ${m.html ?? null}, ${m.isBounce ?? false},
-       ${m.messageAt.toISOString()}, ${m.folder ?? null}, ${m.uid ?? null})
+       ${m.messageAt.toISOString()}, ${m.folder ?? null}, ${m.uid ?? null},
+       ${m.handledAt ? m.handledAt.toISOString() : null})
     on conflict (message_id) do nothing
     returning id`);
   if (rows.length === 0) return null;

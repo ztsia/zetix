@@ -350,6 +350,89 @@ describe('cursors and budget', () => {
   });
 });
 
+describe('what one stranger can do to the sync (QA findings 1, 4, 7)', () => {
+  it('steps past a message the database refuses, and stores the next', async () => {
+    const { registrationId } = await party();
+    const tag = `events+p${registrationId}@example.org`;
+    const inbox = new MemoryInbox();
+    // A quoted-printable NUL, which Postgres refuses in text …
+    inbox.deliver('inbox', [
+      'From: stranger@x.example', `To: ${tag}`, 'Subject: =?utf-8?Q?a=00b?=', 'Message-ID: <nul@x.example>',
+      'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: quoted-printable', '', 'bad=00byte',
+    ].join('\r\n'));
+    // … a Message-ID too long for the unique index …
+    inbox.deliver('inbox', mail({ to: tag, messageId: `<${'x'.repeat(7000)}@x.example>` }));
+    // … and a real reply after both.
+    inbox.deliver('inbox', mail({ to: tag, messageId: '<after@guest.example>' }));
+
+    const first = await sync(inbox);
+    expect(first.folders[0]).toMatchObject({ read: 3, complete: true, error: null });
+    const ids = (await messagesOf(registrationId)).map((m) => m.message_id);
+    expect(ids).toContain('<after@guest.example>');
+    expect(ids).toContain('<nul@x.example>');
+    expect(ids.every((id) => id.length < 1000)).toBe(true);
+
+    const second = await sync(inbox);
+    expect(second.folders[0].read).toBe(0);
+  });
+
+  it('does not record a notice quoting a guest’s own message id as a bounce', async () => {
+    const { registrationId } = await party();
+    const inbox = new MemoryInbox();
+    inbox.deliver('inbox', mail({ to: `events+p${registrationId}@example.org`, messageId: '<guestown@guest.example>' }));
+    await sync(inbox);
+    inbox.deliver('inbox', [
+      'From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>', `To: ${MAILBOX}`,
+      'Subject: Delivery Status Notification (Failure)', 'Message-ID: <dsn-guest@mx.google.com>',
+      'In-Reply-To: <guestown@guest.example>', 'Content-Type: text/plain', '',
+      '550 5.1.1 user unknown', '', 'Message-ID: <guestown@guest.example>',
+    ].join('\r\n'));
+    const report = await sync(inbox);
+    expect(report.folders[0]).toMatchObject({ stored: 0, bounces: 0 });
+    expect((await flags(registrationId)).flag_reply_waiting).toBe(true);
+  });
+
+  it('keeps an out-of-office in the thread without raising REPLY_WAITING', async () => {
+    const { registrationId } = await party();
+    await sent({ registrationId, messageId: '<11.kkkk@example.org>' });
+    const inbox = new MemoryInbox();
+    inbox.deliver('inbox', mail({ inReplyTo: '<11.kkkk@example.org>' }).replace('Subject:', 'Auto-Submitted: auto-replied\r\nSubject:'));
+    await sync(inbox);
+    expect(await messagesOf(registrationId)).toHaveLength(1);
+    expect((await flags(registrationId)).flag_reply_waiting).toBe(false);
+  });
+});
+
+describe('REPLY_WAITING against later mail (QA findings 2, 3)', () => {
+  it('a bounce after an unanswered reply does not hide it', async () => {
+    const { registrationId } = await party('nobody@invalid-guest.example');
+    await sent({ registrationId, messageId: '<41.9f2c1e0a7b3d4c5e@example.org>', to: 'nobody@invalid-guest.example' });
+    const inbox = new MemoryInbox();
+    inbox.deliver('inbox', mail({ from: 'other@guest.example', to: `events+p${registrationId}@example.org` }), new Date(Date.now() - 60_000));
+    inbox.deliver('inbox', fixture('gmail-bounce.eml'));
+    await sync(inbox);
+    expect(await flags(registrationId)).toMatchObject({ flag_reply_waiting: true, flag_bounced: true });
+  });
+
+  it('a reply written in Gmail handles only up to the message it answers', async () => {
+    const { registrationId } = await party();
+    await sent({ registrationId, messageId: '<12.llll@example.org>' });
+    const inbox = new MemoryInbox();
+    inbox.deliver('inbox', mail({ inReplyTo: '<12.llll@example.org>', messageId: '<first-q@guest.example>' }), new Date(Date.now() - 120_000));
+    inbox.deliver('inbox', mail({ inReplyTo: '<12.llll@example.org>', messageId: '<second-q@guest.example>' }), new Date(Date.now() - 60_000));
+    inbox.deliver('sent', mail({ from: MAILBOX, to: 'guest@guest.example', inReplyTo: '<first-q@guest.example>' }));
+    await sync(inbox);
+    const rows = await sql<{ message_id: string; handled: boolean }[]>`
+      select message_id, handled_at is not null as handled from email_messages
+       where direction = 'INBOUND' order by message_at`;
+    expect(rows).toEqual([
+      { message_id: '<first-q@guest.example>', handled: true },
+      { message_id: '<second-q@guest.example>', handled: false },
+    ]);
+    expect((await flags(registrationId)).flag_reply_waiting).toBe(true);
+  });
+});
+
 describe('runInboxSync', () => {
   it('reads its settings and reports rather than throwing', async () => {
     await setSystemSetting('inbox.sync_budget_seconds', 20);

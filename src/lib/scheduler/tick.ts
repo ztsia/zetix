@@ -7,6 +7,8 @@ import { continueRegisteredRuns } from '@/lib/commands/registry';
 import type { ContinueSummary } from '@/lib/commands/runner';
 import { dispatchBatch, MAX_DISPATCH_SECONDS, type DispatchResult } from '@/lib/email/dispatch';
 import { runInboxSync, type InboxRunResult } from '@/lib/inbox/run';
+import { errorText } from '@/lib/inbox/sync';
+import { storable } from '@/lib/inbox/threads';
 import type { MailInbox } from '@/lib/mail/inbox';
 import type { MailTransport } from '@/lib/mail/transport';
 import { autoCompleteShows, type CompletionOutcome } from '@/lib/shows/complete';
@@ -55,7 +57,7 @@ async function step<T>(work: () => Promise<T>): Promise<Step<T>> {
   try {
     return { ok: true, result: await work(), ms: Date.now() - started };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error), ms: Date.now() - started };
+    return { ok: false, error: errorText(error), ms: Date.now() - started };
   }
 }
 
@@ -77,7 +79,14 @@ function failures(report: Omit<TickReport, 'trimmed'>): string | null {
   if (!report.runs.ok) failed.push(`command runs: ${report.runs.error}`);
   if (!report.inbox.ok) failed.push(`inbox: ${report.inbox.error}`);
   else if (report.inbox.result.status === 'failed') failed.push(`inbox: ${report.inbox.result.error}`);
-  return failed.length > 0 ? failed.join('; ').slice(0, 2000) : null;
+  else if (report.inbox.result.status === 'synced') {
+    // A folder that could not be read is a failed step too; local.md §16 says to look here.
+    for (const folder of report.inbox.result.folders) {
+      if (folder.error) failed.push(`inbox ${folder.path}: ${folder.error}`);
+    }
+  }
+  // `storable`: Postgres refuses a NUL in text, and an error can quote one.
+  return failed.length > 0 ? storable(failed.join('; '))!.slice(0, 2000) : null;
 }
 
 export async function runTick(options: TickOptions): Promise<TickReport & { heartbeatId: number }> {
@@ -134,7 +143,7 @@ export async function runTick(options: TickOptions): Promise<TickReport & { hear
   const report: TickReport = { ...partial, trimmed };
   await db.execute(sql`
     update scheduler_heartbeat
-       set finished_at = now(), report = ${JSON.stringify(report)}::jsonb, error = ${failures(partial)}
+       set finished_at = now(), report = ${JSON.stringify(report).replace(/\\u0000/g, '')}::jsonb, error = ${failures(partial)}
      where id = ${heartbeatId}`);
   return { ...report, heartbeatId };
 }

@@ -3,7 +3,7 @@ import 'server-only';
 import { requireSetting } from '@/db/settings';
 import { configuredMailbox, connectConfiguredInbox, MailNotConfiguredError } from '@/lib/email/config';
 import type { MailInbox } from '@/lib/mail/inbox';
-import { syncMailbox, type SyncReport } from './sync';
+import { errorText, syncMailbox, type SyncReport } from './sync';
 
 export type InboxRunResult =
   | ({ status: 'synced' } & SyncReport)
@@ -51,7 +51,7 @@ export async function runInboxSync(options: InboxRunOptions = {}): Promise<Inbox
     return { status: 'synced', ...report };
   } catch (error) {
     if (error instanceof MailNotConfiguredError) return { status: 'not_configured', reason: error.message };
-    return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
+    return { status: 'failed', error: errorText(error) };
   } finally {
     // Only a connection this call opened is this call's to close.
     if (inbox && !options.inbox) await inbox.close().catch(() => {});

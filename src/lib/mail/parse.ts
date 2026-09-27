@@ -23,6 +23,11 @@ export type ParsedMessage = {
   /** Sanitised before it leaves this module (`sanitize.ts`). */
   html: string | null;
   date: Date | null;
+  /**
+   * Written by software, not a person: an out-of-office or other auto-reply
+   * (RFC 3834 `Auto-Submitted`, and the older headers clients still send).
+   */
+  autoReply: boolean;
   /** Set when the message is a delivery-status notification (§26.4). */
   bounce: BounceReport | null;
 };
@@ -190,6 +195,20 @@ function readBounce(mail: ParsedMail, raw: string): BounceReport | null {
   };
 }
 
+function headerText(mail: ParsedMail, name: string): string {
+  const value = mail.headers.get(name) as unknown;
+  if (typeof value === 'string') return value.toLowerCase();
+  if (value && typeof value === 'object' && 'value' in value) return String((value as { value: unknown }).value).toLowerCase();
+  return '';
+}
+
+function isAutoReply(mail: ParsedMail): boolean {
+  const submitted = headerText(mail, 'auto-submitted');
+  if (submitted && submitted !== 'no') return true;
+  if (mail.headers.has('x-autoreply') || mail.headers.has('x-autorespond')) return true;
+  return ['auto_reply', 'auto-reply'].includes(headerText(mail, 'precedence'));
+}
+
 export async function parseMessage(raw: Buffer | string): Promise<ParsedMessage> {
   const source = typeof raw === 'string' ? raw : raw.toString('utf8');
   const mail = await simpleParser(raw, { skipImageLinks: true, skipTextToHtml: true });
@@ -215,6 +234,7 @@ export async function parseMessage(raw: Buffer | string): Promise<ParsedMessage>
     text: mail.text?.trim() || null,
     html: sanitizeMailHtml(html),
     date: mail.date && !Number.isNaN(mail.date.getTime()) ? mail.date : null,
+    autoReply: isAutoReply(mail),
     bounce: readBounce(mail, source),
   };
 }

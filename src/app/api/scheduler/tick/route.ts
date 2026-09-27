@@ -44,11 +44,11 @@ async function tick(source: TickSource): Promise<NextResponse> {
     const report = await runTick({ source });
     return NextResponse.json(report);
   } catch (error) {
-    // Only the heartbeat write itself can land here: every step reports its own failure.
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'tick failed' },
-      { status: 500 },
-    );
+    // Only the heartbeat write itself can land here: every step reports its own
+    // failure. The reason stays in the server log, not in the body — pg_net keeps
+    // every response in `net._http_response`, and an error can quote guest data.
+    console.error('scheduler tick failed', error);
+    return NextResponse.json({ error: 'tick failed' }, { status: 500 });
   }
 }
 

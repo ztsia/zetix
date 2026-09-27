@@ -23,6 +23,12 @@ export type Match = {
   outboxId: number | null;
   /** The thread already holding the message it refers to, when there is one. */
   threadId: number | null;
+  /**
+   * The stored message it refers to, when that is one of ours in a thread
+   * rather than an outbox row — a guest's reply that a Gmail-written answer
+   * quotes. Handling stops there (§26.5).
+   */
+  messageRowId: number | null;
 };
 
 type Found = Omit<Match, 'via'>;
@@ -59,25 +65,36 @@ function addresseeFrom(registrationId: string | null, playerId: string | null): 
   return null;
 }
 
-/** A `Message-ID` we sent (the outbox) or already hold (a thread). */
-export async function findByMessageId(messageId: string): Promise<Found | null> {
+/**
+ * A `Message-ID` we sent (the outbox) or already hold (a thread).
+ *
+ * `outboundOnly` is for a bounce: only a message *we* sent can bounce back to
+ * us, so a delivery notice that quotes a guest's own message id — mail they
+ * sent elsewhere that failed — is not ours to record (U's QA, finding 4).
+ */
+export async function findByMessageId(
+  messageId: string,
+  options: { outboundOnly?: boolean } = {},
+): Promise<Found | null> {
   const [outbox] = await getDb().execute<{ id: string; registration_id: string | null; player_id: string | null }>(sql`
     select id, registration_id, player_id from email_outbox where message_id = ${messageId}`);
   if (outbox) {
     const addressee = addresseeFrom(outbox.registration_id, outbox.player_id);
     const current = addressee && (await live(addressee));
-    return current ? { addressee: current, outboxId: Number(outbox.id), threadId: null } : null;
+    return current ? { addressee: current, outboxId: Number(outbox.id), threadId: null, messageRowId: null } : null;
   }
 
   const [stored] = await getDb().execute<{
+    id: string;
     thread_id: string;
     registration_id: string | null;
     player_id: string | null;
   }>(sql`
-    select m.thread_id, t.registration_id, t.player_id
+    select m.id, m.thread_id, t.registration_id, t.player_id
       from email_messages m
       join email_threads t on t.id = m.thread_id
-     where m.message_id = ${messageId}`);
+     where m.message_id = ${messageId}
+       ${options.outboundOnly ? sql`and m.direction = 'OUTBOUND'` : sql``}`);
   if (stored) {
     const addressee = addresseeFrom(stored.registration_id, stored.player_id);
     const current = addressee && (await live(addressee));
@@ -85,7 +102,12 @@ export async function findByMessageId(messageId: string): Promise<Found | null> 
     // The thread is kept only while it still belongs to the same addressee (not after a merge).
     const sameThread =
       addressee.kind === current.kind && addressee.id === current.id ? Number(stored.thread_id) : null;
-    return { addressee: current, outboxId: null, threadId: sameThread };
+    return {
+      addressee: current,
+      outboxId: null,
+      threadId: sameThread,
+      messageRowId: sameThread === null ? null : Number(stored.id),
+    };
   }
   return null;
 }
@@ -116,7 +138,7 @@ export async function matchInbound(
   const tagged = findPlusTag(m.recipients, opts.mailbox);
   if (tagged) {
     const current = await live(tagged);
-    if (current) return { addressee: current, via: 'plus-tag', outboxId: null, threadId: null };
+    if (current) return { addressee: current, via: 'plus-tag', outboxId: null, threadId: null, messageRowId: null };
   }
 
   const sender = m.from?.address;
@@ -141,7 +163,7 @@ export async function matchInbound(
   for (const row of candidates) {
     const addressee = addresseeFrom(row.registration_id, row.player_id);
     const current = addressee && (await live(addressee));
-    if (current) return { addressee: current, via: 'sender', outboxId: null, threadId: null };
+    if (current) return { addressee: current, via: 'sender', outboxId: null, threadId: null, messageRowId: null };
   }
   return null;
 }

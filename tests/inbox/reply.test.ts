@@ -138,6 +138,25 @@ describe('sendReply', () => {
   });
 });
 
+describe('a reply and the questions after it (QA finding 2)', () => {
+  it('leaves a later question waiting, whether the reply goes now or on a retry', async () => {
+    const { concertId, registrationId } = await party();
+    const first = await inbound({ registrationId, minutesAgo: 30 });
+    const later = await inbound({ registrationId, minutesAgo: 1 });
+    await sendReply({ concertId, messageId: first.messageId, body: 'Answering the first.', actorId: ADMIN, transport: capturing() });
+
+    const rows = await sql<{ id: string; handled: boolean }[]>`
+      select id, handled_at is not null as handled from email_messages where direction = 'INBOUND' order by message_at`;
+    expect(rows.map((r) => [Number(r.id), r.handled])).toEqual([
+      [first.messageId, true],
+      [later.messageId, false],
+    ]);
+    const [flag] = await sql<{ flag_reply_waiting: boolean }[]>`
+      select flag_reply_waiting from party_pipeline where registration_id = ${registrationId}`;
+    expect(flag.flag_reply_waiting).toBe(true);
+  });
+});
+
 describe('markHandled', () => {
   it('clears this reply and the ones before it, not a later one', async () => {
     const { concertId, registrationId } = await party();

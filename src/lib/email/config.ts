@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { env } from '@/lib/env';
-import { createSmtpTransport, type MailTransport, type SmtpConfig } from './transport';
+import { createSmtpTransport, type MailTransport, type SmtpConfig } from '@/lib/mail/transport';
 
 /**
  * Where the transport points, and the one place Gmail's coordinates are written

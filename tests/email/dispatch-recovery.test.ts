@@ -11,7 +11,7 @@ import {
 import { MAX_DISPATCH_SECONDS, dispatchBatch } from '@/lib/email/dispatch';
 import { blastSplit, queueBlast } from '@/lib/email/queue';
 import { issueTickets } from '@/lib/tickets/issue';
-import type { MailTransport } from '@/lib/email/transport';
+import type { MailTransport } from '@/lib/mail/transport';
 
 /**
  * The properties an independent QA pass found were **defended by clauses no test

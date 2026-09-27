@@ -27,6 +27,22 @@ export type OutgoingMessage = {
   html: string;
   text: string;
   attachments?: OutgoingAttachment[];
+  /**
+   * The headers that let a reply or a bounce find its way back (spec/v3.md
+   * §26.2). All optional, so a caller that does not thread still sends.
+   */
+  threading?: OutgoingThreading;
+};
+
+export type OutgoingThreading = {
+  /** Our own `Message-ID`, angle brackets included. Build it with `makeMessageId()`. */
+  messageId?: string;
+  /** Where a reply should go. The plus-addressed mailbox, from `plusAddress()`. */
+  replyTo?: string;
+  /** The message this one answers, for a reply a person wrote (§26.6). */
+  inReplyTo?: string;
+  /** The whole chain, oldest first, ending with `inReplyTo`. */
+  references?: string[];
 };
 
 export type OutgoingAttachment = {
@@ -83,8 +99,13 @@ function fromHeader(user: string, displayName: string): string {
 }
 
 function toNodemailerMessage(message: OutgoingMessage, from: string) {
+  const t = message.threading;
   return {
     from,
+    ...(t?.messageId ? { messageId: t.messageId } : {}),
+    ...(t?.replyTo ? { replyTo: t.replyTo } : {}),
+    ...(t?.inReplyTo ? { inReplyTo: t.inReplyTo } : {}),
+    ...(t?.references?.length ? { references: t.references } : {}),
     to: message.toName ? `"${message.toName.replace(/"/g, '')}" <${message.to}>` : message.to,
     subject: message.subject,
     text: message.text,

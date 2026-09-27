@@ -21,7 +21,7 @@ import { queueBlast, blastSplit } from '@/lib/email/queue';
 import { dispatchBatch } from '@/lib/email/dispatch';
 import { editTemplateAndRerender, markDelivered } from '@/lib/email/mutations';
 import { issueTickets } from '@/lib/tickets/issue';
-import type { MailTransport, OutgoingMessage, SendResult } from '@/lib/email/transport';
+import type { MailTransport, OutgoingMessage, SendResult } from '@/lib/mail/transport';
 
 process.env.APP_URL ??= 'https://zetix.vercel.app';
 

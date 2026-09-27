@@ -7,7 +7,7 @@ import { buildPartyAttachments, encodedSizeBytes, UnissuedTicketError } from './
 import { createConfiguredTransport } from './config';
 import { markdownToEmailHtml, markdownToPlainText } from './render';
 import { carriesTickets, TICKET_FOOTER } from './templates';
-import type { MailTransport } from './transport';
+import type { MailTransport } from '@/lib/mail/transport';
 
 /**
  * The dispatcher (spec/email.md §11.2).

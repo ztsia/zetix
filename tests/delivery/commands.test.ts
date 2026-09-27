@@ -5,7 +5,7 @@ import { previewCommand, startCommand } from '@/lib/commands/runner';
 import { getCommand } from '@/lib/commands/registry';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
 import { dispatchBatch } from '@/lib/email/dispatch';
-import type { MailTransport, OutgoingMessage } from '@/lib/email/transport';
+import type { MailTransport, OutgoingMessage } from '@/lib/mail/transport';
 import { createRegistration, type NewSeat } from '@/lib/registrations/mutations';
 import type { AudienceFilter } from '@/lib/audience/filter';
 

@@ -4,7 +4,7 @@ import {
   createStreamTransport,
   type MailTransport,
   type OutgoingMessage,
-} from '@/lib/email/transport';
+} from '@/lib/mail/transport';
 import { startSmtpSink, type Sink } from '../helpers/smtp-sink';
 
 /**

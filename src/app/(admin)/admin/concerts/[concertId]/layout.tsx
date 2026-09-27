@@ -2,8 +2,10 @@ import { notFound } from 'next/navigation';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { concerts } from '@/db/schema/concerts';
+import { resolveSetting } from '@/db/settings';
 import { outboxBacklog } from '@/lib/email/dispatch';
 import { QueueScope } from '../../blast-queue';
+import { InboxAutoSync } from './inbox/reply-controls';
 
 /**
  * Everything under a concert.
@@ -32,11 +34,20 @@ export default async function ConcertLayout({
 
   // The shell's queue banner counts this concert's messages, not every
   // concert's (spec/v3.md §24.5, `local.md` §14.1).
-  const backlog = await outboxBacklog(id);
+  const [backlog, tickMinutes] = await Promise.all([
+    outboxBacklog(id),
+    resolveSetting<number>('scheduler.tick_minutes'),
+  ]);
 
   return (
     <>
       <QueueScope concertId={id} backlog={backlog} />
+      {/*
+        While the console is open it reads the mailbox itself, on the
+        scheduler's own interval (spec/v3.md §26.3), so replies arrive even
+        where pg_cron has not been set up. Unset interval: the tick alone.
+      */}
+      <InboxAutoSync concertId={id} everyMinutes={typeof tickMinutes === 'number' ? tickMinutes : null} />
       {children}
     </>
   );

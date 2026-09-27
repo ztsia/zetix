@@ -59,6 +59,7 @@ import {
   formatter,
 } from '../badges';
 import { COMMAND_ENTRIES, entry, useRunCommand } from '../command-host';
+import { ReplyControls } from '../../inbox/reply-controls';
 
 /**
  * The party record (spec/v3.md §22.4) — a full page, because it is where the
@@ -786,6 +787,9 @@ function Conversation({
             </p>
           )}
           {m.bounce && <p className="text-destructive text-sm">{m.bounce}</p>}
+          {m.direction === 'INBOUND' && !m.isBounce && m.key.startsWith('inbox:') && (
+            <ReplyControls concertId={concertId} messageId={Number(m.key.slice('inbox:'.length))} waiting={!m.handledAt} />
+          )}
         </li>
       ))}
     </ol>

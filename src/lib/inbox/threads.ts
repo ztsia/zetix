@@ -95,15 +95,24 @@ export async function appendMessage(db: Executor, m: NewMessage): Promise<number
 
 /**
  * Marks every waiting reply in a thread handled (§26.5): an admin replied, or
- * said it needs no answer. `upTo` limits it to replies that arrived before the
- * answer did — a reply that lands after the admin wrote back is a new question.
+ * said it needs no answer. `upTo` limits it to replies that arrived no later
+ * than a moment, or than a given message — a reply that lands after the answer
+ * is a new question.
+ *
+ * A message bound is compared in SQL, never through a JS `Date`: Postgres
+ * keeps microseconds and a `Date` does not, so "up to this message" rebuilt
+ * from its own timestamp would leave that very message out.
  */
 export async function markThreadHandled(
   db: Executor,
   threadId: number,
   by: string | null,
-  upTo: Date = new Date(),
+  upTo: Date | { messageId: number } = new Date(),
 ): Promise<number> {
+  const bound =
+    upTo instanceof Date
+      ? sql`${upTo.toISOString()}::timestamptz`
+      : sql`(select message_at from email_messages where id = ${upTo.messageId})`;
   const rows = await db.execute<{ id: string }>(sql`
     update email_messages
        set handled_at = now(), handled_by = ${by}, updated_at = now()
@@ -112,7 +121,7 @@ export async function markThreadHandled(
        and not is_bounce
        and handled_at is null
        and deleted_at is null
-       and message_at <= ${upTo.toISOString()}::timestamptz
+       and message_at <= ${bound}
     returning id`);
   return rows.length;
 }

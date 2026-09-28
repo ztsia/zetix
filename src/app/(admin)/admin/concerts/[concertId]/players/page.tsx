@@ -9,6 +9,8 @@ import { getConcertHeader } from '../shows/queries';
 import { PlayerImportDialog } from './import-dialog';
 import { PlayerFormDialog } from './player-form-dialog';
 import { PlayersTable, type PlayerRow } from './players-table';
+import { InvitePlayersButton, type InviteFormOption } from './invite-button';
+import { sql } from 'drizzle-orm';
 import { AdminOnly } from '@/components/auth/role';
 import { maskForRole } from '@/lib/auth/mask';
 import { requireRole } from '@/lib/auth/guards';
@@ -54,6 +56,22 @@ export default async function PlayersPage({ params }: { params: Promise<{ concer
 
   const active = rows.filter((row) => row.isActive).length;
 
+  // The player forms an invite can link to (spec/v3.md §25.2).
+  const inviteForms: InviteFormOption[] = (
+    await getDb().execute<{ id: string; title: string; show_name: string; segment_name: string; status: string }>(sql`
+      select f.id, f.title, s.name as show_name, g.name as segment_name, f.status::text as status
+        from registration_forms f
+        join show_segments g on g.id = f.segment_id
+        join shows s on s.id = g.show_id
+       where s.concert_id = ${concertId} and f.kind = 'PLAYER' and f.deleted_at is null
+       order by s.starts_at nulls last, f.id
+    `)
+  ).map((form) => ({
+    id: Number(form.id),
+    label: `${form.title} — ${form.show_name} · ${form.segment_name}`,
+    open: form.status === 'OPEN',
+  }));
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -67,6 +85,7 @@ export default async function PlayersPage({ params }: { params: Promise<{ concer
         </div>
         <AdminOnly>
           <div className="flex flex-wrap gap-2">
+            <InvitePlayersButton concertId={concertId} forms={inviteForms} />
             <PlayerImportDialog
               concertId={concertId}
               trigger={

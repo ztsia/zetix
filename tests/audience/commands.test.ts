@@ -47,7 +47,9 @@ async function party(
   const { registrationId } = await createRegistration({
     segmentId,
     contactName: opts.name ?? 'Party',
-    contactEmail: 'party@example.test',
+    // One address per name: parties sharing an address are possible duplicates
+    // since V3 (spec/v3.md §25.5), which would flag every party here.
+    contactEmail: `${(opts.name ?? 'party').toLowerCase().replace(/\W+/g, '-')}@example.test`,
     seats: seats(n, type, opts.name ?? 'Guest'),
     requestedAt: opts.requestedAt ?? null,
     playerId: opts.playerId ?? null,

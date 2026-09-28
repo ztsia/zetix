@@ -14,6 +14,7 @@ import { requireRole } from '@/lib/auth/guards';
 import { FORM_KINDS, parseFormSchema, type FormKind } from '@/lib/forms/schema';
 import { blankFormSchema } from '@/lib/forms/templates';
 import { slugify } from '../../form-state';
+import { RESERVED_FORM_SLUGS, RESERVED_SLUG_MESSAGE } from '@/lib/forms/slugs';
 import type { FormState } from '../../form-state';
 
 /**
@@ -243,6 +244,7 @@ export async function createFormAction(
   if (!slug) {
     return { error: 'That title produces an empty link. Add a slug, or use letters in the title.' };
   }
+  if (RESERVED_FORM_SLUGS.has(slug)) return { error: RESERVED_SLUG_MESSAGE };
 
   try {
     const [created] = await db
@@ -364,6 +366,7 @@ const settingsSchema = z.object({
   maxResponses: optionalCount,
   oneResponsePerIdentity: checkbox,
   autoCloseOnCapacity: checkbox,
+  waitlistWhenFull: checkbox,
 });
 
 /** The form's own settings — its window, its limits and its confirmation copy (§8.3). */
@@ -403,9 +406,15 @@ export async function saveFormSettingsAction(
   if (opensAt && closesAt && closesAt <= opensAt) {
     return { error: 'The form would close before it opened.' };
   }
+  // Two answers to one question — what a full segment does to this form
+  // (spec/v3.md §25.6) — so only one may be chosen.
+  if (values.autoCloseOnCapacity && values.waitlistWhenFull) {
+    return { error: 'Choose one: stop taking responses when full, or take waitlist requests when full.' };
+  }
 
   const slug = slugify(values.slug);
   if (!slug) return { error: 'That link is empty once tidied. Use letters, digits and dashes.' };
+  if (RESERVED_FORM_SLUGS.has(slug)) return { error: RESERVED_SLUG_MESSAGE };
 
   try {
     await getDb()
@@ -420,6 +429,7 @@ export async function saveFormSettingsAction(
         maxResponses: values.maxResponses,
         oneResponsePerIdentity: values.oneResponsePerIdentity,
         autoCloseOnCapacity: values.autoCloseOnCapacity,
+        waitlistWhenFull: values.waitlistWhenFull,
       })
       .where(eq(registrationForms.id, formId));
 
@@ -606,6 +616,7 @@ export async function startNewRoundAction(
       maxResponses: registrationForms.maxResponses,
       oneResponsePerIdentity: registrationForms.oneResponsePerIdentity,
       autoCloseOnCapacity: registrationForms.autoCloseOnCapacity,
+      waitlistWhenFull: registrationForms.waitlistWhenFull,
     })
     .from(registrationForms)
     .where(eq(registrationForms.id, formId))
@@ -614,6 +625,7 @@ export async function startNewRoundAction(
 
   const slug = slugify(parsed.data.slug ?? `${full.title} ${roundLabel}`);
   if (!slug) return { error: 'That round produces an empty link. Give it a slug.' };
+  if (RESERVED_FORM_SLUGS.has(slug)) return { error: RESERVED_SLUG_MESSAGE };
 
   try {
     const created = await db.transaction(async (tx) => {
@@ -635,6 +647,7 @@ export async function startNewRoundAction(
           maxResponses: full.maxResponses,
           oneResponsePerIdentity: full.oneResponsePerIdentity,
           autoCloseOnCapacity: full.autoCloseOnCapacity,
+          waitlistWhenFull: full.waitlistWhenFull,
           status: 'DRAFT',
         })
         .returning({ id: registrationForms.id });

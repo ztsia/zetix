@@ -10,6 +10,9 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/co
 import { formatInZone } from '@/lib/export';
 import { FormCreateDialog } from './form-create-dialog';
 import { getConcertHeader, getFormParents, getFormsForConcert, type FormListRow } from './queries';
+import { CopyLinkButton } from './[formId]/copy-link-button';
+import { FunnelLine } from './form-funnel';
+import { formFunnels } from '@/lib/intake/funnel';
 
 export const metadata: Metadata = { title: 'Forms' };
 
@@ -56,6 +59,7 @@ export default async function FormsPage({
     getFormParents(concertId),
   ]);
 
+  const funnelOf = new Map((await formFunnels(concertId)).map((funnel) => [funnel.id, funnel]));
   const byShow = new Map<number, { name: string; forms: FormListRow[] }>();
   for (const form of forms) {
     const entry = byShow.get(form.showId) ?? { name: form.showName, forms: [] };
@@ -121,13 +125,23 @@ export default async function FormsPage({
                   <ItemDescription>
                     {form.segmentName ? `${form.segmentName} · ` : ''}
                     /f/{form.slug} · v{form.schemaVersion} ·{' '}
-                    {form.responses === 1 ? '1 response' : `${form.responses} responses`}
+                    {funnelOf.get(form.id) ? (
+                      <FunnelLine funnel={funnelOf.get(form.id)!} />
+                    ) : form.responses === 1 ? (
+                      '1 response'
+                    ) : (
+                      `${form.responses} responses`
+                    )}
                     {form.opensAt && ` · opens ${formatInZone(form.opensAt, zone)}`}
                     {form.closesAt && ` · closes ${formatInZone(form.closesAt, zone)}`}
                   </ItemDescription>
                 </ItemContent>
 
                 <ItemActions>
+                  {/* One public link per form, for WhatsApp (spec/v3.md §25.1). */}
+                  {form.kind !== 'FEEDBACK' && (
+                    <CopyLinkButton slug={form.slug} live={form.status === 'OPEN'} appUrl={process.env.APP_URL ?? null} />
+                  )}
                   {form.status === 'OPEN' && (
                     <Button
                       variant="ghost"

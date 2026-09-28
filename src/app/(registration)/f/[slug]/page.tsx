@@ -4,8 +4,11 @@ import { segmentPool } from '@/db/allocation';
 import { resolveSetting } from '@/db/settings';
 import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
 import { loadFormBySlug } from '@/lib/forms/load';
-import { resolveRegistrant } from '@/lib/forms/registrant';
+import { resolveRegistrant, rosterForPicker } from '@/lib/forms/registrant';
 import { seatIndicator } from '@/lib/forms/seat-indicator';
+import { ThemedForm } from '@/components/forms/themed-form';
+import { bannerUrl } from '@/lib/forms/banner';
+import { parseTheme } from '@/lib/forms/theme';
 import { RegistrationForm } from './registration-form';
 import {
   FormClosed,
@@ -181,13 +184,32 @@ export default async function RegistrationFormPage({
    * a promise the engine would have kept. `extras_pool` reaching zero only means
    * there is nothing left *for extras*.
    */
-  const playerOwedBase = registrant.kind === 'PLAYER' && Object.keys(form.limits).length > 0;
-  if (indicator?.state === 'FULL' && !playerOwedBase) {
+  /**
+   * The picker (spec/v3.md §25.2): a player form reached without a resolved
+   * `?k=` token names its inviting player from the roster. The token stays as
+   * the prefilled shortcut from the optional invite email.
+   */
+  const roster =
+    form.kind === 'PLAYER' && registrant.kind !== 'PLAYER' && form.segmentId !== null
+      ? await rosterForPicker(form.concertId, form.segmentId)
+      : null;
+
+  const playerOwedBase =
+    (registrant.kind === 'PLAYER' && Object.keys(form.limits).length > 0) ||
+    (roster?.some((player) => (player.remaining ?? 0) > 0) ?? false);
+  /**
+   * Waitlist mode (spec/v3.md §25.6) keeps a full form open: requests are
+   * taken, and the engine waitlists them.
+   */
+  const waitlist = indicator?.state === 'FULL' && !playerOwedBase && form.waitlistWhenFull;
+  if (indicator?.state === 'FULL' && !playerOwedBase && !waitlist) {
     return <FormFull title={form.title} />;
   }
 
+  const theme = parseTheme(form.theme);
   return (
-    <RegistrationForm
+    <ThemedForm theme={theme} bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}>
+      <RegistrationForm
         title={form.title}
         description={form.description}
         slug={form.slug}
@@ -209,6 +231,9 @@ export default async function RegistrationFormPage({
          * away from a form they could have filled in.
          */
         unknownToken={registrant.kind === 'UNKNOWN_TOKEN'}
+        roster={roster}
+        waitlist={waitlist}
       />
+    </ThemedForm>
   );
 }

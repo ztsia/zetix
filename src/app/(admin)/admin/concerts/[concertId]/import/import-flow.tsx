@@ -3,17 +3,6 @@
 import * as React from 'react';
 import { Check, CircleAlert, FileSpreadsheet, Loader2, Lock, Save, Upload } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
@@ -43,14 +32,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Spinner } from '@/components/ui/spinner';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { defaultProfileFor } from '@/lib/import/template';
 import { parseMappingProfile } from '@/lib/import/profile';
-import { liveParties } from '@/lib/import/plan';
-import { DryRunReport } from './dry-run-report';
+import { useRouter } from 'next/navigation';
 import { PrepareStep } from './prepare-step';
-import type { InspectResponse, PlanResponse, RosterPlayer } from './types';
+import { detectSeatGroups, type DetectedSeatGroup } from './seat-groups';
+import type { InspectResponse } from './types';
 
 export type SegmentOption = {
   segmentId: number;
@@ -77,8 +67,7 @@ const STEPS = [
   'Choose file and segment',
   'Sheet and header row',
   'Map columns',
-  'Dry run',
-  'Commit',
+  'Stage',
 ] as const;
 
 type Mapping = {
@@ -125,18 +114,12 @@ const PLAYER_MATCH_LABELS: Record<PlayerMatchStrategy, string> = {
 export function ImportFlow({
   concertId,
   segments,
-  timeZone,
   playerEmails,
-  roster,
 }: {
   concertId: number;
   segments: SegmentOption[];
-  /** The concert's zone, never the viewer's (`CLAUDE.md`). */
-  timeZone: string;
   /** Active players on this concert, and how many of them have an email. */
   playerEmails: { total: number; withEmail: number };
-  /** Active players, for correcting a match on the dry run (§9.3). */
-  roster: RosterPlayer[];
 }) {
   const [step, setStep] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
@@ -162,17 +145,6 @@ export function ImportFlow({
     strategy: PlayerMatchStrategy;
   } | null>(null);
 
-  /**
-   * Player decisions taken on the dry run, keyed by the cell value they were
-   * made against (§9.3).
-   *
-   * Held here rather than in the report, because the commit re-plans from the
-   * file and has to send them too — a commit that dropped them would silently
-   * reinstate every block the admin had just cleared, under a button that says
-   * how many registrations it is about to write.
-   */
-  const [playerOverrides, setPlayerOverrides] = React.useState<Record<string, number>>({});
-
   const [allocationMode, setAllocationMode] = React.useState<AllocationMode>('UNIFORM');
   const [uniformType, setUniformType] = React.useState<'BASE' | 'EXTRA'>('EXTRA');
   const [valueMap, setValueMap] = React.useState<Record<string, 'BASE' | 'EXTRA' | ''>>({});
@@ -189,9 +161,16 @@ export function ImportFlow({
   const [profileName, setProfileName] = React.useState('');
   const [saved, setSaved] = React.useState<string | null>(null);
 
-  const [plan, setPlan] = React.useState<PlanResponse | null>(null);
-  const [confirmation, setConfirmation] = React.useState('');
-  const [committed, setCommitted] = React.useState<PlanResponse | null>(null);
+  const router = useRouter();
+  /**
+   * A wide sheet's repeating guest columns (spec/v3.md §25.7): proposed from
+   * the headers, each one on or off, and whether the contact is a seat too.
+   */
+  const [wide, setWide] = React.useState(false);
+  const [seatGroups, setSeatGroups] = React.useState<(DetectedSeatGroup & { on: boolean })[]>([]);
+  const [registrantSeat, setRegistrantSeat] = React.useState(false);
+  /** Receipts for this batch's new parties (§25.3) — off: Google already confirmed. */
+  const [queueReceipts, setQueueReceipts] = React.useState(false);
 
   const segment = segments.find((s) => String(s.segmentId) === segmentId) ?? null;
   const isPublic = segment?.audienceMode === 'PUBLIC';
@@ -314,7 +293,7 @@ export function ImportFlow({
     }
   }
 
-  async function post(action: 'inspect' | 'dry-run' | 'commit', extra: Record<string, string> = {}) {
+  async function post(action: 'inspect' | 'stage', extra: Record<string, string> = {}) {
     if (!file || !segmentId) return null;
     const body = new FormData();
     body.set('action', action);
@@ -352,6 +331,9 @@ export function ImportFlow({
     setSheet(json.sheet);
     setHeaderRow(json.headerRow);
     setMapping((current) => current ?? { ...json.suggested });
+    const groups = detectSeatGroups(json.headers);
+    setSeatGroups(groups.map((group) => ({ ...group, on: true })));
+    setWide((current) => current || groups.length >= 2);
     return json;
   }
 
@@ -381,10 +363,19 @@ export function ImportFlow({
           : null,
       allocation_type_values: values,
       default_allocation_type: effectiveType,
+      seat_groups: wide
+        ? seatGroups
+            .filter((group) => group.on)
+            .map((group) => ({ attendee_name: group.name, attendee_email: group.email }))
+        : [],
+      registrant_seat: wide && registrantSeat,
     });
   }
 
-  const mappingComplete = Boolean(mapping?.requested_at && mapping?.contact_name);
+  // The timestamp is optional since V3 (spec/v3.md §25.7): without it, file
+  // order is the first-come order.
+  const mappingComplete =
+    Boolean(mapping?.contact_name) && (!wide || registrantSeat || seatGroups.some((group) => group.on));
   /**
    * `[].every(...)` is `true`, so an empty value list used to let Continue pass
    * with nothing mapped at all — the vacuous case, and the one that reaches the
@@ -470,11 +461,10 @@ export function ImportFlow({
                     setFile(e.target.files?.[0] ?? null);
                     setInspect(null);
                     setMapping(null);
-                    setPlan(null);
                   }}
                 />
                 <FieldDescription>
-                  .xlsx or .csv, one row per attendee. Up to 5MB.
+                  .xlsx or .csv — one row per attendee, or one per party with guests across columns. Up to 5MB.
                 </FieldDescription>
               </Field>
 
@@ -601,7 +591,7 @@ export function ImportFlow({
                 <FieldGroup className="max-w-2xl">
                   {(
                     [
-                      ['requested_at', 'Timestamp', true],
+                      ['requested_at', 'Timestamp (optional — file order otherwise)', false],
                       ['contact_name', 'Contact name', true],
                       ['contact_email', 'Contact email', false],
                       ['attendee_name', 'Attendee name', false],
@@ -648,6 +638,49 @@ export function ImportFlow({
                       will otherwise become its own registration.
                     </AlertDescription>
                   </Alert>
+                ) : null}
+              </FieldSet>
+
+              <FieldSet>
+                <FieldLegend>Guests across columns</FieldLegend>
+                <FieldDescription>
+                  A wide sheet puts each guest in columns of their own — Guest 1 Name, Guest 2 Name, and so
+                  on. Each group becomes a row of its own in the staging grid, where every derived row can be
+                  checked and edited before anything is written.
+                </FieldDescription>
+                <Field orientation="horizontal" className="mt-2">
+                  <Switch id="wide" checked={wide} onCheckedChange={(checked: boolean) => setWide(checked)} />
+                  <FieldLabel htmlFor="wide">Guests are in repeating columns</FieldLabel>
+                </Field>
+                {wide ? (
+                  <div className="mt-3 flex max-w-2xl flex-col gap-2">
+                    {seatGroups.length === 0 ? (
+                      <p className="text-muted-foreground text-sm">
+                        No repeating guest columns were found in this sheet&rsquo;s headers.
+                      </p>
+                    ) : (
+                      seatGroups.map((group, index) => (
+                        <label key={group.name} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={group.on}
+                            onCheckedChange={(checked: boolean) =>
+                              setSeatGroups(seatGroups.map((g, i) => (i === index ? { ...g, on: checked } : g)))
+                            }
+                          />
+                          <span className="font-medium">{group.name}</span>
+                          {group.email ? <span className="text-muted-foreground">with {group.email}</span> : null}
+                        </label>
+                      ))
+                    )}
+                    <Field orientation="horizontal" className="mt-1">
+                      <Switch
+                        id="registrant-seat"
+                        checked={registrantSeat}
+                        onCheckedChange={(checked: boolean) => setRegistrantSeat(checked)}
+                      />
+                      <FieldLabel htmlFor="registrant-seat">The contact is a seat too</FieldLabel>
+                    </Field>
+                  </div>
                 ) : null}
               </FieldSet>
 
@@ -916,70 +949,28 @@ export function ImportFlow({
             </div>
           ) : null}
 
-          {step === 4 && plan ? (
-            <DryRunReport
-              plan={plan}
-              timeZone={timeZone}
-              roster={roster}
-              overrides={playerOverrides}
-              onOverride={(needle, playerId) =>
-                setPlayerOverrides((current) => {
-                  if (playerId == null) {
-                    const rest = { ...current };
-                    delete rest[needle];
-                    return rest;
-                  }
-                  return { ...current, [needle]: playerId };
-                })
-              }
-              // Re-planning is the only honest way to show the effect: the plan
-              // on screen was computed without these choices, and seat counts,
-              // promotions and the pool all move when a party stops being
-              // skipped.
-              onRerun={async () => {
-                const json = (await post('dry-run', {
-                  profile: buildProfile(),
-                  playerOverrides: JSON.stringify(playerOverrides),
-                })) as PlanResponse | null;
-                if (json) setPlan(json);
-              }}
-              busy={busy}
-            />
-          ) : null}
-
-          {step === 5 ? (
-            committed?.outcome ? (
-              <Alert>
-                <Check />
-                <AlertTitle>Imported</AlertTitle>
-                <AlertDescription>
-                  <p>
-                    {committed.outcome.createdRegistrations} registrations and{' '}
-                    {committed.outcome.createdAttendees} attendees created.{' '}
-                    {committed.outcome.granted.base} base and {committed.outcome.granted.extra}{' '}
-                    extra seats confirmed
-                    {committed.outcome.granted.pending > 0
-                      ? `, ${committed.outcome.granted.pending} held for review`
-                      : ''}
-                    {committed.outcome.granted.waitlisted > 0
-                      ? `, ${committed.outcome.granted.waitlisted} waitlisted`
-                      : ''}
-                    .
-                    {committed.outcome.skippedParties > 0
-                      ? ` ${committed.outcome.skippedParties} parties were skipped.`
-                      : ''}
-                  </p>
-                  <p className="mt-2">
-                    Batch #{committed.outcome.batchId}. Corrections from here are made in the
-                    registrations screen, not in the spreadsheet.
-                  </p>
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <div className="text-muted-foreground flex items-center gap-2 text-sm">
-                <Spinner /> Committing…
-              </div>
-            )
+          {step === 4 ? (
+            <div className="flex max-w-2xl flex-col gap-4">
+              <p className="text-sm">
+                The rows land in the staging grid for <strong>{segment?.segmentName}</strong>, one per seat.
+                Nothing is written to any party until you commit — and you commit the parties that are
+                ready, fixing the rest in the grid.
+              </p>
+              <Field orientation="horizontal">
+                <Switch
+                  id="queue-receipts"
+                  checked={queueReceipts}
+                  onCheckedChange={(checked: boolean) => setQueueReceipts(checked)}
+                />
+                <div className="flex flex-col gap-0.5">
+                  <FieldLabel htmlFor="queue-receipts">Send each new party a receipt</FieldLabel>
+                  <FieldDescription>
+                    Off by default: people who answered a Google Form already had Google&rsquo;s own
+                    confirmation.
+                  </FieldDescription>
+                </div>
+              </Field>
+            </div>
           ) : null}
         </CardContent>
 
@@ -987,7 +978,7 @@ export function ImportFlow({
           <Button
             variant="ghost"
             onClick={() => setStep((s) => Math.max(0, s - 1))}
-            disabled={step === 0 || busy || step === 5}
+            disabled={step === 0 || busy}
           >
             Back
           </Button>
@@ -1025,83 +1016,26 @@ export function ImportFlow({
             {step === 3 ? (
               <Button
                 disabled={busy || !mappingComplete || !allocationComplete}
-                onClick={async () => {
-                  const json = (await post('dry-run', {
-                    profile: buildProfile(),
-                    playerOverrides: JSON.stringify(playerOverrides),
-                  })) as PlanResponse | null;
-                  if (json) {
-                    setPlan(json);
-                    setStep(4);
-                  }
-                }}
+                onClick={() => setStep(4)}
               >
-                <FileSpreadsheet />
-                Dry run
+                Continue
               </Button>
             ) : null}
 
-            {step === 4 && plan ? (
-              <AlertDialog>
-                <AlertDialogTrigger render={<span />}>
-                  <Button
-                    disabled={
-                      busy ||
-                      liveParties(plan.parties).length === 0 ||
-                      // Any blocking finding, not only a file-level one (§9.6).
-                      // The server refuses the same commit independently; this
-                      // is the half that stops the admin reaching for it.
-                      plan.counts.blocking > 0
-                    }
-                  >
-                    Commit {liveParties(plan.parties).length} registrations
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>This cannot be undone</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {liveParties(plan.parties).length} registrations and{' '}
-                      {plan.counts.seats} attendees will be created in{' '}
-                      <strong>{segment?.segmentName}</strong>.
-                      {plan.counts.skippedParties > 0
-                        ? ` ${plan.counts.skippedParties} ${plan.counts.skippedParties === 1 ? 'party is' : 'parties are'} already imported and will be skipped.`
-                        : ''}{' '}
-                      There is no rollback and no re-sync: after this, corrections are made here
-                      rather than in the spreadsheet.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <div className="space-y-2">
-                    <FieldLabel htmlFor="confirm">
-                      Type <strong>{segment?.segmentName}</strong> to confirm
-                    </FieldLabel>
-                    <Input
-                      id="confirm"
-                      value={confirmation}
-                      onChange={(e) => setConfirmation(e.target.value)}
-                      autoComplete="off"
-                    />
-                  </div>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={confirmation.trim() !== segment?.segmentName}
-                      onClick={async () => {
-                        setStep(5);
-                        const json = (await post('commit', {
-                          profile: buildProfile(),
-                          confirmation,
-                          playerOverrides: JSON.stringify(playerOverrides),
-                        })) as PlanResponse | null;
-                        if (json) setCommitted(json);
-                        else setStep(4);
-                      }}
-                    >
-                      Import
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+            {step === 4 ? (
+              <Button
+                disabled={busy}
+                onClick={async () => {
+                  const json = (await post('stage', {
+                    profile: buildProfile(),
+                    queueReceipts: String(queueReceipts),
+                  })) as { batchId: number } | null;
+                  if (json) router.push(`/admin/concerts/${concertId}/import/${json.batchId}`);
+                }}
+              >
+                <FileSpreadsheet />
+                Stage rows
+              </Button>
             ) : null}
           </div>
         </CardFooter>

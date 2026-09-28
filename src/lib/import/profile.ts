@@ -37,7 +37,11 @@ const configSchema = z
 
     columns: z
       .object({
-        requested_at: z.string().min(1),
+        /**
+         * Optional since V3 (spec/v3.md §25.7): without it, file order is the
+         * first-come order. It matters only for extras.
+         */
+        requested_at: column,
         contact_name: z.string().min(1),
         contact_email: column,
         attendee_name: column,
@@ -47,6 +51,26 @@ const configSchema = z
         group_key: column,
       })
       .strict(),
+
+    /**
+     * A wide sheet's repeating guest columns (spec/v3.md §25.7, decision 49):
+     * each group is one seat per line, and a line with any of the group's
+     * cells filled becomes a row of its own in the staging grid.
+     */
+    seat_groups: z
+      .array(
+        z
+          .object({
+            attendee_name: z.string().min(1),
+            attendee_email: column,
+            /** A fixed type for the group; null uses the type column or the default. */
+            allocation_type: z.enum(['BASE', 'EXTRA']).nullable().optional().default(null),
+          })
+          .strict(),
+      )
+      .default([]),
+    /** The contact is a seat of the party too, as on a public form (decision 36). */
+    registrant_seat: z.boolean().default(false),
 
     player_match: z
       .object({
@@ -92,7 +116,7 @@ export type MappingProfile = {
   sheet: string | null;
   headerRow: number;
   columns: {
-    requestedAt: string;
+    requestedAt: string | null;
     contactName: string;
     contactEmail: string | null;
     attendeeName: string | null;
@@ -100,6 +124,8 @@ export type MappingProfile = {
     allocationType: string | null;
     groupKey: string | null;
   };
+  seatGroups: { attendeeName: string; attendeeEmail: string | null; allocationType: AllocationChoice | null }[];
+  registrantSeat: boolean;
   playerMatch: { column: string; strategy: PlayerMatchStrategy } | null;
   allocationTypeValues: Record<AllocationChoice, string[]>;
   defaultAllocationType: AllocationChoice;
@@ -125,6 +151,12 @@ export function parseMappingProfile(input: unknown): MappingProfile {
       allocationType: c.columns.allocation_type,
       groupKey: c.columns.group_key,
     },
+    seatGroups: c.seat_groups.map((g) => ({
+      attendeeName: g.attendee_name,
+      attendeeEmail: g.attendee_email,
+      allocationType: g.allocation_type,
+    })),
+    registrantSeat: c.registrant_seat,
     playerMatch: c.player_match,
     allocationTypeValues: c.allocation_type_values,
     defaultAllocationType: c.default_allocation_type,
@@ -150,6 +182,12 @@ export function serialiseMappingProfile(p: MappingProfile): StoredMappingProfile
       allocation_type: p.columns.allocationType,
       group_key: p.columns.groupKey,
     },
+    seat_groups: p.seatGroups.map((g) => ({
+      attendee_name: g.attendeeName,
+      attendee_email: g.attendeeEmail,
+      allocation_type: g.allocationType,
+    })),
+    registrant_seat: p.registrantSeat,
     player_match: p.playerMatch,
     allocation_type_values: p.allocationTypeValues,
     default_allocation_type: p.defaultAllocationType,

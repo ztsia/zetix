@@ -394,36 +394,37 @@ describe('requestExtraSeats', () => {
     await setSystemSetting('form.extra_rows_max', 3);
   });
 
-  it('creates a separate registration rather than growing the party', async () => {
+  it('adds the seats to the same party, one party per email (spec/v3.md §25.5)', async () => {
     const { registrationId } = await party(ids, ['Alice Tan']);
 
     const result = await requestExtraSeats('edit-token-1', ['Dana Tan']);
     expect(result).toMatchObject({ requested: 1 });
 
-    // The original party is untouched.
-    expect(await seatsOf(registrationId)).toHaveLength(1);
-
+    expect(await seatsOf(registrationId)).toHaveLength(2);
     const rows = await sql<{ id: number }[]>`
       select id from registrations where segment_id = ${ids.segmentId} and deleted_at is null
     `;
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
   });
 
-  it('puts the new request at the back of the queue', async () => {
+  it('puts the new seats at the back of the queue, and the party back in review', async () => {
     const { registrationId } = await party(ids, ['Alice Tan']);
-    await sql`update registrations set requested_at = now() - interval '7 days' where id = ${registrationId}`;
+    await sql`update registrations set requested_at = now() - interval '7 days', approved_at = now() where id = ${registrationId}`;
+    await sql`update attendees set requested_at = now() - interval '7 days' where registration_id = ${registrationId}`;
 
     await requestExtraSeats('edit-token-1', ['Dana Tan']);
 
-    const rows = await sql<{ id: number; requested_at: string }[]>`
-      select id, requested_at::text from registrations
-       where segment_id = ${ids.segmentId} order by requested_at asc
+    const seats = await sql<{ requested_at: string }[]>`
+      select requested_at::text from attendees where registration_id = ${registrationId} order by id
     `;
-    // The original keeps its early position; the request lands after it.
-    expect(Number(rows[0].id)).toBe(registrationId);
-    expect(new Date(rows[1].requested_at).getTime()).toBeGreaterThan(
-      new Date(rows[0].requested_at).getTime(),
+    // The original seat keeps its early position; the request lands after it.
+    expect(new Date(seats[1].requested_at).getTime()).toBeGreaterThan(
+      new Date(seats[0].requested_at).getTime() + 6 * 24 * 3600_000,
     );
+    const [party_] = await sql<{ approved: boolean }[]>`
+      select approved_at is not null as approved from registrations where id = ${registrationId}
+    `;
+    expect(party_.approved).toBe(false);
   });
 
   it('routes the seats through claim_seats(), so capacity still decides', async () => {

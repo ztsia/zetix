@@ -2,10 +2,12 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { concerts } from '@/db/schema/concerts';
 import { players } from '@/db/schema/people';
 import { shows, showSegments } from '@/db/schema/shows';
 import { ImportFlow, type SegmentOption } from './import-flow';
+import { BatchList } from './batch-list';
+import { listBatches } from '@/lib/import/staging-queries';
+import { getConcertHeader } from '../shows/queries';
 import { ReadOnlyNotice } from '@/components/auth/read-only-notice';
 import { requireRole } from '@/lib/auth/guards';
 
@@ -44,13 +46,6 @@ export default async function ImportPage({
 
   const db = getDb();
 
-  // The concert's zone, for the dry-run export. Never the viewer's (`CLAUDE.md`).
-  const [concert] = await db
-    .select({ timezone: concerts.timezone })
-    .from(concerts)
-    .where(eq(concerts.id, id))
-    .limit(1);
-
   const rows = await db
     .select({
       segmentId: showSegments.id,
@@ -76,20 +71,6 @@ export default async function ImportPage({
    * was loaded from a roster that never had addresses in it — every row blocks
    * with PLAYER_NOT_MATCHED and the reason is two screens away (§9.3).
    */
-  /**
-   * The roster, for the dry run's "choose a different player" picker (§9.3).
-   *
-   * Loaded with the page rather than fetched when the picker opens: it is one
-   * concert's players, it is needed the moment a match needs correcting, and a
-   * round trip at that moment is a round trip in the middle of the admin's
-   * decision.
-   */
-  const rosterRows = await db
-    .select({ id: players.id, fullName: players.fullName })
-    .from(players)
-    .where(and(eq(players.concertId, id), eq(players.isActive, true), isNull(players.deletedAt)))
-    .orderBy(asc(players.fullName));
-
   const [playerCounts] = await db
     .select({
       total: sql<number>`count(*)::int`,
@@ -108,16 +89,20 @@ export default async function ImportPage({
     showName: r.showName,
   }));
 
+  const batches = await listBatches(id);
+  const zone = (await getConcertHeader(id))?.timezone ?? 'UTC';
+
   return (
-    <ImportFlow
-      concertId={id}
-      segments={segments}
-      timeZone={concert?.timezone ?? 'UTC'}
-      playerEmails={{
-        total: Number(playerCounts?.total ?? 0),
-        withEmail: Number(playerCounts?.withEmail ?? 0),
-      }}
-      roster={rosterRows.map((r) => ({ id: r.id, fullName: r.fullName }))}
-    />
+    <div className="flex flex-col gap-6">
+      {batches.length > 0 && <BatchList concertId={id} batches={batches} timeZone={zone} />}
+      <ImportFlow
+        concertId={id}
+        segments={segments}
+        playerEmails={{
+          total: Number(playerCounts?.total ?? 0),
+          withEmail: Number(playerCounts?.withEmail ?? 0),
+        }}
+      />
+    </div>
   );
 }

@@ -54,6 +54,7 @@ export function FormSettings({
     maxResponses: number | null;
     oneResponsePerIdentity: boolean;
     autoCloseOnCapacity: boolean;
+    waitlistWhenFull: boolean;
   };
   timeZone: string | null;
 }) {
@@ -139,6 +140,18 @@ export function FormSettings({
               id={`${id}-auto-close`}
               name="autoCloseOnCapacity"
               defaultChecked={defaults.autoCloseOnCapacity}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="Take waitlist requests when the segment is full"
+            hint="Instead of closing, the form stays open and says it is taking waitlist requests. Seats are offered first come first served as they free up."
+            htmlFor={`${id}-waitlist`}
+          >
+            <Switch
+              id={`${id}-waitlist`}
+              name="waitlistWhenFull"
+              defaultChecked={defaults.waitlistWhenFull}
             />
           </SettingRow>
 

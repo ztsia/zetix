@@ -16,6 +16,8 @@ import { SegmentFormDialog } from './segment-form-dialog';
 import { GenerateFeedbackButton } from './generate-feedback-button';
 import { ShowFormDialog } from './show-form-dialog';
 import type { SegmentView, ShowView } from './queries';
+import type { FormFunnel } from '@/lib/intake/funnel';
+import { SegmentForms } from '../forms/form-funnel';
 import { AdminOnly } from '@/components/auth/role';
 
 const STATUS_VARIANT: Record<ShowView['status'], 'default' | 'secondary' | 'outline'> = {
@@ -37,10 +39,15 @@ export function ShowCard({
   concertId,
   show,
   timeZone,
+  forms = [],
+  appUrl = null,
 }: {
   concertId: number;
   show: ShowView;
   timeZone: string | null;
+  /** This show's registration forms and their funnels (spec/v3.md §25.6). */
+  forms?: FormFunnel[];
+  appUrl?: string | null;
 }) {
   const hall = show.resolved['capacity'];
   const usedModes = new Set(show.segments.map((segment) => segment.audienceMode));
@@ -143,6 +150,8 @@ export function ShowCard({
                   showId={show.id}
                   segment={segment}
                   timeZone={timeZone}
+                  forms={forms.filter((form) => form.segmentId === segment.id)}
+                  appUrl={appUrl}
                 />
               </li>
             ))}
@@ -238,11 +247,15 @@ function SegmentRow({
   showId,
   segment,
   timeZone,
+  forms,
+  appUrl,
 }: {
   concertId: number;
   showId: number;
   segment: SegmentView;
   timeZone: string | null;
+  forms: FormFunnel[];
+  appUrl: string | null;
 }) {
   const { pool } = segment;
 
@@ -294,6 +307,9 @@ function SegmentRow({
             )}
           </div>
         )}
+
+        {/* Its forms, on their parent (spec/v3.md §25.6). */}
+        <SegmentForms concertId={concertId} forms={forms} appUrl={appUrl} />
       </div>
 
       <div className="flex shrink-0 items-center gap-1">

@@ -1,6 +1,9 @@
 import 'server-only';
 import { AUDIENCE_COMMANDS } from '@/lib/audience/commands';
 import { DELIVERY_COMMANDS } from '@/lib/delivery/commands';
+import { INTAKE_DUPLICATE_COMMANDS } from '@/lib/intake/duplicates';
+import { INTAKE_INVITE_COMMANDS } from '@/lib/intake/invite';
+import { IMPORT_COMMANDS } from '@/lib/import/staging-commands';
 import { MESSAGE_COMMANDS } from '@/lib/delivery/messages';
 import { TRASH_COMMANDS } from '@/lib/trash/commands';
 import type { AnyCommand } from './define';
@@ -20,7 +23,15 @@ import { continueCommandRuns, type ContinueSummary } from './runner';
  * different operation: a run paused under the old meaning would be continued
  * under the new one.
  */
-const COMMANDS: readonly AnyCommand[] = [...TRASH_COMMANDS, ...AUDIENCE_COMMANDS, ...DELIVERY_COMMANDS, ...MESSAGE_COMMANDS];
+const COMMANDS: readonly AnyCommand[] = [
+  ...TRASH_COMMANDS,
+  ...AUDIENCE_COMMANDS,
+  ...DELIVERY_COMMANDS,
+  ...MESSAGE_COMMANDS,
+  ...INTAKE_DUPLICATE_COMMANDS,
+  ...INTAKE_INVITE_COMMANDS,
+  ...IMPORT_COMMANDS,
+];
 
 const byName = new Map(COMMANDS.map((command) => [command.name, command]));
 if (byName.size !== COMMANDS.length) {

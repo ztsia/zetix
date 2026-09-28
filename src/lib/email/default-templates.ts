@@ -174,8 +174,12 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, { name: string; subject: str
       '',
       'Thank you — we have your registration for **{{ show.name }}**: {{ attendee_count }} seat(s), for {{ attendee_names }}.',
       '',
+      '{{ verify_section }}',
+      '',
       'Your tickets will follow by email once the organisers have confirmed your registration.',
       'Please check your spam folder if you do not see them, and add this address to your contacts.',
+      '',
+      'To name your guests, correct your email address or give back seats you no longer need, use [your own link]({{ update_url }}).',
     ].join('\n'),
   },
   /** V3 (spec/v3.md §25.2). Player-addressed, so it greets through `{{ player.name }}`. */

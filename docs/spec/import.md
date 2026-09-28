@@ -10,6 +10,13 @@ See [`../modules.md`](../modules.md) for what each label owns and when it runs.
 
 # 9. Spreadsheet import
 
+> **Superseded in part by V3** (`v3.md` §25.7, decision 49). Rows now land in an editable **staging
+> grid** and commit a party at a time; the timestamp is optional; parties group by contact email within
+> the segment; wide sheets map their guest columns as seat groups; a batch can be undone. §9.2's
+> grouping key, §9.4's run-wide blocking rule and §9.6's dry run and one-shot commit describe V1 and
+> were retired with it. Mapping profiles (§9.3), the allocation-type rules (§9.5) and player matching
+> are unchanged.
+
 Needed for historical data and for any concert still collected on Google Forms.
 
 ## 9.1 Flow

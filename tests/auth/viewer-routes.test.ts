@@ -38,6 +38,7 @@ const NOT_SWEPT: Record<string, string> = {
   'portal/[token]/booklet/route.ts': 'a ticket holder, by token',
   'portal/[token]/ticket/route.ts': 'a ticket holder, by token',
   'ticket-assets/[...path]/route.ts GET': 'artwork for the designer a viewer reads; no attendee data',
+  'form-banners/[...path]/route.ts': "a public form's banner image, local backend only",
 };
 
 async function routeFiles(): Promise<string[]> {

@@ -331,6 +331,19 @@ function purgeBlocks(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blocked> {
                   union all`
             : sql``
         }
+        ${
+          kind === 'party'
+            ? sql`select r.merged_into_id as id,
+                         count(*) || ' other part' || case when count(*) = 1 then 'y was' else 'ies were' end
+                           || ' merged into this one. Undo the merge first, or delete '
+                           || case when count(*) = 1 then 'it' else 'them' end
+                           || ' permanently first: their seats are here now.' as reason
+                    from registrations r
+                   where r.merged_into_id = any(${any})
+                   group by r.merged_into_id
+                  union all`
+            : sql``
+        }
         select ${kind === 'party' ? sql`a.registration_id` : sql`a.id`} as id,
                count(*) || ' guest(s) admitted at the door. Undo the check-in first, '
                  || 'or the admission would be erased.' as reason
@@ -350,7 +363,8 @@ function purgeBlocks(tx: Tx, kind: TrashKind, ids: number[]): Promise<Blocked> {
                  case when count(distinct r.id) = 1 then 'y' else 'ies' end ||
                  ' registered through this form. Their responses would be erased.' as reason
           from form_responses fr
-          join registrations r on r.form_response_id = fr.id and r.deleted_at is null
+          join registrations r
+            on (r.id = fr.registration_id or r.form_response_id = fr.id) and r.deleted_at is null
          where fr.form_id = any(${any})
          group by fr.form_id`);
     case 'player':
@@ -555,6 +569,10 @@ async function purgeOne(tx: Tx, kind: TrashKind, id: number, concertId: number) 
         select form_response_id from registrations
          where id = ${id} and form_response_id is not null
         union
+        -- Every response of this party (\`0204\`), including a submission
+        -- merged into it by email.
+        select fr.id from form_responses fr where fr.registration_id = ${id}
+        union
         select fr.supersedes_id from form_responses fr
           join mine m on m.id = fr.id
          where fr.supersedes_id is not null
@@ -574,6 +592,11 @@ async function purgeOne(tx: Tx, kind: TrashKind, id: number, concertId: number) 
       select id from mine
       except
       select id from others
+      except
+      -- A response that has moved to another party — this party was merged
+      -- into it — is that party's record now.
+      select fr.id from form_responses fr
+       where fr.registration_id is not null and fr.registration_id <> ${id}
     `);
     const [counts] = await tx.execute<{ seats: number; messages: number }>(sql`
       select (select count(*)::int from attendees where registration_id = ${id}) as seats,

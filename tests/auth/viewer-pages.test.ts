@@ -203,6 +203,44 @@ describe('every admin page, rendered for a VIEWER', () => {
     });
   }
 
+  it('the import staging grid masks staged addresses, and its search ignores them', async () => {
+    const [segment] = await sql<{ id: string; show_id: string }[]>`
+      select g.id, g.show_id from show_segments g join shows s on s.id = g.show_id where s.concert_id = ${concertId} limit 1`;
+    const [batch] = await sql<{ id: string }[]>`
+      insert into import_batches (show_id, segment_id, filename, status, report)
+      values (${segment!.show_id}, ${segment!.id}, 'staged.csv', 'STAGED', '{}'::jsonb) returning id`;
+    const fields = {
+      contactName: 'Staged Sam',
+      contactEmail: 'staged.secret@example.test',
+      requestedAt: null,
+      requestedAtRaw: null,
+      attendeeName: 'Sam',
+      attendeeEmail: 'staged.guest@example.test',
+      allocationType: 'EXTRA',
+      allocationRaw: null,
+      groupKey: null,
+      playerNeedle: null,
+      playerId: null,
+      playerName: null,
+      playerConfirmed: false,
+      playerConfidence: null,
+    };
+    await sql`
+      insert into import_rows (batch_id, row_number, seat_index, raw, normalized, issues, status, party_key)
+      values (${batch!.id}, 2, 0, ${JSON.stringify({ Email: 'staged.secret@example.test' })}::jsonb,
+              ${JSON.stringify(fields)}::jsonb, '[]'::jsonb, 'STAGED', 'e:staged.secret@example.test')`;
+    const render_ = (query: Record<string, string>) =>
+      render('import/[batchId]', query, { batchId: String(batch!.id) }).then((out) => strings(out).join('\n'));
+
+    sessionUser.mockResolvedValue(VIEWER);
+    const shown = await render_({ view: 'all' });
+    expect(shown).toContain('Staged Sam');
+    expect(shown).not.toContain('staged.secret@example.test');
+    expect(shown).not.toContain('staged.guest@example.test');
+    // A search on the masked address finds nothing for a viewer.
+    expect(await render_({ view: 'all', q: 'staged.secret' })).not.toContain('Staged Sam');
+  });
+
   it('the ticket designer offers a viewer the sample attendee only', async () => {
     sessionUser.mockResolvedValue(VIEWER);
     const output = await render('tickets/templates/[templateId]', {}, { templateId: String(templateId) });

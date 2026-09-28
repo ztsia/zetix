@@ -69,7 +69,6 @@ function request(fields: Record<string, string | File>): Request {
 }
 
 let segmentId: number;
-let segmentName: string;
 let adminUser: { id: string; role: 'ADMIN' | 'OPERATOR' };
 let operatorUser: { id: string; role: 'ADMIN' | 'OPERATOR' };
 
@@ -85,7 +84,6 @@ beforeEach(async () => {
     extrasPolicy: 'AUTO_FCFS',
     name: 'Public',
   });
-  segmentName = 'Public';
 
   adminUser = await createUser('ADMIN');
   operatorUser = await createUser('OPERATOR');
@@ -147,78 +145,10 @@ describe('refusals', () => {
     expect(res.status).toBe(404);
   });
 
-  it('400s a commit with no typed confirmation', async () => {
-    const res = await POST(
-      request({
-        action: 'commit',
-        segmentId: String(segmentId),
-        file: await sampleFile(),
-        profile: JSON.stringify(publicProfile()),
-      }),
-    );
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/confirmation/i);
-  });
-
-  /**
-   * The dialog is not the gate. A stale tab, or anything posting directly, must
-   * still be refused — there is no rollback (decision 26), so the confirmation
-   * cannot live only in a component.
-   */
-  it('400s a commit whose confirmation does not match the segment name', async () => {
-    const res = await POST(
-      request({
-        action: 'commit',
-        segmentId: String(segmentId),
-        file: await sampleFile(),
-        profile: JSON.stringify(publicProfile()),
-        confirmation: 'not the segment name',
-      }),
-    );
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain(segmentName);
-
-    const [{ count }] = await sql<{ count: string }[]>`select count(*) from registrations`;
-    expect(Number(count)).toBe(0);
-  });
-
-  /**
-   * The commit half of the corrected blocking rule: any blocking finding, not
-   * only a file-level one, and the server says so independently of the screen.
-   */
-  it('409s a commit while any row is blocking, even with a valid confirmation', async () => {
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('S');
-    ws.addRow([...HEADERS]);
-    ws.addRow(['2026-09-01T10:00:00Z', 'Good', 'g@x.test', 'Good', '', 'Extra']);
-    // BASE in a public segment: blocking (§9.5).
-    ws.addRow(['2026-09-02T10:00:00Z', 'Bad', 'b@x.test', 'Bad', '', 'Allocated']);
-    const buf = Buffer.from(await wb.xlsx.writeBuffer());
-    const file = new File([new Uint8Array(buf)], 'mixed.xlsx');
-
-    const base = defaultProfileFor('EXTRA');
-    const res = await POST(
-      request({
-        action: 'commit',
-        segmentId: String(segmentId),
-        file,
-        profile: JSON.stringify(base),
-        confirmation: segmentName,
-      }),
-    );
-
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/cannot be committed/);
-
-    // Not the good party either.
-    const [{ count }] = await sql<{ count: string }[]>`select count(*) from registrations`;
-    expect(Number(count)).toBe(0);
-  });
-
   it('400s a malformed mapping profile', async () => {
     const res = await POST(
       request({
-        action: 'dry-run',
+        action: 'stage',
         segmentId: String(segmentId),
         file: await sampleFile(),
         profile: '{"columns":{}}',
@@ -232,7 +162,7 @@ describe('refusals', () => {
 describe('the happy path end to end', () => {
   beforeEach(() => sessionUser.mockResolvedValue(adminUser));
 
-  it('inspects, dry runs and commits', async () => {
+  it('inspects and stages, claiming nothing until the grid commits', async () => {
     const inspect = await POST(
       request({ action: 'inspect', segmentId: String(segmentId), file: await sampleFile() }),
     );
@@ -241,49 +171,38 @@ describe('the happy path end to end', () => {
     expect(inspected.audienceMode).toBe('PUBLIC');
     expect(inspected.suggested.requested_at).toBe(TEMPLATE_HEADERS.timestamp);
 
-    const dry = await POST(
+    const staged = await POST(
       request({
-        action: 'dry-run',
+        action: 'stage',
         segmentId: String(segmentId),
         file: await sampleFile(),
         profile: JSON.stringify(publicProfile()),
       }),
     );
-    expect(dry.status).toBe(200);
-    const plan = await dry.json();
-    expect(plan.counts.parties).toBe(1);
-    expect(plan.counts.seats).toBe(2);
-    expect(plan.committed).toBe(false);
+    expect(staged.status).toBe(200);
+    const body = await staged.json();
+    expect(body.rows).toBe(2);
 
-    // The dry run wrote nothing but its own batch.
-    const [{ count: before }] = await sql<{ count: string }[]>`select count(*) from registrations`;
-    expect(Number(before)).toBe(0);
-
-    const commit = await POST(
-      request({
-        action: 'commit',
-        segmentId: String(segmentId),
-        file: await sampleFile(),
-        profile: JSON.stringify(publicProfile()),
-        confirmation: segmentName,
-      }),
-    );
-    expect(commit.status).toBe(200);
-    const done = await commit.json();
-    expect(done.committed).toBe(true);
-    expect(done.outcome.createdRegistrations).toBe(1);
-    expect(done.outcome.createdAttendees).toBe(2);
-
-    const [{ count: after }] = await sql<{ count: string }[]>`select count(*) from registrations`;
-    expect(Number(after)).toBe(1);
-
-    // A commit is an audited act: it is irreversible and it is the moment the
-    // spreadsheet stops being the source of truth (§9.1).
-    const [audit] = await sql<{ action: string; reason: string }[]>`
-      select action, reason from audit_log order by id desc limit 1
+    // Staged, not written: the rows wait in the grid (spec/v3.md §25.7).
+    const [{ count }] = await sql<{ count: string }[]>`select count(*) from registrations`;
+    expect(Number(count)).toBe(0);
+    const rows = await sql<{ status: string; party_key: string }[]>`
+      select status::text, party_key from import_rows where batch_id = ${body.batchId}
     `;
-    expect(audit.action).toBe('import.committed');
-    expect(audit.reason).toBe(segmentName);
+    expect(rows.map((r) => r.status)).toEqual(['STAGED', 'STAGED']);
+    expect(new Set(rows.map((r) => r.party_key)).size).toBe(1);
+
+    const [audit] = await sql<{ action: string }[]>`select action from audit_log order by id desc limit 1`;
+    expect(audit.action).toBe('import.staged');
+  });
+
+  it('refuses the retired dry-run and commit actions', async () => {
+    for (const action of ['dry-run', 'commit']) {
+      const res = await POST(
+        request({ action, segmentId: String(segmentId), file: await sampleFile(), profile: JSON.stringify(publicProfile()) }),
+      );
+      expect(res.status).toBe(400);
+    }
   });
 });
 

@@ -5,11 +5,16 @@ import { sql } from 'drizzle-orm';
 import { claimSeats, lockShowForClaim, type SeatRequest } from '@/db/allocation';
 import { getDb } from '@/db/client';
 import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
-import { adviseOnAddress } from '@/lib/email/address';
+import { writeAuditLog } from '@/lib/audit';
+import { checkAddress } from '@/lib/email/address';
 import { validateAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import { loadFormBySlug } from '@/lib/forms/load';
-import { resolveRegistrant } from '@/lib/forms/registrant';
-import { mintVerificationToken, queueVerificationEmail } from '@/lib/registrations/verification';
+import { PLAYER_PICKER } from '@/lib/forms/player-picker';
+import { resolvePickedPlayer, resolveRegistrant, type Registrant } from '@/lib/forms/registrant';
+import { queueReceipt } from '@/lib/intake/receipt';
+import { reviewAtIntake } from '@/lib/intake/review';
+import { mintUpdateToken } from '@/lib/intake/update-link';
+import { mintVerificationToken } from '@/lib/registrations/verification';
 import { blockFields, isRepeaterType, type FormField, type FormSchema } from '@/lib/forms/schema';
 
 /**
@@ -37,6 +42,12 @@ export type SubmitInput = {
   answers: FormAnswers;
   /** The reader has seen an address warning and submitted anyway. */
   addressConfirmed: boolean;
+  /**
+   * The inviting player chosen in the player form's picker (spec/v3.md §25.2).
+   * Ignored when a `?k=` token resolved: the prefilled shortcut already names
+   * the player.
+   */
+  playerId?: number | null;
 };
 
 export type SubmitResult =
@@ -62,6 +73,7 @@ type FormSettings = {
   maxResponses: number | null;
   oneResponsePerIdentity: boolean;
   autoCloseOnCapacity: boolean;
+  waitlistWhenFull: boolean;
   responseCount: number;
 };
 
@@ -70,12 +82,14 @@ async function formSettingsFor(formId: number): Promise<FormSettings> {
     max_responses: number | null;
     one_response_per_identity: boolean | null;
     auto_close_on_capacity: boolean | null;
+    waitlist_when_full: boolean | null;
     response_count: number;
   }>(sql`
     select
       f.max_responses,
       f.one_response_per_identity,
       f.auto_close_on_capacity,
+      f.waitlist_when_full,
       -- Superseded responses are edits of a party that already counted, not new
       -- parties (§8.3.1). Counting them would close a form early by however many
       -- people corrected a typo.
@@ -93,6 +107,7 @@ async function formSettingsFor(formId: number): Promise<FormSettings> {
     maxResponses: row?.max_responses ?? null,
     oneResponsePerIdentity: row?.one_response_per_identity ?? false,
     autoCloseOnCapacity: row?.auto_close_on_capacity ?? false,
+    waitlistWhenFull: row?.waitlist_when_full ?? false,
     responseCount: Number(row?.response_count ?? 0),
   };
 }
@@ -217,14 +232,16 @@ function pruneBlankRows(schema: FormSchema, answers: FormAnswers): FormAnswers {
 function partyFor(
   schema: FormSchema,
   answers: FormAnswers,
-): { seats: SeatRequest[]; seatCustom: (Record<string, unknown> | null)[] } {
+): { seats: SeatRequest[]; seatCustom: (Record<string, unknown> | null)[]; registrantIndex: number } {
   const seats: SeatRequest[] = [];
   const seatCustom: (Record<string, unknown> | null)[] = [];
+  let registrantIndex = -1;
 
   for (const block of schema.blocks) {
     if (block.type === 'REGISTRANT') {
       if (!('creates_seat' in block) || !block.creates_seat) continue;
       const values = flatValues(answers, block.id);
+      registrantIndex = seats.length;
       seats.push({
         fullName: text(values[CONTACT_NAME]),
         email: text(values[CONTACT_EMAIL]),
@@ -252,7 +269,7 @@ function partyFor(
     }
   }
 
-  return { seats, seatCustom };
+  return { seats, seatCustom, registrantIndex };
 }
 
 export async function submitRegistration(input: SubmitInput): Promise<SubmitResult> {
@@ -265,6 +282,11 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       ok: false,
       message: `Too many requests. Please wait ${verdict.retryAfterSeconds} seconds and try again.`,
     };
+  }
+
+  // A Server Action is a public endpoint: its argument is whatever was sent.
+  if (!input || typeof input.slug !== 'string' || !input.answers || typeof input.answers !== 'object') {
+    return { ok: false, message: 'That submission could not be read. Please reload the page and try again.' };
   }
 
   const now = new Date();
@@ -298,7 +320,25 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
     };
   }
 
-  const registrant = await resolveRegistrant(input.token, form.concertId, segmentId);
+  /**
+   * Who invited them (spec/v3.md §25.2). The `?k=` token is the optional
+   * prefilled shortcut; without one, a player form names its player in the
+   * picker, and a player form must name one — its base seats are that
+   * player's, and a party with no player can only be waitlisted.
+   */
+  let registrant: Registrant = await resolveRegistrant(input.token, form.concertId, segmentId);
+  if (form.kind === 'PLAYER' && registrant.kind !== 'PLAYER') {
+    if (input.playerId != null) {
+      registrant = await resolvePickedPlayer(input.playerId, form.concertId, segmentId);
+    }
+    if (registrant.kind !== 'PLAYER') {
+      return {
+        ok: false,
+        message: 'Please choose the player who invited you. Nothing was submitted.',
+        errors: { [PLAYER_PICKER]: 'Choose a player' },
+      };
+    }
+  }
 
   /**
    * Row caps recomputed for **this** registrant rather than taken from the page.
@@ -340,7 +380,7 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
   }
 
   /**
-   * The address checks (`lib/email/address.ts`), on the first attempt only.
+   * The address checks (`lib/email/address.ts`).
    *
    * A domain DNS is certain does not exist cannot receive the tickets this
    * registration is for, and the person is right here able to fix it — an hour
@@ -348,17 +388,20 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
    * wrong and a scarce seat is too much to lose to one DNS answer, so the first
    * submit is refused with the reason and the second is accepted. Nobody is
    * locked out; nobody types `.con` without being told.
+   *
+   * **The verdict is stored either way** (spec/v3.md §24.6): an address
+   * submitted past the warning, or one the typo check dislikes, raises
+   * `SUSPICIOUS_ADDRESS`, which keeps the party out of auto-approval and out of
+   * Send tickets until an admin fixes or accepts it.
    */
-  if (!input.addressConfirmed) {
-    const advice = await adviseOnAddress(contactEmail);
-    if (advice.blocking) {
-      return {
-        ok: false,
-        message: `${advice.blocking} Submit again to use it anyway.`,
-        errors: { [`${registrantBlock.id}.${CONTACT_EMAIL}`]: 'Check this address' },
-        addressWarning: true,
-      };
-    }
+  const addressCheck = await checkAddress(contactEmail);
+  if (!input.addressConfirmed && addressCheck.blocking) {
+    return {
+      ok: false,
+      message: `${addressCheck.blocking} Submit again to use it anyway.`,
+      errors: { [`${registrantBlock.id}.${CONTACT_EMAIL}`]: 'Check this address' },
+      addressWarning: true,
+    };
   }
 
   const settings = await formSettingsFor(form.id);
@@ -383,7 +426,9 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       : contactEmail
     : null;
 
-  const { seats, seatCustom } = partyFor(form.schema, answers);
+  const { seats: allSeats, seatCustom: allCustom, registrantIndex } = partyFor(form.schema, answers);
+  let seats = allSeats;
+  let seatCustom = allCustom;
   if (seats.length === 0) return { ok: false, message: 'Please add at least one seat.' };
 
   /**
@@ -394,7 +439,8 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
    * issued a token, and `queue.ts` reads the absence of one as "nothing to wait
    * for". Deciding it here, by form kind, is what keeps that rule in one place:
    * nothing in the schema distinguishes a player form from an import, and
-   * nothing should (`J`'s handoff).
+   * nothing should (`J`'s handoff). Since V3 the link travels in the receipt
+   * (spec/v3.md §25.3) rather than in a verification email of its own.
    */
   const verificationToken = form.kind === 'PUBLIC' ? mintVerificationToken() : null;
 
@@ -402,34 +448,132 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
   const userAgent = requestHeaders.get('user-agent');
   const ip = clientIp(requestHeaders);
   const registrantCustom = registrationCustom(form.schema, answers);
+  const playerId = registrant.kind === 'PLAYER' ? registrant.playerId : null;
+  const hasPartyBlock = form.schema.blocks.some((block) => block.type === 'GUESTS_PARTY');
+
+  type Outcome = { url: string } | { refused: string };
 
   try {
-    const confirmationUrl = await getDb().transaction(async (tx) => {
+    const outcome = await getDb().transaction(async (tx): Promise<Outcome> => {
       /**
        * **The hall lock first, before anything references the show.** Without
        * it two concurrent submits deadlock: the registration insert's foreign
        * key takes a shared lock on the `shows` row and `claim_seats()` then asks
        * to upgrade it. See `lockShowForClaim()`.
+       *
+       * It also serialises this read of "a party already here for this
+       * address": two submits from one address arriving together — the double
+       * click `registrations_no_duplicate_import` used to catch — queue on the
+       * lock, and the second finds the first's party.
        */
       await lockShowForClaim(form.showId, tx);
 
       /**
-       * The receipt first, because the registration points at it
-       * (`registrations.form_response_id`, §8.3.1 — *"the registration points at
-       * the newest response"*), and that link is what the confirmation screen
-       * and the edit flow both resolve through.
+       * **One party per email per segment** (spec/v3.md §25.5). A submission
+       * from an address that already holds a live party here adds to that
+       * party instead of starting a second — for the same inviting player
+       * only: seats under another player count against that player's quota, so
+       * a match across players is left as two parties and flagged as a possible
+       * duplicate for a person to merge.
+       */
+      const [existing] = await tx.execute<{ id: string; live_seats: number; checked: boolean }>(sql`
+        select r.id,
+               (select count(*)::int from attendees a
+                 where a.registration_id = r.id and a.deleted_at is null
+                   and a.status <> 'CANCELLED') as live_seats,
+               r.email_checked_at is not null as checked
+          from registrations r
+         where r.segment_id = ${segmentId}::bigint
+           and r.contact_email = ${contactEmail}::citext
+           and r.player_id is not distinct from ${playerId}::bigint
+           and r.deleted_at is null
+           and r.status <> 'CANCELLED'
+         order by r.requested_at, r.id
+         limit 1
+         for update
+      `);
+      const existingId = existing ? Number(existing.id) : null;
+
+      if (existingId !== null) {
+        /**
+         * **The same answers again are the same submission** — a double click,
+         * or a refresh that re-posted. Adding its seats a second time would
+         * give one party every guest twice, so it lands on the confirmation
+         * screen of the response it repeats and changes nothing.
+         */
+        const [same] = await tx.execute<{ edit_token: string }>(sql`
+          select edit_token from form_responses
+           where registration_id = ${existingId}::bigint
+             and form_id = ${form.id}::bigint
+             and raw = ${JSON.stringify(input.answers)}::text::jsonb
+             and edit_token is not null
+           order by id desc
+           limit 1
+        `);
+        if (same) return { url: `/f/${form.slug}/done?r=${same.edit_token}` };
+
+        /**
+         * **The registrant is already a seat of their own party.** On a public
+         * form the person filling it in is seat #1 (decision 36); coming back
+         * to add guests must not book them a second seat in their own name.
+         */
+        if (registrantIndex >= 0) {
+          const [already] = await tx.execute<{ n: number }>(sql`
+            select count(*)::int as n from attendees
+             where registration_id = ${existingId}::bigint and deleted_at is null and status <> 'CANCELLED'
+               and lower(btrim(full_name)) = lower(btrim(${contactName}))
+          `);
+          if (already.n > 0) {
+            // Left empty when the registrant was the only seat: the response is
+            // recorded and nothing is claimed. Refusing instead would tell a
+            // stranger which name is registered under the address.
+            seats = allSeats.filter((_, index) => index !== registrantIndex);
+            seatCustom = allCustom.filter((_, index) => index !== registrantIndex);
+          }
+        }
+
+        /**
+         * The party-size cap covers the whole party, not each submission —
+         * otherwise two submissions of four make a party of eight on a form
+         * whose cap is four.
+         */
+        if (hasPartyBlock) {
+          const [cap] = await tx.execute<{ value: unknown }>(sql`
+            select resolve_setting('form.max_tickets_per_response', ${segmentId}::bigint,
+                                   ${form.showId}::bigint, ${form.concertId}::bigint) as value
+          `);
+          const max = typeof cap?.value === 'number' ? Math.trunc(cap.value) : null;
+          if (max !== null && existing.live_seats + seats.length > max) {
+            // Worded without the party's size: anyone can type an address.
+            return {
+              refused:
+                `This email address already has a registration, and a party may have at most ${max} seats. ` +
+                'These seats would take it past that, so nothing was submitted. The email sent to that ' +
+                'address has a link for changing the registration.',
+            };
+          }
+        }
+      }
+
+      /**
+       * The response first, because a new registration points at it
+       * (`registrations.form_response_id`, §8.3.1 — *"the registration points
+       * at the newest response"*), and that link is what the edit flow
+       * resolves through.
        *
        * Going in this order also means `one_response_per_identity` fires before
        * any seat is touched. The transaction would roll back either way; failing
        * on the cheap statement is simply the better shape.
        *
        * `raw` is exactly what was submitted and is never mutated; `form_schema`
-       * pins what those answers meant (§8.2.3, §8.2.4).
+       * pins what those answers meant (§8.2.3, §8.2.4). `registration_id` is set
+       * on every response (`0204`), which is how the confirmation screen finds
+       * the party of a submission merged into one.
        */
       const response = await tx.execute<{ id: string }>(sql`
         insert into form_responses (
           form_id, raw, form_schema, identity_key, submitted_at,
-          ip_address, user_agent, edit_token
+          ip_address, user_agent, edit_token, registration_id
         ) values (
           ${form.id}::bigint,
           -- raw is what they submitted, not what we pruned: §8.2.3 calls it the
@@ -439,43 +583,85 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
           ${JSON.stringify(form.schema)}::text::jsonb,
           ${identityKey},
           ${now.toISOString()}::timestamptz,
-          ${ip}, ${userAgent}, ${editToken}
+          ${ip}, ${userAgent}, ${editToken}, ${existingId}::bigint
         )
         returning id
       `);
       const responseId = Number(response[0].id);
 
-      const inserted = await tx.execute<{ id: string }>(sql`
-        insert into registrations (
-          show_id, segment_id, round_label, player_id, source, form_response_id,
-          contact_name, contact_email, contact_phone, status, requested_at, custom,
-          verification_token
-        ) values (
-          ${form.showId}::bigint, ${segmentId}::bigint, ${form.copy.round_label ?? null},
-          ${registrant.kind === 'PLAYER' ? registrant.playerId : null}::bigint, 'FORM',
-          ${responseId}::bigint,
-          ${contactName}, ${contactEmail}, ${text(contact[CONTACT_PHONE])},
-          -- Corrected from the seats a moment later in this same transaction.
-          -- claim_seats() refuses a CANCELLED registration, so it has to be one
-          -- of the other three, and WAITLIST is the one that is wrong in the
-          -- safe direction: a party holding nothing rather than a party recorded
-          -- as confirmed with no seats.
-          'WAITLIST',
-          ${now.toISOString()}::timestamptz,
-          ${registrantCustom === null ? null : JSON.stringify(registrantCustom)}::text::jsonb,
-          ${verificationToken}
-        )
-        returning id
+      let registrationId: number;
+      if (existingId === null) {
+        const inserted = await tx.execute<{ id: string }>(sql`
+          insert into registrations (
+            show_id, segment_id, round_label, player_id, source, form_response_id,
+            contact_name, contact_email, contact_phone, status, requested_at, custom,
+            verification_token, update_token, email_issue, email_checked_at
+          ) values (
+            ${form.showId}::bigint, ${segmentId}::bigint, ${form.copy.round_label ?? null},
+            ${playerId}::bigint, 'FORM',
+            ${responseId}::bigint,
+            ${contactName}, ${contactEmail}, ${text(contact[CONTACT_PHONE])},
+            -- Corrected from the seats a moment later in this same transaction.
+            -- claim_seats() refuses a CANCELLED registration, so it has to be one
+            -- of the other three, and WAITLIST is the one that is wrong in the
+            -- safe direction: a party holding nothing rather than a party recorded
+            -- as confirmed with no seats.
+            'WAITLIST',
+            ${now.toISOString()}::timestamptz,
+            ${registrantCustom === null ? null : JSON.stringify(registrantCustom)}::text::jsonb,
+            ${verificationToken}, ${mintUpdateToken()},
+            ${addressCheck.issue}, now()
+          )
+          returning id
+        `);
+        registrationId = Number(inserted[0].id);
+        await tx.execute(sql`
+          update form_responses set registration_id = ${registrationId}::bigint
+           where id = ${responseId}::bigint
+        `);
+      } else {
+        registrationId = existingId;
+        /**
+         * The party keeps its own contact details and its place; this
+         * submission fills only what the party lacked. `form_response_id`
+         * stays on the party's own chain — this response is not an edit of it,
+         * and pointing the party at it would hand this submitter's edit link
+         * control of seats somebody else may have registered.
+         */
+        await tx.execute(sql`
+          update registrations
+             set contact_phone = coalesce(contact_phone, ${text(contact[CONTACT_PHONE])}),
+                 update_token = coalesce(update_token, ${mintUpdateToken()}),
+                 email_issue = case when email_checked_at is null then ${addressCheck.issue} else email_issue end,
+                 email_checked_at = coalesce(email_checked_at, now())
+           where id = ${registrationId}::bigint
+        `);
+      }
+
+      // Nothing new to seat: the submission is on record, the party unchanged.
+      if (seats.length === 0) return { url: `/f/${form.slug}/done?r=${editToken}` };
+
+      const [before] = await tx.execute<{ max_id: string | null }>(sql`
+        select max(id) as max_id from attendees where registration_id = ${registrationId}::bigint
       `);
-      const registrationId = Number(inserted[0].id);
+      const firstNewAfter = Number(before?.max_id ?? 0);
 
       /**
        * **The row lock is the truth.** Everything above was a prediction; this
        * is the decision. Partial grants, `PENDING_REVIEW` and `WAITLIST` all
        * come back in the outcome, and the confirmation screen reports them
        * (§8.3, §8.4).
+       *
+       * Seats added to an existing party carry this submission's own time
+       * (spec/v3.md §21.3): a fresh submission is a new request at the back of
+       * the first-come queue, never a ride on the party's earlier place.
        */
-      await claimSeats(segmentId, registrationId, seats, { executor: tx });
+      await claimSeats(
+        segmentId,
+        registrationId,
+        existingId === null ? seats : seats.map((seat) => ({ ...seat, requestedAt: now })),
+        { executor: tx },
+      );
 
       /**
        * A registration reflects its party — the same rule module `C` applies at
@@ -499,7 +685,7 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       /**
        * Per-seat custom answers, matched to the attendees the engine just
        * created. `claim_seats()` inserts in the order it was given, so the
-       * party's order is the seat order and `id` preserves it.
+       * submission's order is the seat order and `id` preserves it.
        */
       const withCustom = seatCustom
         .map((custom, index) => ({ custom, index }))
@@ -508,6 +694,7 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
         const attendeeRows = await tx.execute<{ id: string }>(sql`
           select id from attendees
            where registration_id = ${registrationId}::bigint
+             and id > ${firstNewAfter}::bigint
              and deleted_at is null
            order by id
         `);
@@ -524,9 +711,10 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       /**
        * `auto_close_on_capacity` (§8.3), in the same transaction as the claim so
        * the form closes on the submit that filled it rather than on whatever
-       * page load happens to come next.
+       * page load happens to come next. Waitlist mode (spec/v3.md §25.6) is the
+       * alternative: the form stays open and takes waitlist requests instead.
        */
-      if (settings.autoCloseOnCapacity) {
+      if (settings.autoCloseOnCapacity && !settings.waitlistWhenFull) {
         await tx.execute(sql`
           update registration_forms
              set status = 'CLOSED'
@@ -536,32 +724,38 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
         `);
       }
 
-      /**
-       * The verification message, drafted in the same transaction as the
-       * registration it belongs to. Either both land or neither does — a
-       * registration carrying a token nobody was ever sent is a party that can
-       * never be ticketed and has nothing on screen to say why.
-       */
-      if (verificationToken !== null) {
-        const [context] = await tx.execute<{ concert_name: string; show_name: string }>(sql`
-          select c.name as concert_name, s.name as show_name
-            from shows s join concerts c on c.id = s.concert_id
-           where s.id = ${form.showId}::bigint
-        `);
-        await queueVerificationEmail(tx, {
-          registrationId,
-          contactName,
-          contactEmail,
-          token: verificationToken,
-          concertName: context?.concert_name ?? '',
-          showName: context?.show_name ?? '',
-        });
+      if (existingId !== null) {
+        await writeAuditLog(
+          {
+            action: 'registration.submission_merged',
+            entityType: 'registration',
+            entityId: registrationId,
+            after: { formResponseId: responseId, seats: seats.length, by: 'contact email' },
+            actorId: null,
+          },
+          tx,
+        );
       }
 
-      return `/f/${form.slug}/done?r=${editToken}`;
+      /**
+       * The review gate (spec/v3.md §25.4): duplicates stored, then approval
+       * only if the segment auto-approves a clean party. Seats added to a party
+       * take back its approval — they are a new claim.
+       */
+      await reviewAtIntake(tx, registrationId, { resetApproval: existingId !== null });
+
+      /**
+       * The receipt (§25.3), held so a second submission supersedes it, and
+       * carrying the verification link on a public form. Queued in the same
+       * transaction as the party it describes: either both land or neither.
+       */
+      await queueReceipt(tx, registrationId);
+
+      return { url: `/f/${form.slug}/done?r=${editToken}` };
     });
 
-    return { ok: true, confirmationUrl };
+    if ('refused' in outcome) return { ok: false, message: outcome.refused };
+    return { ok: true, confirmationUrl: outcome.url };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     /**

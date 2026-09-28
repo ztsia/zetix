@@ -86,6 +86,13 @@ export type LoadedForm = {
   timeZone: string | null;
   /** Editing window (§8.3.1). Read by `M`; carried here so one query answers everything. */
   allowEditUntil: Date | null;
+  /**
+   * Waitlist mode (spec/v3.md §25.6): once the segment is full the form stays
+   * open and takes waitlist requests instead of showing "full".
+   */
+  waitlistWhenFull: boolean;
+  /** The per-form theme (spec/v3.md §25.6), raw; `lib/forms/theme.ts` reads it. */
+  theme: unknown;
 };
 
 export type FormLoadResult = LoadedForm | FormNotAvailable;
@@ -134,6 +141,8 @@ export async function loadFormBySlug(
       opensAt: registrationForms.opensAt,
       closesAt: registrationForms.closesAt,
       allowEditUntil: registrationForms.allowEditUntil,
+      waitlistWhenFull: registrationForms.waitlistWhenFull,
+      theme: registrationForms.theme,
       segmentId: showSegments.id,
       showId: shows.id,
       concertId: concerts.id,
@@ -234,5 +243,7 @@ export async function loadFormBySlug(
     concertId: row.concertId,
     timeZone: row.timeZone,
     allowEditUntil: row.allowEditUntil,
+    waitlistWhenFull: row.waitlistWhenFull ?? false,
+    theme: row.theme ?? null,
   };
 }

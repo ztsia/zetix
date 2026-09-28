@@ -108,7 +108,7 @@ describe('the banner upload', () => {
     const body = new FormData();
     body.set('concertId', String(concertId));
     body.set('formId', String(formId));
-    body.set('file', new File([file], 'banner.png', { type: 'image/png' }));
+    body.set('file', new File([new Uint8Array(file)], 'banner.png', { type: 'image/png' }));
     if (colour) body.set('colour', colour);
     return uploadBanner(new Request('http://localhost/api/form-banners', { method: 'POST', body }));
   };

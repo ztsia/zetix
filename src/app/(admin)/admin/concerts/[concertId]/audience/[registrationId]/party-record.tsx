@@ -60,6 +60,7 @@ import {
 } from '../badges';
 import { COMMAND_ENTRIES, entry, useRunCommand } from '../command-host';
 import { ReplyControls } from '../../inbox/reply-controls';
+import { DuplicatesSection } from './duplicates-section';
 
 /**
  * The party record (spec/v3.md §22.4) — a full page, because it is where the
@@ -364,6 +365,13 @@ export function PartyRecord({
           </Alert>
         )}
       </div>
+
+      <DuplicatesSection
+        concertId={concertId}
+        partyName={party.contactName}
+        duplicates={record.duplicates}
+        format={format}
+      />
 
       <section className="flex flex-col gap-3" aria-labelledby="seats-heading">
         <div className="flex flex-wrap items-center justify-between gap-2">

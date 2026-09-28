@@ -31,6 +31,8 @@ import {
   MailX,
   RotateCw,
   Ban,
+  Merge,
+  Split,
 } from 'lucide-react';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -61,7 +63,7 @@ export type CommandEntry = {
   label: string;
   icon: LucideIcon;
   /** `messages` entries act on outbox rows: the record's Conversation and the Messages view. */
-  grain: Grain | 'messages';
+  grain: Grain | 'messages' | 'duplicates';
   group: 'Review' | 'Allocation' | 'Verification' | 'Address' | 'Tickets' | 'Delivery' | 'Messages' | 'Door' | 'Records';
   options?: OptionsKind;
   /** Opens the send wizard (spec/v3.md §24.1) rather than the plain command dialog. */
@@ -73,8 +75,8 @@ export type CommandEntry = {
 /**
  * Every command the Audience workspace offers, grouped as §23.2 groups them.
  * Delivery is the send wizard's (module `T`; Messages act on messages, in the
- * Messages view), and Merge parties and Not a duplicate are duplicate
- * review's (module `V`).
+ * Messages view), and Merge parties, Not a duplicate and Undo merge act on
+ * duplicate pairs (module `V`), from the record's Possible duplicates.
  */
 export const COMMAND_ENTRIES: CommandEntry[] = [
   { command: 'audience.approve', label: 'Approve', icon: BadgeCheck, grain: 'parties', group: 'Review', options: 'include-flagged', params: { includeFlagged: false } },
@@ -112,6 +114,11 @@ export const COMMAND_ENTRIES: CommandEntry[] = [
   { command: 'messages.resend', label: 'Resend', icon: Repeat, grain: 'messages', group: 'Messages' },
   { command: 'messages.cancel', label: 'Cancel', icon: Ban, grain: 'messages', group: 'Messages' },
   { command: 'messages.delete', label: 'Delete', icon: Trash2, grain: 'messages', group: 'Messages', destructive: true },
+
+  // Duplicate pairs (§25.5, module `V`): the record's Possible duplicates section.
+  { command: 'intake.merge', label: 'Merge', icon: Merge, grain: 'duplicates', group: 'Review', options: 'override', params: { keep: 'EARLIER', override: false } },
+  { command: 'intake.not_duplicate', label: 'Not a duplicate', icon: Split, grain: 'duplicates', group: 'Review' },
+  { command: 'intake.undo_merge', label: 'Undo merge', icon: Undo2, grain: 'duplicates', group: 'Review' },
 
   { command: 'seats.check_in', label: 'Check in', icon: DoorOpen, grain: 'seats', group: 'Door' },
   { command: 'seats.undo_check_in', label: 'Undo check-in', icon: Undo2, grain: 'seats', group: 'Door' },

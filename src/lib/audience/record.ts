@@ -98,6 +98,31 @@ export type RecordResponse = {
   superseded: boolean;
 };
 
+/**
+ * A stored duplicate pair naming this party (spec/v3.md §25.5): open ones to
+ * decide, and merges into this party that can still be undone.
+ */
+export type RecordDuplicate = {
+  candidateId: number;
+  status: 'OPEN' | 'MERGED';
+  reasons: string[];
+  similarity: number | null;
+  /** This party is the pair's `a` side — which side *Merge* keeps is named by it. */
+  thisIsA: boolean;
+  decidedAt: string | null;
+  other: {
+    id: number;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    segmentName: string;
+    playerName: string | null;
+    liveSeats: number;
+    requestedAt: string;
+    deleted: boolean;
+  };
+};
+
 export type RecordImport = {
   batchId: number;
   filename: string;
@@ -111,6 +136,7 @@ export type PartyRecord = {
   seats: RecordSeat[];
   messages: RecordMessage[];
   responses: RecordResponse[];
+  duplicates: RecordDuplicate[];
   import: RecordImport | null;
   custom: Record<string, unknown> | null;
   activity: ActivityRow[];
@@ -250,12 +276,13 @@ export async function loadPartyRecord(
     importBatchId: row.import_batch_id === null ? null : Number(row.import_batch_id),
   };
 
-  const [seats, messages, responses, importRows, activity] = await Promise.all([
+  const [seats, messages, responses, importRows, activity, duplicates] = await Promise.all([
     loadSeats(registrationId),
     loadMessages(registrationId),
-    party.formResponseId ? loadResponses(party.formResponseId) : Promise.resolve([]),
+    loadResponses(registrationId, party.formResponseId),
     party.importBatchId ? loadImportRows(registrationId) : Promise.resolve([]),
     loadActivity(concertId, registrationId),
+    loadDuplicates(registrationId),
   ]);
 
   return {
@@ -263,6 +290,7 @@ export async function loadPartyRecord(
     seats,
     messages,
     responses,
+    duplicates,
     import:
       party.importBatchId && row.import_at
         ? {
@@ -436,35 +464,109 @@ async function loadMessages(registrationId: number): Promise<RecordMessage[]> {
   return messages.sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** The form response the party points at, and every edit it replaced (`v2.md` §8.3.1). */
-async function loadResponses(responseId: number): Promise<RecordResponse[]> {
+/**
+ * Every response of the party: the one it points at and the edits it replaced
+ * (`v2.md` §8.3.1), and any later submission merged into it by email
+ * (spec/v3.md §25.5), which carries `registration_id` but is not in the chain.
+ * Newest first.
+ */
+async function loadResponses(registrationId: number, responseId: number | null): Promise<RecordResponse[]> {
   const rows = await getDb().execute<{
     id: string;
     form_title: string;
     submitted_at: string;
     raw: unknown;
-    depth: number;
+    superseded: boolean;
   }>(sql`
     with recursive chain(id, depth) as (
-      select ${responseId}::bigint, 0
+      select ${responseId}::bigint, 0 where ${responseId}::bigint is not null
       union all
       select fr.supersedes_id, c.depth + 1
         from form_responses fr join chain c on c.id = fr.id
        where fr.supersedes_id is not null and c.depth < 100
+    ),
+    mine as (
+      select id from chain
+      union
+      select id from form_responses where registration_id = ${registrationId}
     )
     select fr.id, f.title as form_title, to_json(fr.submitted_at) #>> '{}' as submitted_at,
-           fr.raw, c.depth
-      from chain c
-      join form_responses fr on fr.id = c.id
+           fr.raw,
+           exists (select 1 from form_responses later where later.supersedes_id = fr.id) as superseded
+      from mine m
+      join form_responses fr on fr.id = m.id
       join registration_forms f on f.id = fr.form_id
-     order by c.depth
+     order by fr.submitted_at desc, fr.id desc
   `);
   return rows.map((r) => ({
     id: Number(r.id),
     formTitle: r.form_title,
     submittedAt: r.submitted_at,
     raw: r.raw,
-    superseded: r.depth > 0,
+    superseded: r.superseded,
+  }));
+}
+
+async function loadDuplicates(registrationId: number): Promise<RecordDuplicate[]> {
+  const rows = await getDb().execute<{
+    id: string;
+    status: 'OPEN' | 'MERGED';
+    reasons: string[];
+    name_similarity: number | null;
+    this_is_a: boolean;
+    decided_at: string | null;
+    other_id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    segment_name: string;
+    player_name: string | null;
+    live_seats: number;
+    requested_at: string;
+    deleted: boolean;
+  }>(sql`
+    select d.id, d.status::text as status, d.reasons, d.name_similarity,
+           d.registration_a_id = ${registrationId} as this_is_a,
+           to_json(d.decided_at) #>> '{}' as decided_at,
+           o.id as other_id, o.contact_name as name, o.contact_email::text as email,
+           o.contact_phone as phone, g.name as segment_name, pl.full_name as player_name,
+           (select count(*)::int from attendees a
+             where a.registration_id = o.id and a.deleted_at is null and a.status <> 'CANCELLED') as live_seats,
+           to_json(o.requested_at) #>> '{}' as requested_at,
+           o.deleted_at is not null as deleted
+      from duplicate_candidates d
+      join registrations o
+        on o.id = case when d.registration_a_id = ${registrationId}
+                       then d.registration_b_id else d.registration_a_id end
+      join show_segments g on g.id = o.segment_id
+      left join players pl on pl.id = o.player_id
+     where ${registrationId} in (d.registration_a_id, d.registration_b_id)
+       and d.deleted_at is null
+       and (
+         (d.status = 'OPEN' and o.deleted_at is null)
+         -- A merge into this party, while the absorbed party is still merged.
+         or (d.status = 'MERGED' and o.merged_into_id = ${registrationId})
+       )
+     order by d.status, d.id
+  `);
+  return rows.map((r) => ({
+    candidateId: Number(r.id),
+    status: r.status,
+    reasons: r.reasons,
+    similarity: r.name_similarity === null ? null : Number(r.name_similarity),
+    thisIsA: r.this_is_a,
+    decidedAt: r.decided_at,
+    other: {
+      id: Number(r.other_id),
+      name: r.name,
+      email: r.email,
+      phone: r.phone,
+      segmentName: r.segment_name,
+      playerName: r.player_name,
+      liveSeats: r.live_seats,
+      requestedAt: r.requested_at,
+      deleted: r.deleted,
+    },
   }));
 }
 

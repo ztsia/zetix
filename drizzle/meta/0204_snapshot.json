@@ -1,5 +1,5 @@
 {
-  "id": "e81e0371-9ec3-47a9-8e2d-aaf24a084f8a",
+  "id": "adaa0670-42c4-4357-b094-1487228bc6b8",
   "prevId": "1763ab43-f480-4283-8f1c-a1902313bb3e",
   "version": "7",
   "dialect": "postgresql",
@@ -3354,6 +3354,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "merged_from_id": {
+          "name": "merged_from_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3498,6 +3504,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "attendees_merged_from_idx": {
+          "name": "attendees_merged_from_idx",
+          "columns": [
+            {
+              "expression": "merged_from_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -3537,6 +3558,19 @@
           "tableTo": "import_rows",
           "columnsFrom": [
             "import_row_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "attendees_merged_from_fk": {
+          "name": "attendees_merged_from_fk",
+          "tableFrom": "attendees",
+          "tableTo": "registrations",
+          "columnsFrom": [
+            "merged_from_id"
           ],
           "columnsTo": [
             "id"
@@ -3618,6 +3652,12 @@
         "decided_at": {
           "name": "decided_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "merge_detail": {
+          "name": "merge_detail",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

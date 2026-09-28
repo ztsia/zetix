@@ -6,15 +6,22 @@
 --                       edit of the first, so `registrations.form_response_id`
 --                       (the newest in the edit chain) cannot find it.
 --   registration_forms  waitlist_when_full: waitlist mode (§25.6).
+--   attendees           merged_from_id: the party a seat belonged to before a
+--                       merge moved it, so Undo merge moves exactly those back.
+--   duplicate_candidates merge_detail: what a merge did, for Undo merge.
 --   normalise_phone(), phones_match(), refresh_duplicate_candidates():
 --                       duplicate detection (§25.5), in Postgres because the
 --                       name half is `pg_trgm` and runs over the whole show.
 --
 -- Additive (`modules-v3.md` §3.3).
 
+ALTER TABLE "attendees" ADD COLUMN "merged_from_id" bigint;--> statement-breakpoint
+ALTER TABLE "duplicate_candidates" ADD COLUMN "merge_detail" jsonb;--> statement-breakpoint
 ALTER TABLE "form_responses" ADD COLUMN "registration_id" bigint;--> statement-breakpoint
 ALTER TABLE "registration_forms" ADD COLUMN "waitlist_when_full" boolean;--> statement-breakpoint
+ALTER TABLE "attendees" ADD CONSTRAINT "attendees_merged_from_fk" FOREIGN KEY ("merged_from_id") REFERENCES "public"."registrations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "form_responses" ADD CONSTRAINT "form_responses_registration_id_registrations_id_fk" FOREIGN KEY ("registration_id") REFERENCES "public"."registrations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "attendees_merged_from_idx" ON "attendees" USING btree ("merged_from_id");--> statement-breakpoint
 CREATE INDEX "form_responses_registration_idx" ON "form_responses" USING btree ("registration_id");--> statement-breakpoint
 
 -- Backfill: every response in a party's edit chain belongs to that party. The

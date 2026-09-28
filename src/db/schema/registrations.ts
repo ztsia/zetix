@@ -526,6 +526,13 @@ export const attendees = pgTable(
      */
     importRowId: fk('import_row_id'),
 
+    /**
+     * The party this seat belonged to before a merge moved it here
+     * (spec/v3.md §25.5, `0204`). Undo merge moves exactly these seats back,
+     * and nothing the surviving party held or gained since.
+     */
+    mergedFromId: fk('merged_from_id'),
+
     ...timestamps,
   },
   (t) => [
@@ -561,6 +568,12 @@ export const attendees = pgTable(
       foreignColumns: [importRows.id],
     }).onDelete('set null'),
     index('attendees_import_row_idx').on(t.importRowId),
+    foreignKey({
+      name: 'attendees_merged_from_fk',
+      columns: [t.mergedFromId],
+      foreignColumns: [registrations.id],
+    }).onDelete('set null'),
+    index('attendees_merged_from_idx').on(t.mergedFromId),
   ],
 );
 
@@ -649,6 +662,12 @@ export const duplicateCandidates = pgTable(
     status: duplicateStatus('status').notNull(),
     decidedBy: uuid('decided_by').references(() => appUsers.id, { onDelete: 'set null' }),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /**
+     * What a merge did, for Undo merge to reverse it (`0204`): which party
+     * survived, the segment the absorbed party left, and the responses and
+     * messages it touched. Null unless `status = MERGED`.
+     */
+    mergeDetail: jsonb('merge_detail'),
 
     ...timestamps,
   },

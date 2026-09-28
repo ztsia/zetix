@@ -249,6 +249,10 @@ export async function createRegistration(
       );
 
       await recomputeStatus(tx, registrationId);
+      // Duplicates are looked for however a party arrives (spec/v3.md §25.5):
+      // an admin entering a party someone already registered is the case the
+      // flag exists for.
+      await tx.execute(sql`select refresh_duplicate_candidates(${registrationId}::bigint)`);
 
       return {
         registrationId,

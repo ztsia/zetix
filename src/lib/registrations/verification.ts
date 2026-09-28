@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import type { Executor } from '@/db/allocation';
 import { getDb } from '@/db/client';
 import { escapeMergeValues, renderTemplate } from '@/lib/email/render';
+import { templateFor } from '@/lib/email/template-row';
 
 /**
  * Double opt-in for the public form (spec/v2.md §8.1.4).
@@ -85,10 +86,9 @@ export async function queueVerificationEmail(
     status?: 'DRAFT' | 'QUEUED';
   },
 ): Promise<boolean> {
-  const templates = await tx.execute<{ subject: string; body_md: string }>(sql`
-    select subject, body_md from email_templates where key = 'public_verify'
-  `);
-  const template = templates[0];
+  // Seeded with the default wording if the install never had it (V3): a
+  // verification link must not wait for someone to open the templates page.
+  const template = await templateFor(tx, 'public_verify');
   /**
    * No template is not a reason to lose the registration.
    *

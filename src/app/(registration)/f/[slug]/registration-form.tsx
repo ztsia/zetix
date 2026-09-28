@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
-import { CircleAlertIcon, LightbulbIcon, TriangleAlertIcon } from 'lucide-react';
+import { CircleAlertIcon, ClockIcon, LightbulbIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -65,6 +65,8 @@ export type RegistrationFormProps = {
    * (spec/v3.md §25.2). Null on a public form, or when the token resolved.
    */
   roster?: PickerPlayer[] | null;
+  /** The segment is full and the form is in waitlist mode (spec/v3.md §25.6). */
+  waitlist?: boolean;
 };
 
 /** The REGISTRANT block's system field keys (`lib/forms/system-fields.ts`). */
@@ -84,6 +86,7 @@ export function RegistrationForm({
   registrant,
   unknownToken,
   roster = null,
+  waitlist = false,
 }: RegistrationFormProps) {
   const [picked, setPicked] = useState<PickerPlayer | null>(null);
   const baseBlockId = useMemo(
@@ -245,6 +248,17 @@ export function RegistrationForm({
           </div>
         ) : null}
 
+        {waitlist ? (
+          <Alert>
+            <ClockIcon />
+            <AlertTitle>This show is full — you can join the waitlist</AlertTitle>
+            <AlertDescription>
+              Register below and your party joins the waitlist. As seats free up they are offered first
+              come first served, and we will email you if one is yours.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {unknownToken ? (
           <Alert>
             <TriangleAlertIcon />
@@ -351,7 +365,7 @@ export function RegistrationForm({
       <div className="mt-1 flex items-center justify-between gap-3">
         <Button type="submit" disabled={pending}>
           {pending ? <Spinner /> : null}
-          {pending ? 'Submitting…' : 'Submit'}
+          {pending ? 'Submitting…' : waitlist ? 'Join the waitlist' : 'Submit'}
         </Button>
 
         {/*
@@ -380,7 +394,9 @@ export function RegistrationForm({
       </div>
 
       <p className="text-muted-foreground pb-6 text-xs">
-        Seats are confirmed when you submit. We will email your tickets before the concert.
+        {waitlist
+          ? 'You will be told by email if a seat becomes yours.'
+          : 'Seats are confirmed when you submit. We will email your tickets before the concert.'}
       </p>
     </form>
   );

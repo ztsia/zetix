@@ -61,6 +61,7 @@ import {
 import { COMMAND_ENTRIES, entry, useRunCommand } from '../command-host';
 import { ReplyControls } from '../../inbox/reply-controls';
 import { DuplicatesSection } from './duplicates-section';
+import { UpdateLinkButton } from './update-link-button';
 
 /**
  * The party record (spec/v3.md §22.4) — a full page, because it is where the
@@ -229,6 +230,14 @@ export function PartyRecord({
                   ? `${format.format(new Date(party.approvedAt))}${party.approvedBy ? ` by ${party.approvedBy}` : ''}`
                   : 'Not yet'}
               </dd>
+              {canEdit && (
+                <>
+                  <dt>Update link</dt>
+                  <dd className="text-foreground">
+                    <UpdateLinkButton concertId={concertId} registrationId={party.id} />
+                  </dd>
+                </>
+              )}
               {party.needsVerification && (
                 <>
                   <dt>Verified</dt>

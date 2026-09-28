@@ -3,10 +3,9 @@ import { sql } from 'drizzle-orm';
 import type { Tx } from '@/lib/commands/define';
 import { writeAuditLog } from '@/lib/audit';
 import { defaultTemplateFor, type AudienceMode } from '@/lib/delivery/purposes';
-import { DEFAULT_TEMPLATES } from '@/lib/email/default-templates';
 import { escapeMergeValues, renderTemplate } from '@/lib/email/render';
 import { draftSuperseding, MessageInFlightError } from '@/lib/email/supersede';
-import type { TemplateKey } from '@/lib/email/templates';
+import { templateFor } from '@/lib/email/template-row';
 import { verificationUrl } from '@/lib/registrations/verification';
 import { updateUrl } from './update-link';
 
@@ -141,30 +140,6 @@ export async function queueReceipt(
     if (error instanceof MessageInFlightError) return { queued: false, reason: 'IN_FLIGHT' };
     throw error;
   }
-}
-
-/**
- * The template row, seeding the default wording if the install has never had
- * it — a receipt must not wait for someone to open the templates page. A
- * template an admin deleted is not re-created; the receipt is skipped and
- * logged.
- */
-export async function templateFor(tx: Tx, key: string): Promise<{ subject: string; body_md: string } | null> {
-  const read = () =>
-    tx.execute<{ subject: string; body_md: string; deleted: boolean }>(sql`
-      select subject, body_md, deleted_at is not null as deleted from email_templates where key = ${key}
-    `);
-  let [row] = await read();
-  if (!row && key in DEFAULT_TEMPLATES) {
-    const seed = DEFAULT_TEMPLATES[key as TemplateKey];
-    await tx.execute(sql`
-      insert into email_templates (key, name, subject, body_md)
-      values (${key}, ${seed.name}, ${seed.subject}, ${seed.bodyMd})
-      on conflict (key) do nothing
-    `);
-    [row] = await read();
-  }
-  return row && !row.deleted ? row : null;
 }
 
 /**

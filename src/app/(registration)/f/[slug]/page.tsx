@@ -194,7 +194,12 @@ export default async function RegistrationFormPage({
   const playerOwedBase =
     (registrant.kind === 'PLAYER' && Object.keys(form.limits).length > 0) ||
     (roster?.some((player) => (player.remaining ?? 0) > 0) ?? false);
-  if (indicator?.state === 'FULL' && !playerOwedBase) {
+  /**
+   * Waitlist mode (spec/v3.md §25.6) keeps a full form open: requests are
+   * taken, and the engine waitlists them.
+   */
+  const waitlist = indicator?.state === 'FULL' && !playerOwedBase && form.waitlistWhenFull;
+  if (indicator?.state === 'FULL' && !playerOwedBase && !waitlist) {
     return <FormFull title={form.title} />;
   }
 
@@ -222,6 +227,7 @@ export default async function RegistrationFormPage({
          */
         unknownToken={registrant.kind === 'UNKNOWN_TOKEN'}
         roster={roster}
+        waitlist={waitlist}
       />
   );
 }

@@ -29,3 +29,4 @@ export function updateUrl(token: string): string {
 
 /** What a token may look like, checked before it reaches the database. */
 export const UPDATE_TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
+

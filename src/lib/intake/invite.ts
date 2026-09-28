@@ -6,7 +6,7 @@ import { idSchema } from '@/lib/commands/selection';
 import { defaultTemplateFor } from '@/lib/delivery/purposes';
 import { escapeMergeValues, renderTemplate } from '@/lib/email/render';
 import { draftSuperseding, MessageInFlightError } from '@/lib/email/supersede';
-import { templateFor } from './receipt';
+import { templateFor } from '@/lib/email/template-row';
 
 /**
  * *Invite players* (spec/v3.md §25.2, §23.2): the optional `PLAYER_INVITE`

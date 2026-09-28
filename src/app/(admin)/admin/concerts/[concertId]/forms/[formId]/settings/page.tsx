@@ -62,6 +62,7 @@ export default async function FormSettingsPage({
           maxResponses: form.maxResponses,
           oneResponsePerIdentity: form.oneResponsePerIdentity ?? false,
           autoCloseOnCapacity: form.autoCloseOnCapacity ?? false,
+          waitlistWhenFull: form.waitlistWhenFull ?? false,
         }}
       />
 

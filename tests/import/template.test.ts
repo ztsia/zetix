@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { parseWorkbook, toSheetRows } from '@/lib/import/parse';
-import { planImport, type PlanContext } from '@/lib/import/plan';
+import { expandLine } from '@/lib/import/staging';
 import { parseMappingProfile } from '@/lib/import/profile';
 import {
   TEMPLATE_HEADERS,
@@ -18,22 +18,13 @@ import { templateCsv, templateXlsx } from '@/lib/import/template-file';
  * silently, and whose drift looks like "the mapping step is just broken".
  */
 
-const baseContext: PlanContext = {
-  audienceMode: 'PUBLIC',
-  extrasPolicy: 'AUTO_FCFS',
-  baseQuota: null,
-  maxTicketsPerResponse: null,
-  openSeats: 100,
-  extrasPool: 100,
-  baseAlreadyClaimed: new Map(),
-  playersWithExistingRegistration: new Set(),
-  existingParties: new Map(),
-  playerMatches: new Map(),
-  playerOverrides: new Map(),
-};
+/** The seats the staging grid would derive from the template's rows. */
+function seatsOf(rows: Parameters<typeof expandLine>[0][], profile: ReturnType<typeof parseMappingProfile>) {
+  return rows.flatMap((row) => expandLine(row, profile).map((seat) => seat.fields));
+}
 
 describe('the template maps itself', () => {
-  it('round-trips: the generated file parses, suggests, and plans with no findings', async () => {
+  it('round-trips: the generated file parses, suggests, and stages cleanly', async () => {
     const buffer = await templateXlsx('Asia/Kuala_Lumpur');
     const workbook = await parseWorkbook(buffer, 'import-template.xlsx');
     const { headers, rows } = toSheetRows(workbook.sheets[0], 1);
@@ -53,33 +44,19 @@ describe('the template maps itself', () => {
       group_key: null,
     });
 
-    // 3. The default profile plans the example rows cleanly on the path the
-    //    screen actually builds for a player-invited segment: the allocation
-    //    column mapped, "Allocated" reading as BASE.
+    // 3. The default profile stages the example rows cleanly on the path the
+    //    screen builds for a player-invited segment: the allocation column
+    //    mapped, "Allocated" reading as BASE.
     const profile = parseMappingProfile({
       ...defaultProfileFor('EXTRA'),
       player_match: { column: TEMPLATE_HEADERS.contactEmail, strategy: 'EMAIL' },
     });
-    const plan = planImport(rows, profile, {
-      ...baseContext,
-      audienceMode: 'PLAYER_INVITED',
-      extrasPolicy: 'REVIEW',
-      baseQuota: 2,
-      playerMatches: new Map([
-        ['alice@example.com', { playerId: 1, fullName: 'Alice Tan', confidence: 1, needsConfirmation: false }],
-        ['carol@example.com', { playerId: 2, fullName: 'Carol Lim', confidence: 1, needsConfirmation: false }],
-      ]),
-    });
-
-    expect(plan.counts.blocking).toBe(0);
-    expect(plan.counts.parties).toBe(2);
-    expect(plan.counts.seats).toBe(4);
-    expect(plan.largestParty).toBe(3);
-    expect(plan.counts.placeholderNames).toBe(1);
-    // Alice has two BASE within her quota of 2, plus one EXTRA already marked
-    // as such in the sheet; nothing needed promoting.
-    expect(plan.counts.baseSeats).toBe(3);
-    expect(plan.counts.promotedToExtra).toBe(0);
+    const seats = seatsOf(rows, profile);
+    expect(seats).toHaveLength(4);
+    expect(seats.every((seat) => seat.allocationType !== null)).toBe(true);
+    expect(new Set(seats.map((seat) => seat.contactEmail)).size).toBe(2);
+    expect(seats.filter((seat) => seat.attendeeName === null)).toHaveLength(1);
+    expect(seats.filter((seat) => seat.allocationType === 'BASE')).toHaveLength(3);
   });
 
   /**
@@ -88,7 +65,7 @@ describe('the template maps itself', () => {
    * template's own "Allocated" rows would block on BASE_IN_PUBLIC_SEGMENT —
    * which is the correct refusal, and the reason the screen locks the control.
    */
-  it('plans cleanly for a public segment when the screen unmaps the type column', async () => {
+  it('stages every seat as extra for a public segment when the screen unmaps the type column', async () => {
     const buffer = await templateXlsx('UTC');
     const workbook = await parseWorkbook(buffer, 'import-template.xlsx');
     const { rows } = toSheetRows(workbook.sheets[0], 1);
@@ -98,24 +75,23 @@ describe('the template maps itself', () => {
       ...forPublic,
       columns: { ...forPublic.columns, allocation_type: null },
     });
-    const plan = planImport(rows, profile, baseContext);
-
-    expect(plan.counts.blocking).toBe(0);
-    expect(plan.counts.seats).toBe(4);
-    expect(plan.counts.baseSeats).toBe(0);
-    expect(plan.counts.extraSeats).toBe(4);
+    const seats = seatsOf(rows, profile);
+    expect(seats).toHaveLength(4);
+    expect(seats.every((seat) => seat.allocationType === 'EXTRA')).toBe(true);
   });
 
-  /** And the refusal itself, so the lock in the UI is not the only guard. */
-  it('blocks the template as-is against a public segment', async () => {
+  /**
+   * And the template as-is keeps its "Allocated" rows as BASE, which the
+   * staging grid refuses in a public segment (BASE_IN_PUBLIC_SEGMENT), so the
+   * lock in the UI is not the only guard.
+   */
+  it('keeps base seats in the template as-is, for the grid to refuse in a public segment', async () => {
     const buffer = await templateXlsx('UTC');
     const workbook = await parseWorkbook(buffer, 'import-template.xlsx');
     const { rows } = toSheetRows(workbook.sheets[0], 1);
 
-    const plan = planImport(rows, parseMappingProfile(defaultProfileFor('EXTRA')), baseContext);
-
-    expect(plan.findings.some((f) => f.code === 'BASE_IN_PUBLIC_SEGMENT')).toBe(true);
-    expect(plan.counts.blocking).toBeGreaterThan(0);
+    const seats = seatsOf(rows, parseMappingProfile(defaultProfileFor('EXTRA')));
+    expect(seats.some((seat) => seat.allocationType === 'BASE')).toBe(true);
   });
 
   it('produces a csv that parses to the same rows', async () => {

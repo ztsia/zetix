@@ -2,9 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSessionUser } from '@/lib/auth/session';
 import { writeAuditLog } from '@/lib/audit';
-import { buildPlanContext, loadSegmentTarget } from '@/lib/import/context';
-import { commitImport, recordDryRun } from '@/lib/import/commit';
-import { planImport } from '@/lib/import/plan';
+import { loadSegmentTarget } from '@/lib/import/context';
 import {
   detectHeaderRow,
   distinctValues,
@@ -13,6 +11,7 @@ import {
   toSheetRows,
 } from '@/lib/import/parse';
 import { parseMappingProfile } from '@/lib/import/profile';
+import { stageBatch } from '@/lib/import/staging';
 import { suggestColumns } from '@/lib/import/template';
 
 /**
@@ -20,13 +19,12 @@ import { suggestColumns } from '@/lib/import/template';
  *
  * Node runtime, because `exceljs` is a Node module (spec/platform.md §16.1).
  *
- * **The file is re-sent with every step rather than held on the server.** The
- * client keeps it and posts it for `inspect`, `dry-run` and `commit` alike. That
- * is not laziness: the planner is pure, so re-parsing and re-planning the same
- * bytes gives the same answer, and the alternative — parking the upload in
- * Storage or a session — introduces state that can expire, leak between admins,
- * or be committed after the segment it was planned against has changed. A file
- * of a few hundred rows is tens of kilobytes.
+ * **Two actions.** `inspect` reads the file for the mapping step and writes
+ * nothing; `stage` lands its rows in `import_rows`, one per seat, for the
+ * staging grid (spec/v3.md §25.7). The file itself is never stored: once
+ * staged, each row keeps the cells it came from (`import_rows.raw`), and the
+ * grid is edited and committed from those. V1's `dry-run` and `commit` are
+ * retired with it (decision 49).
  *
  * **`ADMIN` only.** Import writes registrations for the whole segment; an
  * operator may not even export (spec/admin.md §14.3). `/api` is outside the
@@ -37,29 +35,7 @@ export const maxDuration = 60;
 
 const profileSchema = z.unknown();
 
-const actionSchema = z.enum(['inspect', 'dry-run', 'commit']);
-
-/**
- * Player choices made on the dry-run screen, as `{ "cell value": playerId }`
- * (spec/import.md §9.3).
- *
- * Sent with the dry run *and* the commit, because both re-plan from the file and
- * a commit that dropped them would silently reinstate every block the admin just
- * cleared. The ids are re-validated against this concert in
- * `loadPlayerOverrides` — this only checks the shape.
- */
-const overridesSchema = z.record(z.string(), z.number().int().positive());
-
-function readPlayerOverrides(raw: FormDataEntryValue | null): Map<string, number> {
-  if (typeof raw !== 'string' || raw === '') return new Map();
-  const parsed = overridesSchema.safeParse(JSON.parse(raw));
-  return parsed.success ? new Map(Object.entries(parsed.data)) : new Map();
-}
-
-/** The typed confirmation the commit requires (§9.6, mirroring §7.5). */
-const commitSchema = z.object({
-  confirmation: z.string().min(1),
-});
+const actionSchema = z.enum(['inspect', 'stage']);
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -190,118 +166,23 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  let playerOverrides: Map<string, number>;
-  try {
-    playerOverrides = readPlayerOverrides(form.get('playerOverrides'));
-  } catch {
-    return NextResponse.json({ error: 'Player choices could not be read.' }, { status: 400 });
-  }
-
-  const context = await buildPlanContext(target, profile, rows, playerOverrides);
-  const plan = planImport(rows, profile, context);
-
-  const payload = {
-    audienceMode: target.audienceMode,
-    counts: plan.counts,
-    largestParty: plan.largestParty,
-    findings: plan.findings,
-    openSeats: context.openSeats,
-    extrasPool: context.extrasPool,
-    extrasPolicy: context.extrasPolicy,
-    parties: plan.parties.map((p) => ({
-      key: p.key,
-      rows: p.rowNumbers,
-      contactName: p.contactName,
-      contactEmail: p.contactEmail,
-      requestedAt: p.requestedAt.toISOString(),
-      playerId: p.playerId,
-      playerName: p.playerName,
-      blocked: p.blocked,
-      skipped: p.skipped,
-      seats: p.seats.map((s) => ({
-        rowNumber: s.rowNumber,
-        fullName: s.fullName,
-        email: s.email,
-        allocationType: s.allocationType,
-        promotedFromBase: s.promotedFromBase,
-      })),
-    })),
-  };
-
-  if (action.data === 'dry-run') {
-    const batchId = await recordDryRun({
-      target,
-      filename: file.name,
-      plan,
-      uploadedBy: user.id,
-    });
-    return NextResponse.json({ ...payload, batchId, committed: false });
-  }
-
-  // Commit. The typed confirmation is checked server-side as well as in the
-  // dialog: there is no rollback (decision 26), so the gate cannot live only in
-  // a component that a stale tab could bypass.
-  const confirmation = commitSchema.safeParse({ confirmation: form.get('confirmation') });
-  if (!confirmation.success) {
-    return NextResponse.json({ error: 'A typed confirmation is required.' }, { status: 400 });
-  }
-
-  const [segmentName] = await segmentNameFor(segmentId);
-  if (confirmation.data.confirmation.trim() !== segmentName) {
-    return NextResponse.json(
-      { error: `Type the segment name exactly ("${segmentName}") to confirm.` },
-      { status: 400 },
-    );
-  }
-
-  // Any blocking finding, not only a file-level one (§9.4). The screen disables
-  // Commit for the same reason; this is the half a stale tab cannot skip.
-  if (plan.counts.blocking > 0) {
-    return NextResponse.json(
-      {
-        error: `This import has ${plan.counts.blocking} blocking ${plan.counts.blocking === 1 ? 'issue' : 'issues'} and cannot be committed. Resolve them and dry run again.`,
-      },
-      { status: 409 },
-    );
-  }
-
-  try {
-    const outcome = await commitImport({
-      target,
-      filename: file.name,
-      plan,
-      uploadedBy: user.id,
-    });
-
-    await writeAuditLog({
-      action: 'import.committed',
-      entityType: 'import_batch',
-      entityId: outcome.batchId,
-      after: {
-        filename: file.name,
-        segmentId,
-        registrations: outcome.createdRegistrations,
-        attendees: outcome.createdAttendees,
-        skipped: outcome.skippedParties,
-        granted: outcome.granted,
-      },
-      reason: confirmation.data.confirmation,
-    });
-
-    return NextResponse.json({ ...payload, committed: true, outcome });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'The import failed.' },
-      { status: 400 },
-    );
-  }
-}
-
-async function segmentNameFor(segmentId: number): Promise<[string]> {
-  const { getDb } = await import('@/db/client');
-  const { sql } = await import('drizzle-orm');
-  const rows = await getDb().execute<{ name: string }>(
-    sql`select name from show_segments where id = ${segmentId}`,
-  );
-  return [rows[0]?.name ?? ''];
+  /**
+   * V3 (spec/v3.md §25.7): the rows land in the staging grid, where they are
+   * edited and committed a party at a time. Nothing is claimed here.
+   */
+  const staged = await stageBatch({
+    target,
+    filename: file.name,
+    profile,
+    rows,
+    uploadedBy: user.id,
+    queueReceipts: form.get('queueReceipts') === 'true',
+  });
+  await writeAuditLog({
+    action: 'import.staged',
+    entityType: 'import_batch',
+    entityId: staged.batchId,
+    after: { filename: file.name, segmentId, rows: staged.rows, emptyLines: staged.emptyLines },
+  });
+  return NextResponse.json(staged);
 }

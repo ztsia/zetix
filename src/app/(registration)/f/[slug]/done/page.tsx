@@ -13,6 +13,9 @@ import {
 } from '@/components/ui/item';
 import { getDb } from '@/db/client';
 import { formatDateTime } from '@/lib/portal/format';
+import { ThemedForm } from '@/components/forms/themed-form';
+import { bannerUrl } from '@/lib/forms/banner';
+import { parseTheme } from '@/lib/forms/theme';
 import { FormNotFound } from '../states';
 
 /**
@@ -50,6 +53,7 @@ type Row = {
   venue: string | null;
   timezone: string | null;
   confirmation_message_md: string | null;
+  theme: unknown;
 };
 
 export default async function RegistrationDonePage({
@@ -88,7 +92,8 @@ export default async function RegistrationDonePage({
       s.starts_at::text as starts_at,
       s.venue_name as venue,
       c.timezone,
-      f.confirmation_message_md
+      f.confirmation_message_md,
+      f.theme
     from form_responses fr
     -- Every response knows its party (\`0204\`): a submission merged into an
     -- existing party by email (spec/v3.md §25.5) reports the whole party,
@@ -101,7 +106,7 @@ export default async function RegistrationDonePage({
     where fr.edit_token = ${editToken}
       and r.deleted_at is null
     group by r.contact_name, r.contact_email, r.status, s.name, s.starts_at, s.venue_name,
-             c.timezone, f.confirmation_message_md
+             c.timezone, f.confirmation_message_md, f.theme
     limit 1
   `);
 
@@ -113,8 +118,9 @@ export default async function RegistrationDonePage({
   const waitlisted = Number(row.waitlisted);
   const showTime = formatDateTime(row.starts_at ? new Date(row.starts_at) : null, row.timezone);
 
+  const theme = parseTheme(row.theme);
   return (
-    <div className="flex flex-col gap-3">
+    <ThemedForm theme={theme} bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}>
       {/*
         Google Forms' "Your response has been recorded" card: the header card,
         with the thanks as its title and the admin's confirmation message under
@@ -221,6 +227,6 @@ export default async function RegistrationDonePage({
           </AlertDescription>
         </Alert>
       </FormCard>
-    </div>
+    </ThemedForm>
   );
 }

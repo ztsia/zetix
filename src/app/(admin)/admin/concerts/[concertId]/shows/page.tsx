@@ -7,6 +7,7 @@ import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { ShowCard } from './show-card';
 import { ShowFormDialog } from './show-form-dialog';
 import { getConcertHeader, getShowsForConcert } from './queries';
+import { formFunnels } from '@/lib/intake/funnel';
 
 export const metadata: Metadata = { title: 'Shows' };
 
@@ -34,7 +35,7 @@ export default async function ShowsPage({
   const concert = await getConcertHeader(concertId);
   if (!concert) notFound();
 
-  const shows = await getShowsForConcert(concertId);
+  const [shows, funnels] = await Promise.all([getShowsForConcert(concertId), formFunnels(concertId)]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,6 +90,8 @@ export default async function ShowsPage({
               concertId={concertId}
               show={show}
               timeZone={concert.timezone}
+              forms={funnels.filter((form) => form.showId === show.id)}
+              appUrl={process.env.APP_URL ?? null}
             />
           ))}
         </div>

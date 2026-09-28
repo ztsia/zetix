@@ -363,7 +363,13 @@ export function RegistrationForm({
       />
 
       <div className="mt-1 flex items-center justify-between gap-3">
-        <Button type="submit" disabled={pending}>
+        <Button
+          type="submit"
+          disabled={pending}
+          // The form's accent, so a theme colours its button (spec/v3.md §25.6);
+          // with no theme the accent is the system primary.
+          className="bg-form-accent text-form-accent-foreground hover:bg-form-accent/90"
+        >
           {pending ? <Spinner /> : null}
           {pending ? 'Submitting…' : waitlist ? 'Join the waitlist' : 'Submit'}
         </Button>

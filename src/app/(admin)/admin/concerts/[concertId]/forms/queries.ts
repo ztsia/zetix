@@ -121,6 +121,8 @@ export type FormDetail = FormListRow & {
   oneResponsePerIdentity: boolean | null;
   autoCloseOnCapacity: boolean | null;
   waitlistWhenFull: boolean | null;
+  /** The per-form theme, raw (`lib/forms/theme.ts` parses it). */
+  theme: unknown;
   allowEditUntil: Date | null;
   /**
    * The raw column, which nothing reads (see `party-cap.ts`). Carried so the
@@ -157,6 +159,7 @@ export async function getForm(concertId: number, formId: number): Promise<FormDe
       oneResponsePerIdentity: registrationForms.oneResponsePerIdentity,
       autoCloseOnCapacity: registrationForms.autoCloseOnCapacity,
       waitlistWhenFull: registrationForms.waitlistWhenFull,
+      theme: registrationForms.theme,
       allowEditUntil: registrationForms.allowEditUntil,
       maxTicketsPerResponse: registrationForms.maxTicketsPerResponse,
       segmentId: registrationForms.segmentId,

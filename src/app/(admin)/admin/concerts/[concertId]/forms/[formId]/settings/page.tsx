@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation';
 import { getForm, getFormCascade } from '../../queries';
 import { FormSettings } from '../form-settings';
 import { ResolvedFacts } from '../resolved-facts';
+import { FormThemePanel } from '../form-theme';
+import { bannerUrl } from '@/lib/forms/banner';
+import { parseTheme } from '@/lib/forms/theme';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -45,6 +48,7 @@ export default async function FormSettingsPage({
   if (!form) notFound();
 
   const cascade = await getFormCascade(form);
+  const theme = parseTheme(form.theme);
 
   return (
     <div className="mx-auto flex w-full max-w-[770px] flex-col gap-3">
@@ -65,6 +69,15 @@ export default async function FormSettingsPage({
           waitlistWhenFull: form.waitlistWhenFull ?? false,
         }}
       />
+
+      {form.kind !== 'FEEDBACK' && (
+        <FormThemePanel
+          concertId={concertId}
+          formId={formId}
+          theme={theme}
+          bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}
+        />
+      )}
 
       <ResolvedFacts
         concertId={concertId}

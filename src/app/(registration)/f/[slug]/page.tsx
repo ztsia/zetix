@@ -6,6 +6,9 @@ import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
 import { loadFormBySlug } from '@/lib/forms/load';
 import { resolveRegistrant, rosterForPicker } from '@/lib/forms/registrant';
 import { seatIndicator } from '@/lib/forms/seat-indicator';
+import { ThemedForm } from '@/components/forms/themed-form';
+import { bannerUrl } from '@/lib/forms/banner';
+import { parseTheme } from '@/lib/forms/theme';
 import { RegistrationForm } from './registration-form';
 import {
   FormClosed,
@@ -203,8 +206,10 @@ export default async function RegistrationFormPage({
     return <FormFull title={form.title} />;
   }
 
+  const theme = parseTheme(form.theme);
   return (
-    <RegistrationForm
+    <ThemedForm theme={theme} bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}>
+      <RegistrationForm
         title={form.title}
         description={form.description}
         slug={form.slug}
@@ -229,5 +234,6 @@ export default async function RegistrationFormPage({
         roster={roster}
         waitlist={waitlist}
       />
+    </ThemedForm>
   );
 }

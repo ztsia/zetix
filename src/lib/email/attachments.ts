@@ -6,7 +6,7 @@ import { getDb } from '@/db/client';
 import { backgroundFor, loadTicketAsset } from '@/lib/tickets/background';
 import { loadTicket } from '@/lib/tickets/load';
 import { renderTicket } from '@/lib/tickets/render';
-import type { OutgoingAttachment } from './transport';
+import type { OutgoingAttachment } from '@/lib/mail/transport';
 
 /**
  * Turning a registration into the PDFs its message carries

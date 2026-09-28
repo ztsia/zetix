@@ -1,0 +1,62 @@
+Delivered-To: events@example.org
+Received: by 2002:a05:6a10:1234 with SMTP id abc;
+        Sat, 26 Sep 2026 03:12:01 -0700 (PDT)
+Return-Path: <>
+From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>
+To: events@example.org
+Auto-Submitted: auto-replied
+Subject: Delivery Status Notification (Failure)
+References: <41.9f2c1e0a7b3d4c5e@example.org>
+In-Reply-To: <41.9f2c1e0a7b3d4c5e@example.org>
+X-Failed-Recipients: nobody@invalid-guest.example
+Message-ID: <66f5a1b1.050a0220.dsn01@mx.google.com>
+Date: Sat, 26 Sep 2026 03:12:01 -0700 (PDT)
+MIME-Version: 1.0
+Content-Type: multipart/report; boundary="000000000000dsnboundary"; report-type=delivery-status
+
+--000000000000dsnboundary
+Content-Type: text/plain; charset="UTF-8"
+
+
+** Address not found **
+
+Your message wasn't delivered to nobody@invalid-guest.example because the address couldn't be found, or is unable to receive mail.
+
+The response from the remote server was:
+550 5.1.1 The email account that you tried to reach does not exist.
+
+--000000000000dsnboundary
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; googlemail.com
+Received-From-MTA: dns; events@example.org
+Arrival-Date: Sat, 26 Sep 2026 03:11:59 -0700 (PDT)
+X-Original-Message-ID: <41.9f2c1e0a7b3d4c5e@example.org>
+
+Final-Recipient: rfc822; nobody@invalid-guest.example
+Action: failed
+Status: 5.1.1
+Remote-MTA: dns; mx.invalid-guest.example. (192.0.2.1, the server for the domain
+ invalid-guest.example.)
+Diagnostic-Code: smtp; 550-5.1.1 The email account that you tried to reach does
+ not exist. Please try double-checking the recipient's email address for typos
+ or unnecessary spaces.
+Last-Attempt-Date: Sat, 26 Sep 2026 03:12:01 -0700 (PDT)
+
+--000000000000dsnboundary
+Content-Type: message/rfc822
+
+Return-Path: <events@example.org>
+Received: from localhost ([192.0.2.9]) by smtp.gmail.com
+From: "Lakeside Community Orchestra" <events@example.org>
+To: nobody@invalid-guest.example
+Reply-To: events+p41@example.org
+Subject: Your tickets
+Message-ID: <41.9f2c1e0a7b3d4c5e@example.org>
+Date: Sat, 26 Sep 2026 10:11:58 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Here are your tickets.
+
+--000000000000dsnboundary--

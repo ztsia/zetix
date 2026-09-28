@@ -88,6 +88,9 @@ const PAGES: Array<[string, Record<string, string>]> = [
   ['operators', {}],
   ['portal', {}],
   ['notes', {}],
+  ['inbox', {}],
+  ['inbox', { view: 'all' }],
+  ['inbox', { view: 'bounces' }],
   ['activity', {}],
   ['trash', { kind: 'party' }],
   ['trash', { kind: 'player' }],
@@ -259,6 +262,38 @@ describe('every admin page, rendered for a VIEWER', () => {
     sessionUser.mockResolvedValue(VIEWER);
     const asViewer = await renderRecord();
     for (const secret of [...recordSecrets, ...secrets]) {
+      expect(asViewer, `viewer must not see ${secret}`).not.toContain(secret);
+    }
+  });
+
+  it('the Inbox and a player’s thread mask the replies they list', async () => {
+    const [party] = await sql<{ id: string }[]>`
+      select id from registrations where contact_name = 'Farah' and deleted_at is null`;
+    const [player] = await sql<{ id: string }[]>`select id from players where deleted_at is null limit 1`;
+    const [partyThread] = await sql<{ id: string }[]>`
+      insert into email_threads (registration_id, last_message_at) values (${party!.id}, now())
+      on conflict (registration_id) do update set last_message_at = now() returning id`;
+    const [playerThread] = await sql<{ id: string }[]>`
+      insert into email_threads (player_id, last_message_at) values (${player!.id}, now()) returning id`;
+    await sql`
+      insert into email_messages (thread_id, direction, from_email, subject, text, message_at) values
+        (${partyThread!.id}, 'INBOUND', ${CONTACT_EMAIL}, 'Re: inbox', ${'call me on +60 16-222 3333, or inbox.secret@example.test'}, now()),
+        (${playerThread!.id}, 'INBOUND', 'player.thread@example.test', 'Re: digest', ${'ring +60 16-444 5555'}, now())`;
+    const inboxSecrets = ['222 3333', 'inbox.secret@example.test', '444 5555', 'player.thread@example.test'];
+
+    const renderAll = async () =>
+      [
+        ...strings(await render('inbox', { view: 'all' })),
+        ...strings(await render('inbox/[threadId]', {}, { threadId: String(playerThread!.id) })),
+      ].join('\n');
+
+    sessionUser.mockResolvedValue(ADMIN);
+    const asAdmin = await renderAll();
+    for (const secret of inboxSecrets) expect(asAdmin, `admin sees ${secret}`).toContain(secret);
+
+    sessionUser.mockResolvedValue(VIEWER);
+    const asViewer = await renderAll();
+    for (const secret of [...inboxSecrets, ...secrets]) {
       expect(asViewer, `viewer must not see ${secret}`).not.toContain(secret);
     }
   });

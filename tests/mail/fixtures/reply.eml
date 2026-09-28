@@ -1,0 +1,25 @@
+Delivered-To: events@example.org
+Return-Path: <guest@guest.example>
+From: Ada Guest <guest@guest.example>
+To: "Lakeside Community Orchestra" <events+p41@example.org>
+Subject: Re: Your tickets
+In-Reply-To: <41.9f2c1e0a7b3d4c5e@example.org>
+References: <40.0000000000000000@example.org> <41.9f2c1e0a7b3d4c5e@example.org>
+Message-ID: <CAF=reply-1@mail.guest.example>
+Date: Sat, 26 Sep 2026 12:00:00 +0800
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset="UTF-8"
+
+Can I bring my daughter as well?
+
+On Sat, 26 Sep 2026 Lakeside Community Orchestra wrote:
+> Here are your tickets.
+
+--alt
+Content-Type: text/html; charset="UTF-8"
+
+<div>Can I bring my <b>daughter</b> as well?<img src="https://tracker.example/pixel.gif"><script>alert(1)</script></div><a href="https://guest.example" onclick="x()">site</a><a href="javascript:alert(1)">bad</a>
+--alt--

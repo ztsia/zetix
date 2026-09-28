@@ -1,0 +1,14 @@
+From: postmaster@old-isp.example
+To: events@example.org
+Subject: Undeliverable: Your tickets
+Message-ID: <nd-1@old-isp.example>
+Date: Sat, 26 Sep 2026 05:00:00 +0000
+Content-Type: text/plain
+
+Your message could not be delivered.
+
+  gone@old-isp.example: 550 5.1.1 User unknown
+
+------ Original message headers ------
+Message-ID: <60.bbbbbbbbbbbbbbbb@example.org>
+Subject: Your tickets

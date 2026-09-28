@@ -17,7 +17,7 @@
  * **Runs locally, against whatever `DATABASE_URL` points at.** It is not wired
  * into the app, has no route, and nothing schedules it.
  *
- * `--conditions=react-server` is not decoration: `lib/email/transport.ts` and
+ * `--conditions=react-server` is not decoration: `lib/mail/transport.ts` and
  * `lib/email/config.ts` are `server-only`, and that package throws on import
  * under plain Node. The condition is what lets this script send through the
  * *same* transport and the *same* renderer production uses, so the MIME that

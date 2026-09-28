@@ -6,7 +6,7 @@ import { getCommand } from '@/lib/commands/registry';
 import { getDb } from '@/db/client';
 import { seedDefaultTemplates } from '@/lib/email/defaults';
 import { dispatchBatch } from '@/lib/email/dispatch';
-import type { MailTransport, OutgoingMessage } from '@/lib/email/transport';
+import type { MailTransport, OutgoingMessage } from '@/lib/mail/transport';
 import { listMessages } from '@/lib/delivery/messages';
 import { createRegistration } from '@/lib/registrations/mutations';
 

@@ -19,6 +19,7 @@ import {
 import { getConcertHeader } from '../../shows/queries';
 import { listPlayerOptions, listSegmentOptions } from '../../registrations/queries';
 import { CommandHost } from '../command-host';
+import { InboxAutoSync } from '../../inbox/reply-controls';
 import { PartyRecord } from './party-record';
 
 export const metadata: Metadata = { title: 'Party' };
@@ -93,6 +94,8 @@ export default async function PartyRecordPage({
 
   return (
     <CommandHost concertId={concertId} data={{ segments: options.segments, players: options.players }}>
+      {/* A record being opened reads the mailbox, so its Conversation is current (spec/v3.md §26.3). */}
+      <InboxAutoSync concertId={concertId} immediately />
       <PartyRecord
         concertId={concertId}
         timeZone={concert.timezone ?? 'UTC'}

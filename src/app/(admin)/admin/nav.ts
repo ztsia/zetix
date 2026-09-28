@@ -9,6 +9,7 @@ import {
   Inbox,
   Mail,
   MessageSquareQuote,
+  MessagesSquare,
   ScanLine,
   Settings,
   Smartphone,
@@ -127,6 +128,14 @@ export const CONCERT_NAV: NavGroup[] = [
         icon: Inbox,
         description: 'Every message in every state, and what can be done with each.',
         module: 'T',
+      },
+      {
+        // Replies to what the concert sent, and bounces (spec/v3.md §26).
+        slug: 'inbox',
+        label: 'Inbox',
+        icon: MessagesSquare,
+        description: 'Replies waiting for an answer, and messages that bounced.',
+        module: 'U',
       },
       {
         slug: 'import',

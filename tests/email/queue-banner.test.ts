@@ -11,7 +11,7 @@ import {
 import { MAX_DISPATCH_SECONDS, dispatchBatch, outboxBacklog } from '@/lib/email/dispatch';
 import { queueBlast } from '@/lib/email/queue';
 import { issueTickets } from '@/lib/tickets/issue';
-import type { MailTransport } from '@/lib/email/transport';
+import type { MailTransport } from '@/lib/mail/transport';
 
 /**
  * What the queue banner reads (spec/email.md §11.2.1).

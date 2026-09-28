@@ -11,7 +11,7 @@ import {
 import { dispatchBatch } from '@/lib/email/dispatch';
 import { purposeFor } from '@/lib/email/templates';
 import { issueTickets } from '@/lib/tickets/issue';
-import type { MailTransport, OutgoingMessage, SendResult } from '@/lib/email/transport';
+import type { MailTransport, OutgoingMessage, SendResult } from '@/lib/mail/transport';
 
 /**
  * The dispatcher (spec/email.md §11.2, §11.4 mechanism 4).

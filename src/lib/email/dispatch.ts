@@ -7,7 +7,9 @@ import { buildPartyAttachments, encodedSizeBytes, UnissuedTicketError } from './
 import { createConfiguredTransport } from './config';
 import { markdownToEmailHtml, markdownToPlainText } from './render';
 import { carriesTickets, TICKET_FOOTER } from './templates';
-import type { MailTransport } from './transport';
+import { appendMessage, ensureThread, markThreadHandled } from '@/lib/inbox/threads';
+import { makeMessageId, plusAddress, type Addressee } from '@/lib/mail/tagging';
+import type { MailTransport, OutgoingThreading } from '@/lib/mail/transport';
 
 /**
  * The dispatcher (spec/email.md §11.2).
@@ -94,13 +96,19 @@ export type DispatchResult = {
 type ClaimedRow = {
   id: number;
   registrationId: number;
+  /** Set only for the player-addressed messages; `registrationId` is then 0. */
+  playerId: number | null;
+  purpose: string;
   toEmail: string;
   toName: string | null;
   subject: string;
   bodyMd: string;
   attempts: number;
-  templateKey: string;
+  /** Null only for a `REPLY`, which a person wrote. */
+  templateKey: string | null;
   context: Record<string, string> | null;
+  /** For a `REPLY`: the `email_messages` row it answers. */
+  inReplyToMessageId: number | null;
 };
 
 /**
@@ -135,16 +143,28 @@ async function concertTimezone(): Promise<string> {
  * clicking Send take a *different* batch instead of blocking on the same rows
  * or, worse, sending them twice.
  */
-async function claimBatch(limit: number): Promise<ClaimedRow[]> {
+async function claimBatch(limit: number, onlyIds?: readonly number[]): Promise<ClaimedRow[]> {
+  // A reply is sent the moment it is written (spec/v3.md §26.6): the caller
+  // names its row, and this claims that row and nothing else.
+  const only =
+    onlyIds && onlyIds.length > 0
+      ? sql`and id in (${sql.join(
+          onlyIds.map((id) => sql`${id}::bigint`),
+          sql`, `,
+        )})`
+      : sql``;
   const rows = await getDb().execute<{
     id: string;
-    registration_id: string;
+    registration_id: string | null;
+    player_id: string | null;
+    purpose: string;
+    in_reply_to_message_id: string | null;
     to_email: string;
     to_name: string | null;
     subject: string;
     body_md: string;
     attempts: number;
-    template_key: string;
+    template_key: string | null;
     context: Record<string, string> | null;
   }>(sql`
     with claimed as (
@@ -156,6 +176,7 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
          -- cancels it first (Messages › Delete), so this is the second door,
          -- for a row that reached the Trash some other way.
          and deleted_at is null
+         ${only}
        order by created_at, id
        for update skip locked
        limit ${limit}
@@ -169,13 +190,17 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
        -- ever weakened, this is what still stops one row being claimed twice,
        -- and a double claim is a double send.
        and o.status = 'QUEUED'
-    returning o.id, o.registration_id, o.to_email, o.to_name, o.subject, o.body_md,
+    returning o.id, o.registration_id, o.player_id, o.purpose, o.in_reply_to_message_id,
+              o.to_email, o.to_name, o.subject, o.body_md,
               o.attempts, o.template_key, o.context
   `);
 
   return rows.map((r) => ({
     id: Number(r.id),
-    registrationId: Number(r.registration_id),
+    registrationId: Number(r.registration_id ?? 0),
+    playerId: r.player_id === null ? null : Number(r.player_id),
+    purpose: r.purpose,
+    inReplyToMessageId: r.in_reply_to_message_id === null ? null : Number(r.in_reply_to_message_id),
     toEmail: r.to_email,
     toName: r.to_name,
     subject: r.subject,
@@ -196,13 +221,55 @@ async function claimBatch(limit: number): Promise<ClaimedRow[]> {
  * of the row that says the message went, and those attendees would then be
  * excluded from every future blast having never received anything.
  */
-async function markSent(rowId: number, attendeeIds: number[]): Promise<void> {
+async function markSent(
+  rowId: number,
+  attendeeIds: number[],
+  messageId: string | null,
+  reply: SentReply | null,
+): Promise<void> {
   await getDb().transaction(async (tx) => {
+    /**
+     * `message_id` is written with `SENT`, never before: it names the message
+     * that went, and a retry mints a new one (spec/v3.md §26.2). A bounce or a
+     * reply that quotes it finds this row.
+     */
     await tx.execute(sql`
       update email_outbox
-         set status = 'SENT', sent_at = now(), last_error = null, updated_at = now()
+         set status = 'SENT', sent_at = now(), last_error = null, updated_at = now(),
+             message_id = coalesce(${messageId}, message_id)
        where id = ${rowId}
     `);
+    /**
+     * A reply joins its thread as the newest message, in the same transaction
+     * that says it went, and answers every question asked before it. See
+     * `src/lib/inbox/threads.ts` for why only replies are copied there.
+     */
+    if (reply) {
+      const threadId = reply.threadId ?? (await ensureThread(tx, reply.addressee));
+      const sentAt = new Date();
+      await appendMessage(tx, {
+        threadId,
+        direction: 'OUTBOUND',
+        outboxId: rowId,
+        messageId,
+        inReplyTo: reply.threading.inReplyTo ?? null,
+        referenceIds: reply.threading.references ?? [],
+        fromEmail: reply.from,
+        toEmail: reply.to,
+        subject: reply.subject,
+        text: reply.text,
+        messageAt: sentAt,
+      });
+      /**
+       * Up to the message answered, never up to now: a question that arrived
+       * while this reply sat in the queue — a retry, the daily cap — is still
+       * waiting (U's QA, finding 2). `sendReply()` has already handled these,
+       * with the admin's name; this covers a reply queued any other way.
+       */
+      if (reply.answeredMessageId !== null) {
+        await markThreadHandled(tx, threadId, null, { messageId: reply.answeredMessageId });
+      }
+    }
     if (attendeeIds.length > 0) {
       /**
        * `in ($1, $2, $3)` built with `sql.join`, not `= any(${'${array}'})`.
@@ -222,6 +289,61 @@ async function markSent(rowId: number, attendeeIds: number[]): Promise<void> {
       `);
     }
   });
+}
+
+type SentReply = {
+  addressee: Addressee;
+  /** The thread of the message answered, when there is one. */
+  threadId: number | null;
+  /** The `email_messages` row answered. */
+  answeredMessageId: number | null;
+  threading: OutgoingThreading;
+  from: string | null;
+  to: string;
+  subject: string;
+  text: string;
+};
+
+/** Who a row is addressed to, in the mail library's terms. */
+function addresseeOf(row: ClaimedRow): Addressee {
+  return row.playerId !== null
+    ? { kind: 'player', id: row.playerId }
+    : { kind: 'registration', id: row.registrationId };
+}
+
+/**
+ * The headers that tie a message back to its row (spec/v3.md §26.2), and — for
+ * a `REPLY` — to the message it answers (§26.6), so it threads in the guest's
+ * client and in Gmail's Sent folder alike.
+ *
+ * A transport that does not name its mailbox sends untagged: there is no
+ * domain to mint a `Message-ID` under and no address to plus-tag. Every real
+ * transport names one.
+ */
+async function threadingFor(
+  row: ClaimedRow,
+  sender: string | undefined,
+): Promise<{ threading: OutgoingThreading; threadId: number | null }> {
+  if (!sender) return { threading: {}, threadId: null };
+  const threading: OutgoingThreading = {
+    messageId: makeMessageId(row.id, sender),
+    replyTo: plusAddress(sender, addresseeOf(row)),
+  };
+  if (row.inReplyToMessageId === null) return { threading, threadId: null };
+
+  const [answered] = await getDb().execute<{
+    message_id: string | null;
+    reference_ids: string[] | null;
+    thread_id: string;
+  }>(sql`
+    select message_id, reference_ids, thread_id from email_messages where id = ${row.inReplyToMessageId}
+  `);
+  if (!answered) return { threading, threadId: null };
+  if (answered.message_id) {
+    threading.inReplyTo = answered.message_id;
+    threading.references = [...(answered.reference_ids ?? []), answered.message_id];
+  }
+  return { threading, threadId: Number(answered.thread_id) };
 }
 
 /**
@@ -435,6 +557,11 @@ export async function outboxBacklog(concertId?: number): Promise<OutboxBacklog> 
   };
 }
 
+/** Only a templated purpose can carry tickets; a `REPLY` never does. */
+function ticketBearing(row: ClaimedRow): boolean {
+  return row.templateKey !== null && carriesTickets(row.templateKey);
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type DispatchOptions = {
@@ -451,6 +578,11 @@ export type DispatchOptions = {
    * forty-five seconds proving that the loop stops after forty-five seconds.
    */
   sendWindowMs?: number;
+  /**
+   * Send these rows and no others — a reply, sent the moment it is written
+   * (spec/v3.md §26.6). The daily cap and every check still apply.
+   */
+  onlyIds?: readonly number[];
 };
 
 export async function dispatchBatch(options: DispatchOptions = {}): Promise<DispatchResult> {
@@ -492,7 +624,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
     };
   }
 
-  const batch = await claimBatch(Math.min(maxPerDispatch, budget));
+  const batch = await claimBatch(Math.min(maxPerDispatch, budget), options.onlyIds);
   if (batch.length === 0) {
     return {
       sent: 0,
@@ -550,7 +682,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
          * was delivered. Stamping it from a decline would quietly remove that
          * seat from every future blast.
          */
-        const party = carriesTickets(row.templateKey)
+        const party = ticketBearing(row)
           ? await buildPartyAttachments({ registrationId: row.registrationId, mergeAbove })
           : { attendeeIds: [], attachments: [], truncated: [], skipped: [] };
 
@@ -571,7 +703,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
          */
         const statedCount = Number(row.context?.attendee_count ?? NaN);
         if (
-          carriesTickets(row.templateKey) &&
+          ticketBearing(row) &&
           Number.isInteger(statedCount) &&
           statedCount !== party.attendeeIds.length
         ) {
@@ -599,7 +731,10 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
          * what is sent (§11.5). Only the HTML and plain-text renderings are
          * derived, and both come from the stored Markdown.
          */
+        const { threading, threadId } = await threadingFor(row, transport.sender);
+        const text = markdownToPlainText(row.bodyMd);
         const result = await transport.send({
+          threading,
           to: row.toEmail,
           toName: row.toName,
           subject: row.subject,
@@ -610,11 +745,11 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
              * to bring one — the same predicate that decides whether the
              * attachments were built at all, so the two cannot disagree.
              */
-            footer: carriesTickets(row.templateKey)
+            footer: ticketBearing(row)
               ? TICKET_FOOTER
               : undefined,
           }),
-          text: markdownToPlainText(row.bodyMd),
+          text,
           attachments: party.attachments,
         });
 
@@ -627,7 +762,23 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
           throw new Error(result.response ?? 'The server accepted no recipients.');
         }
 
-        await markSent(row.id, party.attendeeIds);
+        await markSent(
+          row.id,
+          party.attendeeIds,
+          threading.messageId ?? null,
+          row.purpose === 'REPLY'
+            ? {
+                addressee: addresseeOf(row),
+                threadId,
+                answeredMessageId: row.inReplyToMessageId,
+                threading,
+                from: transport.sender ?? null,
+                to: row.toEmail,
+                subject: row.subject,
+                text,
+              }
+            : null,
+        );
         sent += 1;
       } catch (error) {
         if (error instanceof UnissuedTicketError) {

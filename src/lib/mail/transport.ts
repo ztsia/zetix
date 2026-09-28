@@ -27,6 +27,22 @@ export type OutgoingMessage = {
   html: string;
   text: string;
   attachments?: OutgoingAttachment[];
+  /**
+   * The headers that let a reply or a bounce find its way back (spec/v3.md
+   * §26.2). All optional, so a caller that does not thread still sends.
+   */
+  threading?: OutgoingThreading;
+};
+
+export type OutgoingThreading = {
+  /** Our own `Message-ID`, angle brackets included. Build it with `makeMessageId()`. */
+  messageId?: string;
+  /** Where a reply should go. The plus-addressed mailbox, from `plusAddress()`. */
+  replyTo?: string;
+  /** The message this one answers, for a reply a person wrote (§26.6). */
+  inReplyTo?: string;
+  /** The whole chain, oldest first, ending with `inReplyTo`. */
+  references?: string[];
 };
 
 export type OutgoingAttachment = {
@@ -72,6 +88,12 @@ export type SendResult = {
 };
 
 export interface MailTransport {
+  /**
+   * The mailbox this transport sends as. Tags are minted against it
+   * (`tagging.ts`): our `Message-ID` takes its domain and the plus-addressed
+   * `Reply-To` its local part. A transport without one sends untagged.
+   */
+  readonly sender?: string;
   send(message: OutgoingMessage): Promise<SendResult>;
   /** Closes the pooled connection. Always call it when a batch is done. */
   close(): Promise<void>;
@@ -83,8 +105,13 @@ function fromHeader(user: string, displayName: string): string {
 }
 
 function toNodemailerMessage(message: OutgoingMessage, from: string) {
+  const t = message.threading;
   return {
     from,
+    ...(t?.messageId ? { messageId: t.messageId } : {}),
+    ...(t?.replyTo ? { replyTo: t.replyTo } : {}),
+    ...(t?.inReplyTo ? { inReplyTo: t.inReplyTo } : {}),
+    ...(t?.references?.length ? { references: t.references } : {}),
     to: message.toName ? `"${message.toName.replace(/"/g, '')}" <${message.to}>` : message.to,
     subject: message.subject,
     text: message.text,
@@ -118,8 +145,9 @@ function normalize(info: unknown, message: OutgoingMessage): SendResult {
   };
 }
 
-function wrap(transporter: Transporter, from: string): MailTransport {
+function wrap(transporter: Transporter, from: string, sender: string): MailTransport {
   return {
+    sender,
     async send(message) {
       const info = await transporter.sendMail(toNodemailerMessage(message, from));
       return normalize(info, message);
@@ -178,7 +206,7 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
     pool: true,
     maxConnections: 1,
   });
-  return wrap(transporter, fromHeader(config.user, config.fromName));
+  return wrap(transporter, fromHeader(config.user, config.fromName), config.user);
 }
 
 /**
@@ -194,5 +222,5 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
  */
 export function createStreamTransport(fromName: string, user: string): MailTransport {
   const transporter = nodemailer.createTransport({ streamTransport: true, buffer: true });
-  return wrap(transporter, fromHeader(user, fromName));
+  return wrap(transporter, fromHeader(user, fromName), user);
 }

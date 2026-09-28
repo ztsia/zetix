@@ -5,7 +5,7 @@ import {
   issueTickets, seedAttendees, setSystemSetting,
 } from '../../tests/helpers/fixtures';
 import { dispatchBatch } from '@/lib/email/dispatch';
-import type { MailTransport, OutgoingMessage } from '@/lib/email/transport';
+import type { MailTransport, OutgoingMessage } from '@/lib/mail/transport';
 
 /** AC-48: sending a feedback email must not stamp ticket_sent_at, nor touch qr_token. */
 function recordingTransport(): MailTransport & { messages: OutgoingMessage[] } {

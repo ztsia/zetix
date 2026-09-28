@@ -500,8 +500,9 @@ describe('AC-17, AC-23, AC-24, AC-29 more of the gate and the receipt', () => {
     EVID('AC-17', { ok: r.ok, receipts: rows.map((x) => x.status), seats: n.n });
     expect(r.ok).toBe(true);
     expect(rows.map((x) => x.status)).toEqual(['SENDING']);
-    // The public registrant is seat #1 of every submission (decision 36), so 1 + 2.
-    expect(n.n).toBe(3);
+    // Since 531f747 the returning registrant is not booked a second seat in their
+    // own name (finding 7), so Alice + Late.
+    expect(n.n).toBe(2);
   });
 
   it('AC-29 merge: the absorbed party’s pending receipt is withdrawn and one receipt is queued for the survivor', async () => {
@@ -518,5 +519,66 @@ describe('AC-17, AC-23, AC-24, AC-29 more of the gate and the receipt', () => {
     const parties = await sql`select id::int, deleted_at is not null as deleted, merged_into_id::int from registrations order by id`;
     EVID('AC-29 receipts after merge', { rows, parties });
     expect(rows.filter((x) => ['DRAFT', 'QUEUED'].includes(x.status as string))).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('re-test round 2 (531f747): finding 4 both directions, finding 7, finding 1 on a player form', () => {
+  async function pairOf(seg: number, p1: number, p2: number, seats1: string[], seats2: string[]) {
+    const a = (await createRegistration({ segmentId: seg, contactName: 'Sam Ong', contactEmail: 'sam@example.test', playerId: p1,
+      seats: seats1.map((fullName) => ({ fullName, allocationType: 'BASE' as const })) })).registrationId;
+    const b = (await createRegistration({ segmentId: seg, contactName: 'Sam Ong', contactEmail: 'sam@example.test', playerId: p2,
+      seats: seats2.map((fullName) => ({ fullName, allocationType: 'BASE' as const })) })).registrationId;
+    const [pairRow] = await sql<{ id: number }[]>`select id::int from duplicate_candidates`;
+    return { a, b, pair: pairRow.id, keep: a < b ? 'A' : 'B' };
+  }
+
+  it('F4: with the override, the seat that needed it is marked over_capacity_at', async () => {
+    const seg = await createSegment(showId, { audienceMode: 'PLAYER_INVITED', capacity: 50, baseQuota: 2, extrasPolicy: 'AUTO_FCFS' });
+    const [p1, p2] = await createPlayers(concertId, 2);
+    await sql`insert into player_allocations (player_id, segment_id, base_quota_override) values (${p1}, ${seg}, 1)`;
+    const { pair, keep } = await pairOf(seg, p1, p2, ['Sam Ong'], ['Uma Ong']);
+    const report = await run('intake.merge', { ids: [pair] }, { keep, override: true });
+    const marks = await sql`select full_name, over_capacity_at is not null as marked from attendees order by id`;
+    const [flag] = await sql`select flag_over_capacity from party_pipeline where registration_id = (select id from registrations where deleted_at is null)`.catch(() => [{ flag_over_capacity: 'n/a' }]);
+    EVID('F4 override merge', { done: report.done, marks, flag });
+    expect(report.done).toBe(1);
+    expect(marks).toEqual([{ full_name: 'Sam Ong', marked: false }, { full_name: 'Uma Ong', marked: true }]);
+  });
+
+  it('F4: a player whose own quota is ABOVE the segment default may merge without the override', async () => {
+    const seg = await createSegment(showId, { audienceMode: 'PLAYER_INVITED', capacity: 50, baseQuota: 1, extrasPolicy: 'AUTO_FCFS' });
+    const [p1, p2] = await createPlayers(concertId, 2);
+    await sql`insert into player_allocations (player_id, segment_id, base_quota_override) values (${p1}, ${seg}, 3)`;
+    const { pair, keep } = await pairOf(seg, p1, p2, ['Sam Ong'], ['Uma Ong']);
+    const report = await run('intake.merge', { ids: [pair] }, { keep });
+    EVID('F4 generous override merge', { done: report.done, skipped: report.skipped, outcome: report.items[0]?.outcome });
+    expect(report.done).toBe(1);
+  });
+
+  it('F1: player form — extras across repeated requests held to form.extra_rows_max in all', async () => {
+    const seg = await createSegment(showId, { audienceMode: 'PLAYER_INVITED', capacity: 50, baseQuota: 2, extrasPolicy: 'AUTO_FCFS' });
+    const [pl] = await createPlayers(concertId, 1);
+    await form(seg, 'PLAYER', 'pl-cap');
+    const first = await submit('pl-cap', ply('pc@example.test', ['G1']), { playerId: pl });
+    const token = first.ok ? new URL(first.confirmationUrl, 'http://x').searchParams.get('r')! : '';
+    const rs = [await requestExtraSeats(token, ['E1', 'E2']), await requestExtraSeats(token, ['E3']), await requestExtraSeats(token, ['E4'])];
+    const [n] = await sql<{ extras: number }[]>`select count(*) filter (where allocation_type = 'EXTRA')::int as extras from attendees where deleted_at is null and status <> 'CANCELLED'`;
+    EVID('F1 player extras', { rs, extras: n.extras });
+    expect(n.extras).toBeLessThanOrEqual(2);
+  });
+
+  it('F7: a returning registrant adding no one books nothing (and is not told apart from a stranger); adding a guest books only the guest', async () => {
+    const seg = await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 20, extrasPolicy: 'AUTO_FCFS' });
+    await form(seg, 'PUBLIC', 'again');
+    await submit('again', pub('ag@example.test', ['B']));
+    const none = await submit('again', pub('AG@example.test', []));
+    const guest = await submit('again', pub('ag@example.test', ['C']));
+    const names = await sql`select full_name from attendees where deleted_at is null order by id`;
+    EVID('F7', { none: none.ok ? 'ok' : none.message, guest: guest.ok, names: names.map((x) => x.full_name) });
+    // Recorded with nothing seated, landing on the same joined page a stranger
+    // sees, so the outcome does not confirm which name is registered (finding 3).
+    expect(none.ok).toBe(true);
+    expect(names.map((x) => x.full_name)).toEqual(['Alice Tan', 'B', 'C']);
   });
 });

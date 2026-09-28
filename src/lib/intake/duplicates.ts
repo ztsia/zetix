@@ -300,7 +300,12 @@ export async function mergeParties(
       await moveRegistration(absorbed.id, survivor.segmentId, { override: options.override, executor: tx });
       await tx.execute(sql`set constraints all immediate`);
     } catch (error) {
-      throw new SkipItem(`${survivor.name}'s segment has no room for the seats: ${dbErrorMessage(error)}`);
+      // The move guard words its refusal for a capacity edit; here nothing's
+      // capacity changed, so the merge says what actually happened.
+      console.error('merge move refused:', dbErrorMessage(error));
+      throw new SkipItem(
+        `${survivor.name}'s segment has no room for ${absorbed.name}'s seats. Free seats there, or merge with the override.`,
+      );
     }
   }
 
@@ -491,7 +496,8 @@ const undoMerge = defineCommand({
         await moveRegistration(detail.absorbedId, detail.fromSegmentId, { executor: tx });
         await tx.execute(sql`set constraints all immediate`);
       } catch (error) {
-        throw new SkipItem(`The segment it came from has no room to take its seats back: ${dbErrorMessage(error)}`);
+        console.error('undo merge move refused:', dbErrorMessage(error));
+        throw new SkipItem('The segment it came from has no room to take its seats back. Free seats there first.');
       }
     }
     if (detail.responseIds.length > 0) {

@@ -94,17 +94,30 @@ test('FLOW-1 stranger registers on the public link (phone)', async ({ browser })
 test('FLOW-2 the same person submits again inside the hold (phone)', async ({ browser }) => {
   const ctx = await browser.newContext({ ...PHONE, baseURL: 'http://localhost:3100' });
   const page = await ctx.newPage();
+  // 2a (sad): back again adding nobody — nothing seated, and the same joined
+  // page a stranger gets, so the outcome does not confirm a registered name.
   await page.goto('/f/qa-autumn');
   await byId(page, 'registrant.contact_name').fill('Priya Nair');
   await byId(page, 'registrant.contact_email').fill('PRIYA@Example.test');
-  await shot(page, 'FLOW-2-step-1-filled');
   await submitForm(page, 'Submit');
-  await expect(page.getByText('3 seats confirmed')).toBeVisible();
-  await shot(page, 'FLOW-2-step-2-done');
+  await expect(page.getByText('This email address already had a registration')).toBeVisible({ timeout: 20_000 });
+  await shot(page, 'FLOW-2-step-1-nobody-new-joined');
+  await page.goto('/f/qa-autumn');
+  await byId(page, 'registrant.contact_name').fill('Priya Nair');
+  await byId(page, 'registrant.contact_email').fill('PRIYA@Example.test');
+  // 2b: back again adding a guest — joins the party, receipt superseded.
+  await byId(page, 'party.0.full_name').fill('Sana Nair');
+  await shot(page, 'FLOW-2-step-2-filled');
+  await submitForm(page, 'Submit');
+  await expect(page.getByText('Your registration has been recorded.')).toBeVisible();
+  const body = await page.locator('body').innerText();
+  await shot(page, 'FLOW-2-step-3-done');
   const parties = await sql`select id::int from registrations where contact_email = 'priya@example.test' and deleted_at is null`;
+  const names = await sql`select full_name from attendees where registration_id = ${parties[0].id} and deleted_at is null order by id`;
   const receipts = await sql`select id::int, status::text, superseded_by_id::int from email_outbox where registration_id = ${parties[0].id} and purpose = 'RECEIPT' order by id`;
-  log('FLOW-2', { parties, receipts });
+  log('FLOW-2', { parties, names: names.map((n) => n.full_name), receipts, donePageNamesNobody: !body.includes('Priya'), donePageCountsNothing: !/seats? confirmed/.test(body) });
   expect(parties).toHaveLength(1);
+  expect(names.map((n) => n.full_name)).toEqual(['Priya Nair', 'Ravi Nair', 'Sana Nair']);
   expect(receipts.map((r) => r.status)).toEqual(['CANCELLED', 'QUEUED']);
   expect(receipts[0].superseded_by_id).toBe(receipts[1].id);
   await ctx.close();
@@ -126,10 +139,28 @@ test('FLOW-15 a stranger types someone else’s address (sad): what does the con
   const [nadia] = await sql`select approved_at, (select count(*)::int from attendees a where a.registration_id = r.id and a.deleted_at is null and a.status <> 'CANCELLED') as seats,
                                    (select array_agg(full_name order by id) from attendees a where a.registration_id = r.id and a.deleted_at is null) as names
                               from registrations r where id = ${seed.nadia}`;
-  log('FLOW-15', { revealsVictimName: revealsName, seatsLine, strangerSeesTitle: body.split('\n').find((l) => l.startsWith('Thank you')), nadiaAfter: nadia });
+  // Step 3: the same stranger tries a bigger party — what does the refusal say?
+  await page.goto('/f/qa-autumn');
+  await byId(page, 'registrant.contact_name').fill('Mallory Stranger');
+  await byId(page, 'registrant.contact_email').fill('nadia@example.test');
+  await byId(page, 'party.0.full_name').fill('Eve One');
+  await page.getByRole('button', { name: 'Add a guest' }).click();
+  await byId(page, 'party.1.full_name').fill('Eve Two');
+  await page.getByRole('button', { name: 'Submit' }).click();
+  await page.waitForTimeout(1500);
+  if (await page.getByText('Submit again to use it anyway.').isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: 'Submit' }).click();
+    await page.waitForTimeout(1500);
+  }
+  const refusalText = (await page.locator('[role="alert"]').allInnerTexts()).join(' | ');
+  await shot(page, 'FLOW-15-step-3-cap-refusal');
+  log('FLOW-15', { revealsVictimName: revealsName, seatsLine, strangerSeesTitle: body.split('\n').find((l) => l.startsWith('Thank you')), donePage: body.slice(0, 400), nadiaAfter: nadia, capRefusal: refusalText });
   // Spec §25.8: "someone typing another person's address cannot edit that person's party".
   // The confirmation must not disclose the other person's registration either.
   expect(revealsName).toBe(false);
+  // Nor does the cap refusal state how many seats the other party holds.
+  expect(refusalText).toMatch(/already has a registration/);
+  expect(refusalText).not.toMatch(/\d+ seats? under/);
   await ctx.close();
 });
 
@@ -406,7 +437,8 @@ test('FLOW-11 admin stages a wide sheet, fixes a cell, commits, undoes', async (
   await run.click();
   await expect(page.getByText('Done', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   await shot(page, 'FLOW-11-step-8-committed');
-  await page.getByRole('button', { name: 'Close' }).first().click();
+  // The report dialog may close itself once the grid refreshes; close it if it is still up.
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).last().click({ timeout: 5_000 }).catch(() => null);
   const [otherRow] = await sql`select normalized->>'contactName' as name, issues from import_rows where batch_id = ${batchId} and row_number = 3 and seat_index = 1`;
   const committed = await sql`select r.contact_name, r.approved_at is not null as approved, array_agg(a.full_name order by a.id) as seats
     from registrations r join attendees a on a.registration_id = r.id and a.deleted_at is null
@@ -430,6 +462,8 @@ test('FLOW-11 admin stages a wide sheet, fixes a cell, commits, undoes', async (
   log('FLOW-11', { batchId, sameLineOtherSeatAfterFix: otherRow, nothingBeforeCommit: nothingYet.n, staged: staged.map((s) => ({ row: s.row_number, seat: s.seat, codes: (s.issues as { code: string }[]).map((i) => i.code) })), fixed, committed, typoFlags: typo?.flags, afterUndo });
   expect(nothingYet.n).toBe(0);
   expect(afterUndo.find((r) => r.contact_name === 'Nadia Hassan')?.deleted).toBe(false);
+  // Finding 8 (re-test): the other seat of the same line must have the fix too.
+  expect(otherRow.name).toBe('Nora Name');
   await ctx.close();
 });
 

@@ -524,14 +524,11 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
                and lower(btrim(full_name)) = lower(btrim(${contactName}))
           `);
           if (already.n > 0) {
+            // Left empty when the registrant was the only seat: the response is
+            // recorded and nothing is claimed. Refusing instead would tell a
+            // stranger which name is registered under the address.
             seats = allSeats.filter((_, index) => index !== registrantIndex);
             seatCustom = allCustom.filter((_, index) => index !== registrantIndex);
-            if (seats.length === 0) {
-              return {
-                refused:
-                  'You are already registered under this email address, and this adds no one new. Nothing was submitted.',
-              };
-            }
           }
         }
 
@@ -547,15 +544,12 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
           `);
           const max = typeof cap?.value === 'number' ? Math.trunc(cap.value) : null;
           if (max !== null && existing.live_seats + seats.length > max) {
-            const left = Math.max(0, max - existing.live_seats);
+            // Worded without the party's size: anyone can type an address.
             return {
               refused:
-                `You already have a registration for ${existing.live_seats} ` +
-                `seat${existing.live_seats === 1 ? '' : 's'} under this email address, and a party may ` +
-                `have at most ${max}. ` +
-                (left > 0
-                  ? `You can add ${left} more. Nothing was submitted.`
-                  : 'Nothing was submitted; the link in your receipt email lets you change your registration.'),
+                `This email address already has a registration, and a party may have at most ${max} seats. ` +
+                'These seats would take it past that, so nothing was submitted. The email sent to that ' +
+                'address has a link for changing the registration.',
             };
           }
         }
@@ -643,6 +637,9 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
            where id = ${registrationId}::bigint
         `);
       }
+
+      // Nothing new to seat: the submission is on record, the party unchanged.
+      if (seats.length === 0) return { url: `/f/${form.slug}/done?r=${editToken}` };
 
       const [before] = await tx.execute<{ max_id: string | null }>(sql`
         select max(id) as max_id from attendees where registration_id = ${registrationId}::bigint

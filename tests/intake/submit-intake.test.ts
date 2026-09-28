@@ -166,7 +166,8 @@ describe('one party per email per segment (§25.5)', () => {
     expect(over.ok).toBe(false);
     if (over.ok) return;
     expect(over.message).toMatch(/at most 4/);
-    expect(over.message).toMatch(/add 1 more/);
+    // Worded without the party's size: anyone can type an address.
+    expect(over.message).not.toMatch(/\b3\b/);
 
     const rows = await parties(segmentId);
     expect(await seats(rows[0].id)).toHaveLength(3);
@@ -416,6 +417,36 @@ describe('the hall lock (§7.8)', () => {
   });
 });
 
+describe('the hall lock orders the read (§7.8, QA)', () => {
+  /**
+   * The race the lock exists for: another transaction is creating a party for
+   * this address while the submit arrives. Taking the lock *before* looking
+   * for the party means the submit sees it once that transaction commits, and
+   * joins it; looking first and locking after would miss it and make a second
+   * party for one address.
+   */
+  it('joins a party committed while it waited, rather than making a second', async () => {
+    const { showId, segmentId } = await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    const reserved = await sql.reserve();
+    try {
+      await reserved`begin`;
+      await reserved`select 1 from shows where id = ${showId} for update`;
+      await reserved`
+        insert into registrations (show_id, segment_id, source, contact_name, contact_email, status, requested_at)
+        values (${showId}, ${segmentId}, 'FORM', 'Alice Tan', 'alice@example.test', 'WAITLIST', now())
+      `;
+      const pending = submit(publicAnswers('alice@example.test', ['Bob Tan']));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await reserved`commit`;
+      expect((await pending).ok).toBe(true);
+    } finally {
+      reserved.release();
+    }
+    const rows = await parties(segmentId);
+    expect(rows).toHaveLength(1);
+  });
+});
+
 describe('QA fixes on the submit path', () => {
   it('does not book the registrant a second seat when they come back to add guests', async () => {
     const { segmentId } = await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
@@ -424,9 +455,11 @@ describe('QA fixes on the submit path', () => {
     const [party] = await parties(segmentId);
     expect((await seats(party.id)).map((s) => s.full_name)).toEqual(['Alice Tan', 'Bob Tan', 'Cara Tan']);
 
-    // Nothing new at all: refused, not a silent no-op.
+    // Nothing new at all: recorded, nothing seated, and the same page a
+    // stranger gets — so the outcome does not say whose name is registered.
     const again = await submit(publicAnswers('alice@example.test', []));
-    expect(again.ok).toBe(false);
+    expect(again.ok).toBe(true);
+    expect(await seats(party.id)).toHaveLength(3);
   });
 
   it('holds "request extra tickets" to the party cap across requests', async () => {

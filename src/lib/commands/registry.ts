@@ -2,6 +2,7 @@ import 'server-only';
 import { AUDIENCE_COMMANDS } from '@/lib/audience/commands';
 import { DELIVERY_COMMANDS } from '@/lib/delivery/commands';
 import { INTAKE_DUPLICATE_COMMANDS } from '@/lib/intake/duplicates';
+import { INTAKE_INVITE_COMMANDS } from '@/lib/intake/invite';
 import { MESSAGE_COMMANDS } from '@/lib/delivery/messages';
 import { TRASH_COMMANDS } from '@/lib/trash/commands';
 import type { AnyCommand } from './define';
@@ -27,6 +28,7 @@ const COMMANDS: readonly AnyCommand[] = [
   ...DELIVERY_COMMANDS,
   ...MESSAGE_COMMANDS,
   ...INTAKE_DUPLICATE_COMMANDS,
+  ...INTAKE_INVITE_COMMANDS,
 ];
 
 const byName = new Map(COMMANDS.map((command) => [command.name, command]));

@@ -4,7 +4,7 @@ import { segmentPool } from '@/db/allocation';
 import { resolveSetting } from '@/db/settings';
 import { clientIp, consumeRateLimit, formBucket } from '@/lib/auth/rate-limit';
 import { loadFormBySlug } from '@/lib/forms/load';
-import { resolveRegistrant } from '@/lib/forms/registrant';
+import { resolveRegistrant, rosterForPicker } from '@/lib/forms/registrant';
 import { seatIndicator } from '@/lib/forms/seat-indicator';
 import { RegistrationForm } from './registration-form';
 import {
@@ -181,7 +181,19 @@ export default async function RegistrationFormPage({
    * a promise the engine would have kept. `extras_pool` reaching zero only means
    * there is nothing left *for extras*.
    */
-  const playerOwedBase = registrant.kind === 'PLAYER' && Object.keys(form.limits).length > 0;
+  /**
+   * The picker (spec/v3.md §25.2): a player form reached without a resolved
+   * `?k=` token names its inviting player from the roster. The token stays as
+   * the prefilled shortcut from the optional invite email.
+   */
+  const roster =
+    form.kind === 'PLAYER' && registrant.kind !== 'PLAYER' && form.segmentId !== null
+      ? await rosterForPicker(form.concertId, form.segmentId)
+      : null;
+
+  const playerOwedBase =
+    (registrant.kind === 'PLAYER' && Object.keys(form.limits).length > 0) ||
+    (roster?.some((player) => (player.remaining ?? 0) > 0) ?? false);
   if (indicator?.state === 'FULL' && !playerOwedBase) {
     return <FormFull title={form.title} />;
   }
@@ -209,6 +221,7 @@ export default async function RegistrationFormPage({
          * away from a form they could have filled in.
          */
         unknownToken={registrant.kind === 'UNKNOWN_TOKEN'}
+        roster={roster}
       />
   );
 }

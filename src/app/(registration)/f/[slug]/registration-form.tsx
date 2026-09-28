@@ -15,10 +15,20 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox';
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { FormRenderer, hasRequiredQuestion } from '@/components/forms/form-renderer';
-import { FormHeaderCard } from '@/components/forms/form-surface';
+import { FormCard, FormHeaderCard } from '@/components/forms/form-surface';
+import { PLAYER_PICKER, type PickerPlayer } from '@/lib/forms/player-picker';
 import { RichText } from '@/components/forms/rich-text';
 import { emptyAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import type { CopyValues } from '@/lib/forms/copy';
@@ -50,6 +60,11 @@ export type RegistrationFormProps = {
   /** A resolved player, for prefill. Null on a public form. */
   registrant: { fullName: string; email: string | null } | null;
   unknownToken: boolean;
+  /**
+   * The player form's roster, when no `?k=` token named the player
+   * (spec/v3.md §25.2). Null on a public form, or when the token resolved.
+   */
+  roster?: PickerPlayer[] | null;
 };
 
 /** The REGISTRANT block's system field keys (`lib/forms/system-fields.ts`). */
@@ -68,7 +83,24 @@ export function RegistrationForm({
   token,
   registrant,
   unknownToken,
+  roster = null,
 }: RegistrationFormProps) {
+  const [picked, setPicked] = useState<PickerPlayer | null>(null);
+  const baseBlockId = useMemo(
+    () => schema.blocks.find((block) => block.type === 'GUESTS_BASE')?.id ?? null,
+    [schema],
+  );
+  /**
+   * The base repeater is sized for the picked player: the seats they have left,
+   * not the segment's quota (§8.1.1's "remaining", now per picked player). The
+   * server recomputes it at submit; this is what the reader sees meanwhile.
+   */
+  const liveLimits = useMemo(
+    () =>
+      picked && baseBlockId !== null ? { ...limits, [baseBlockId]: picked.remaining ?? 0 } : limits,
+    [limits, picked, baseBlockId],
+  );
+  const pickerId = useMemo(() => `picker-${slug}`, [slug]);
   const registrantBlockId = useMemo(
     () => schema.blocks.find((block) => block.type === 'REGISTRANT')?.id ?? null,
     [schema],
@@ -163,6 +195,7 @@ export function RegistrationForm({
         schemaVersion,
         answers,
         addressConfirmed,
+        playerId: picked?.id ?? null,
       });
 
       if (result.ok) {
@@ -193,6 +226,7 @@ export function RegistrationForm({
     setErrors({});
     setFormError(null);
     setAddressConfirmed(false);
+    setPicked(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -246,9 +280,67 @@ export function RegistrationForm({
         </Alert>
       ) : null}
 
+      {roster ? (
+        <FormCard invalid={Boolean(errors[PLAYER_PICKER])}>
+          <Field data-invalid={Boolean(errors[PLAYER_PICKER]) || undefined}>
+            <FieldLabel htmlFor={pickerId}>
+              Which player invited you?<span className="text-form-error"> *</span>
+            </FieldLabel>
+            <Combobox
+              items={roster}
+              itemToStringValue={(player: PickerPlayer) => player.name}
+              value={picked}
+              onValueChange={(next: PickerPlayer | null) => {
+                setPicked(next);
+                // A new player means a new base allocation: drop blank base
+                // rows past what this player has left, keep anything typed.
+                if (next && baseBlockId !== null) {
+                  const block = answers[baseBlockId];
+                  if (block?.kind === 'repeater') {
+                    const cap = next.remaining ?? 0;
+                    const rows = block.rows.filter(
+                      (row, index) =>
+                        index < cap ||
+                        Object.values(row).some((value) => typeof value === 'string' && value.trim() !== ''),
+                    );
+                    setAnswers({ ...answers, [baseBlockId]: { kind: 'repeater', rows } });
+                  }
+                }
+              }}
+              disabled={pending}
+            >
+              <ComboboxInput id={pickerId} placeholder="Search by name" showClear />
+              <ComboboxContent>
+                <ComboboxEmpty>No player by that name.</ComboboxEmpty>
+                <ComboboxList>
+                  {(player: PickerPlayer) => (
+                    <ComboboxItem key={player.id} value={player}>
+                      {player.name}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+            {picked ? (
+              <FieldDescription>
+                {(picked.remaining ?? 0) > 0
+                  ? `${picked.name} has ${picked.remaining} invited seat${picked.remaining === 1 ? '' : 's'} left.`
+                  : `${picked.name} has no invited seats left.` +
+                    (schema.blocks.some((block) => block.type === 'GUESTS_EXTRA')
+                      ? ' You can still ask for extra seats below.'
+                      : '')}
+              </FieldDescription>
+            ) : (
+              <FieldDescription>Your seats are part of that player’s allocation.</FieldDescription>
+            )}
+            {errors[PLAYER_PICKER] ? <FieldError>{errors[PLAYER_PICKER]}</FieldError> : null}
+          </Field>
+        </FormCard>
+      ) : null}
+
       <FormRenderer
         schema={schema}
-        limits={limits}
+        limits={liveLimits}
         copy={copy}
         value={answers}
         onValueChange={setAnswers}

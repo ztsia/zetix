@@ -149,7 +149,7 @@ export async function queueReceipt(
  * template an admin deleted is not re-created; the receipt is skipped and
  * logged.
  */
-async function templateFor(tx: Tx, key: string): Promise<{ subject: string; body_md: string } | null> {
+export async function templateFor(tx: Tx, key: string): Promise<{ subject: string; body_md: string } | null> {
   const read = () =>
     tx.execute<{ subject: string; body_md: string; deleted: boolean }>(sql`
       select subject, body_md, deleted_at is not null as deleted from email_templates where key = ${key}

@@ -10,6 +10,7 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/co
 import { formatInZone } from '@/lib/export';
 import { FormCreateDialog } from './form-create-dialog';
 import { getConcertHeader, getFormParents, getFormsForConcert, type FormListRow } from './queries';
+import { CopyLinkButton } from './[formId]/copy-link-button';
 
 export const metadata: Metadata = { title: 'Forms' };
 
@@ -128,6 +129,10 @@ export default async function FormsPage({
                 </ItemContent>
 
                 <ItemActions>
+                  {/* One public link per form, for WhatsApp (spec/v3.md §25.1). */}
+                  {form.kind !== 'FEEDBACK' && (
+                    <CopyLinkButton slug={form.slug} live={form.status === 'OPEN'} appUrl={process.env.APP_URL ?? null} />
+                  )}
                   {form.status === 'OPEN' && (
                     <Button
                       variant="ghost"

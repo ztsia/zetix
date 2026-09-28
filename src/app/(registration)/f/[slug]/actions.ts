@@ -9,7 +9,8 @@ import { writeAuditLog } from '@/lib/audit';
 import { checkAddress } from '@/lib/email/address';
 import { validateAnswers, type AnswerErrors, type FormAnswers } from '@/lib/forms/answers';
 import { loadFormBySlug } from '@/lib/forms/load';
-import { resolveRegistrant } from '@/lib/forms/registrant';
+import { PLAYER_PICKER } from '@/lib/forms/player-picker';
+import { resolvePickedPlayer, resolveRegistrant, type Registrant } from '@/lib/forms/registrant';
 import { queueReceipt } from '@/lib/intake/receipt';
 import { reviewAtIntake } from '@/lib/intake/review';
 import { mintUpdateToken } from '@/lib/intake/update-link';
@@ -41,6 +42,12 @@ export type SubmitInput = {
   answers: FormAnswers;
   /** The reader has seen an address warning and submitted anyway. */
   addressConfirmed: boolean;
+  /**
+   * The inviting player chosen in the player form's picker (spec/v3.md §25.2).
+   * Ignored when a `?k=` token resolved: the prefilled shortcut already names
+   * the player.
+   */
+  playerId?: number | null;
 };
 
 export type SubmitResult =
@@ -306,7 +313,25 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
     };
   }
 
-  const registrant = await resolveRegistrant(input.token, form.concertId, segmentId);
+  /**
+   * Who invited them (spec/v3.md §25.2). The `?k=` token is the optional
+   * prefilled shortcut; without one, a player form names its player in the
+   * picker, and a player form must name one — its base seats are that
+   * player's, and a party with no player can only be waitlisted.
+   */
+  let registrant: Registrant = await resolveRegistrant(input.token, form.concertId, segmentId);
+  if (form.kind === 'PLAYER' && registrant.kind !== 'PLAYER') {
+    if (input.playerId != null) {
+      registrant = await resolvePickedPlayer(input.playerId, form.concertId, segmentId);
+    }
+    if (registrant.kind !== 'PLAYER') {
+      return {
+        ok: false,
+        message: 'Please choose the player who invited you. Nothing was submitted.',
+        errors: { [PLAYER_PICKER]: 'Choose a player' },
+      };
+    }
+  }
 
   /**
    * Row caps recomputed for **this** registrant rather than taken from the page.

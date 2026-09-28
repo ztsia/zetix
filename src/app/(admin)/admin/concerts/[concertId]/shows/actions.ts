@@ -289,6 +289,7 @@ const segmentSchema = z.object({
   baseClaimDeadline: localDateTime,
   extrasPolicy: z.enum(['REVIEW', 'AUTO_FCFS', '']),
   allowPartialGrant: z.enum(['true', 'false', '']),
+  autoApproveClean: z.enum(['true', 'false', '']),
   maxTicketsPerResponse: optionalCount,
   displayOrder: optionalInt,
 });
@@ -302,6 +303,7 @@ function readSegmentForm(formData: FormData) {
     baseClaimDeadline: formData.get('baseClaimDeadline') ?? '',
     extrasPolicy: formData.get('extrasPolicy') ?? '',
     allowPartialGrant: formData.get('allowPartialGrant') ?? '',
+    autoApproveClean: formData.get('autoApproveClean') ?? '',
     maxTicketsPerResponse: formData.get('maxTicketsPerResponse') ?? '',
     displayOrder: formData.get('displayOrder') ?? '',
   });
@@ -362,6 +364,7 @@ export async function createSegmentAction(
         baseClaimDeadline: toInstant(parsed.data.baseClaimDeadline, zone ?? 'UTC'),
         extrasPolicy: parsed.data.extrasPolicy || null,
         allowPartialGrant: triState(parsed.data.allowPartialGrant),
+        autoApproveClean: triState(parsed.data.autoApproveClean),
         maxTicketsPerResponse: parsed.data.maxTicketsPerResponse,
         displayOrder: parsed.data.displayOrder ?? 0,
       })
@@ -462,6 +465,7 @@ export async function updateSegmentAction(
         baseClaimDeadline: toInstant(parsed.data.baseClaimDeadline, zone ?? 'UTC'),
         extrasPolicy: parsed.data.extrasPolicy || null,
         allowPartialGrant: triState(parsed.data.allowPartialGrant),
+        autoApproveClean: triState(parsed.data.autoApproveClean),
         maxTicketsPerResponse: parsed.data.maxTicketsPerResponse,
         displayOrder: parsed.data.displayOrder ?? 0,
         updatedAt: new Date(),

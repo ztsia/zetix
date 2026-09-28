@@ -189,6 +189,20 @@ export function SegmentFormDialog({
               Whether a request at the boundary of the pool may be granted in part.
             </FieldDescription>
           </Field>
+
+          <Field>
+            <FieldLabel htmlFor={`${id}-approve`}>Approve clean parties</FieldLabel>
+            <NativeSelect
+              id={`${id}-approve`}
+              name="autoApproveClean"
+              defaultValue={triStateValue(segment?.raw.autoApproveClean)}
+            >
+              <option value="">Inherit</option>
+              <option value="true">Automatically, at submit</option>
+              <option value="false">By hand, in review</option>
+            </NativeSelect>
+            <CascadeHint resolved={segment?.resolved['review.auto_approve_clean']} level="segment" />
+          </Field>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

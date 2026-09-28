@@ -30,6 +30,7 @@ export const SEGMENT_KEYS = [
   'allocation.extras_policy',
   'allocation.allow_partial_grant',
   'form.max_tickets_per_response',
+  'review.auto_approve_clean',
 ] as const;
 
 /** Cascading keys that live on a show. The hall, and the door. */
@@ -48,6 +49,7 @@ export type SegmentView = {
     baseClaimDeadline: Date | null;
     extrasPolicy: 'REVIEW' | 'AUTO_FCFS' | null;
     allowPartialGrant: boolean | null;
+    autoApproveClean: boolean | null;
     maxTicketsPerResponse: number | null;
   };
   resolved: Record<string, ResolvedSetting>;
@@ -156,6 +158,7 @@ export async function getShowsForConcert(concertId: number): Promise<ShowView[]>
       baseClaimDeadline: showSegments.baseClaimDeadline,
       extrasPolicy: showSegments.extrasPolicy,
       allowPartialGrant: showSegments.allowPartialGrant,
+      autoApproveClean: showSegments.autoApproveClean,
       maxTicketsPerResponse: showSegments.maxTicketsPerResponse,
     })
     .from(showSegments)
@@ -200,6 +203,7 @@ export async function getShowsForConcert(concertId: number): Promise<ShowView[]>
             baseClaimDeadline: segment.baseClaimDeadline,
             extrasPolicy: segment.extrasPolicy,
             allowPartialGrant: segment.allowPartialGrant,
+            autoApproveClean: segment.autoApproveClean,
             maxTicketsPerResponse: segment.maxTicketsPerResponse,
           },
           resolved,

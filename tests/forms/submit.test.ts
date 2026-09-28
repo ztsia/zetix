@@ -372,7 +372,9 @@ describe('submitRegistration — response limiting (§8.3)', () => {
     });
     expect((await submit({ answers: publicAnswers('alice@example.test', []) })).ok).toBe(true);
 
-    const second = await submit({ answers: publicAnswers('alice@example.test', []) });
+    // Different answers: the same answers again are a double click, which lands
+    // on the first confirmation without writing anything (spec/v3.md §25.5).
+    const second = await submit({ answers: publicAnswers('alice@example.test', ['Bob Lim']) });
     expect(second.ok).toBe(false);
     if (second.ok) return;
     expect(second.message).toMatch(/already registered/i);

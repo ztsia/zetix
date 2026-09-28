@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   boolean,
   check,
   foreignKey,
@@ -96,6 +97,12 @@ export const registrationForms = pgTable(
     oneResponsePerIdentity: boolean('one_response_per_identity'),
     maxTicketsPerResponse: integer('max_tickets_per_response'),
     autoCloseOnCapacity: boolean('auto_close_on_capacity'),
+    /**
+     * Waitlist mode (spec/v3.md §25.6): once the segment is full, a public form
+     * keeps taking requests — as waitlist seats — instead of closing. The
+     * alternative to `auto_close_on_capacity`, never both.
+     */
+    waitlistWhenFull: boolean('waitlist_when_full'),
     allowEditUntil: timestamp('allow_edit_until', { withTimezone: true }),
     confirmationMessageMd: text('confirmation_message_md'),
 
@@ -195,9 +202,24 @@ export const formResponses = pgTable(
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
     editToken: text('edit_token'),
+
+    /**
+     * The party this response belongs to (spec/v3.md §25.5, `0204`).
+     *
+     * `registrations.form_response_id` points at a party's *newest* response
+     * in its edit chain, which was enough while one party was one response. A
+     * submission merged into an existing party by email is a second response
+     * of the same party that is not an edit of the first, so the link has to
+     * run this way too — the confirmation screen resolves through it. Set
+     * null if the party is purged.
+     */
+    registrationId: fk('registration_id').references((): AnyPgColumn => registrations.id, {
+      onDelete: 'set null',
+    }),
   },
   (t) => [
     index('form_responses_form_idx').on(t.formId),
+    index('form_responses_registration_idx').on(t.registrationId),
     uniqueIndex('form_responses_edit_token_key').on(t.editToken),
 
     /** Self-reference, declared here because the table is not yet defined above. */

@@ -98,6 +98,26 @@ export const TOKENS: { token: string; description: string }[] = [
     description: "The player's own form link. Only resolves on the player invite",
   },
   {
+    token: 'verify_section',
+    /**
+     * The receipt's verification paragraph (spec/v3.md §25.3): on a public
+     * form the receipt carries the double opt-in link, one email rather than
+     * two. A whole paragraph rather than a bare URL, because on a player form
+     * or an address already verified there is nothing to say, and a sentence
+     * ending in an empty link is worse than no sentence.
+     */
+    description:
+      'A line asking the registrant to confirm their address, with the link. Only on a receipt, and empty once verified',
+  },
+  {
+    token: 'update_url',
+    /**
+     * The party's own update link (spec/v3.md §25.6) — name guests, correct
+     * the address, give back seats. Receipts carry it.
+     */
+    description: "The party's own link for naming guests, correcting the address or giving back seats",
+  },
+  {
     token: 'notes_count',
     description: 'How many notes the digest carries. Only resolves on the notes digest',
   },

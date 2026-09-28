@@ -4,6 +4,8 @@ import { sql } from 'drizzle-orm';
 import { claimSeats, lockShowForClaim } from '@/db/allocation';
 import { getDb } from '@/db/client';
 import { resolveSetting } from '@/db/settings';
+import { queueReceipt } from '@/lib/intake/receipt';
+import { reviewAtIntake } from '@/lib/intake/review';
 
 /**
  * Editing a response (spec/v2.md §8.3.1) — **the sharpest rule set in V2**.
@@ -367,15 +369,16 @@ export async function applyResponseEdit(
 /**
  * "Request extra tickets" — the offer that replaces adding a guest (§8.3.1).
  *
- * **A new request with a new `requested_at`, at the back of the FCFS queue.**
- * Keeping the original timestamp would let an early registrant reserve a queue
- * position for seats they had not yet asked for, which is the precise abuse the
- * no-add rule exists to prevent.
+ * **A new request at the back of the FCFS queue.** Keeping the original
+ * timestamp would let an early registrant reserve a queue position for seats
+ * they had not yet asked for, which is the precise abuse the no-add rule exists
+ * to prevent.
  *
- * It is a **new registration**, not more seats on the old one, because
- * `registrations.requested_at` *is* the ordering key (§7.4): seats have no
- * timestamp of their own, so a fresh position in the queue and a fresh
- * registration are the same thing.
+ * Since V3 the seats join **the same party**, each carrying the request's own
+ * `requested_at` (spec/v3.md §21.3, §25.5 — one party per email per segment).
+ * V2 made a second registration because a seat had no time of its own and the
+ * party's time was the ordering key; the seat's time now is. The party goes
+ * back to review, since this is a new claim, and gets an updated receipt.
  *
  * The seats go through `claim_seats()` like every other grant, so the segment's
  * `extras_policy` decides what actually happens — `PENDING_REVIEW` under
@@ -444,28 +447,15 @@ export async function requestExtraSeats(
       // The hall lock first, for the same reason the submit path takes it.
       await lockShowForClaim(current.showId, tx);
 
-      /**
-       * A fresh registration carrying a fresh `requested_at` — which *is* the
-       * new queue position, since that column is the ordering key.
-       */
-      const inserted = await tx.execute<{ id: string }>(sql`
-        insert into registrations (
-          show_id, segment_id, round_label, player_id, source,
-          contact_name, contact_email, contact_phone, status, requested_at
-        )
-        select
-          r.show_id, r.segment_id, r.round_label, r.player_id, 'FORM',
-          r.contact_name, r.contact_email, r.contact_phone, 'WAITLIST', now()
-        from registrations r
-        where r.id = ${current.registrationId}::bigint
-        returning id
-      `);
-      const registrationId = Number(inserted[0].id);
+      const registrationId = current.registrationId;
+      await tx.execute(sql`select id from registrations where id = ${registrationId}::bigint for update`);
 
       const outcome = await claimSeats(
         current.segmentId,
         registrationId,
-        wanted.map((fullName) => ({ fullName, email: null, allocationType: 'EXTRA' as const })),
+        // The request's own time on every seat (spec/v3.md §21.3): the back of
+        // the first-come queue, never the party's earlier place.
+        wanted.map((fullName) => ({ fullName, email: null, allocationType: 'EXTRA' as const, requestedAt: new Date() })),
         { executor: tx },
       );
 
@@ -482,6 +472,11 @@ export async function requestExtraSeats(
                end::booking_status
          where r.id = ${registrationId}::bigint
       `);
+
+      // A new claim is reviewed like any other (§25.4), and the party is told
+      // what it now holds.
+      await reviewAtIntake(tx, registrationId, { resetApproval: true });
+      await queueReceipt(tx, registrationId, { holdMinutes: 0 });
 
       return {
         requested: wanted.length,

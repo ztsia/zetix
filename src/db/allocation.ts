@@ -46,6 +46,13 @@ export type SeatRequest = {
   fullName?: string | null;
   email?: string | null;
   allocationType: AllocationType;
+  /**
+   * When this seat was asked for (spec/v3.md §21.3). Omitted, the seat takes
+   * its party's `requested_at`. Pass it for a seat added to a party that
+   * already exists — a merged submission, an import adding to a party — so the
+   * late seat queues behind everything asked for before it.
+   */
+  requestedAt?: Date | null;
 };
 
 export type ClaimOutcome = {
@@ -130,6 +137,7 @@ export async function claimSeats(
     full_name: r.fullName ?? null,
     email: r.email ?? null,
     allocation_type: r.allocationType,
+    ...(r.requestedAt ? { requested_at: r.requestedAt.toISOString() } : {}),
   }));
 
   try {

@@ -90,7 +90,10 @@ export default async function RegistrationDonePage({
       c.timezone,
       f.confirmation_message_md
     from form_responses fr
-    join registrations r on r.form_response_id = fr.id
+    -- Every response knows its party (\`0204\`): a submission merged into an
+    -- existing party by email (spec/v3.md §25.5) reports the whole party,
+    -- which is what its receipt will describe.
+    join registrations r on r.id = fr.registration_id
     join registration_forms f on f.id = fr.form_id
     join shows s on s.id = r.show_id
     join concerts c on c.id = s.concert_id

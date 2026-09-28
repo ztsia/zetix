@@ -214,15 +214,28 @@ export async function adviseOnAddress(email: string): Promise<{
  * addresses.
  */
 export async function addressIssue(email: string): Promise<string | null> {
+  return (await checkAddress(email)).issue;
+}
+
+/**
+ * Both answers from one lookup: `blocking` for the public form's warn-once
+ * (the submit action), `issue` for the verdict every entry path stores
+ * (§24.6). The form needs both on the same submit, and two calls would be two
+ * MX lookups for one address.
+ */
+export async function checkAddress(email: string): Promise<{ blocking: string | null; issue: string | null }> {
   const address = email.trim();
   const shape = addressShapeIssue(address);
-  if (shape) return shape;
+  if (shape) return { blocking: null, issue: shape };
   const { blocking, suggestion } = await adviseOnAddress(address);
-  if (blocking) return blocking;
+  if (blocking) return { blocking, issue: blocking };
   if (suggestion) {
-    return `Possible typo: did you mean ${address.slice(0, address.lastIndexOf('@') + 1)}${suggestion}?`;
+    return {
+      blocking: null,
+      issue: `Possible typo: did you mean ${address.slice(0, address.lastIndexOf('@') + 1)}${suggestion}?`,
+    };
   }
-  return null;
+  return { blocking: null, issue: null };
 }
 
 /**

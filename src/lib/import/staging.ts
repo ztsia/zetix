@@ -224,11 +224,20 @@ export async function stageBatch(input: {
 
 type RowRecord = { id: number; rowNumber: number; seatIndex: number; fields: StagedFields; existingAction: string | null; existingId: number | null };
 
-const partyKeyOf = (row: RowRecord) =>
+/**
+ * The party a row belongs to: a mapped group, else the contact email — and, in
+ * a player-invited segment, the player too. One address registering guests
+ * for two players is two parties, as on the form (§25.5): each player's base
+ * seats are theirs, and one party can hold only one player's.
+ */
+const playerPart = (row: RowRecord) =>
+  row.fields.playerId !== null ? String(row.fields.playerId) : `?${(row.fields.playerNeedle ?? '').toLowerCase()}`;
+
+const partyKeyOf = (row: RowRecord, byPlayer: boolean) =>
   row.fields.groupKey
     ? `g:${row.fields.groupKey.toLowerCase()}`
     : row.fields.contactEmail
-      ? `e:${row.fields.contactEmail.toLowerCase()}`
+      ? `e:${row.fields.contactEmail.toLowerCase()}${byPlayer ? `|p:${playerPart(row)}` : ''}`
       : `r:${row.rowNumber}`;
 
 /**
@@ -345,19 +354,34 @@ export async function validateBatch(tx: Tx, batchId: number): Promise<void> {
   }
 
   // Parties.
+  const byPlayer = batch.audience_mode === 'PLAYER_INVITED' && batch.player_match;
   const parties = new Map<string, RowRecord[]>();
   for (const row of records) {
-    const key = partyKeyOf(row);
+    const key = partyKeyOf(row, byPlayer);
     parties.set(key, [...(parties.get(key) ?? []), row]);
+  }
+  // An address that registers for more than one player is said so, on each.
+  const keysByEmail = new Map<string, string[]>();
+  for (const [key, rows] of parties) {
+    const email = rows[0].fields.contactEmail?.toLowerCase();
+    if (email && !rows[0].fields.groupKey) keysByEmail.set(email, [...(keysByEmail.get(email) ?? []), key]);
   }
 
   // Existing parties in the segment, by contact email.
   const emails = [...new Set(records.map((row) => row.fields.contactEmail?.toLowerCase()).filter((e): e is string => !!e))];
-  const existing = new Map<string, { id: number; name: string; cancelled: boolean; seats: string[] }>();
+  type Existing = { id: number; name: string; cancelled: boolean; playerId: number | null; seats: string[] };
+  const existing = new Map<string, Existing[]>();
   if (emails.length > 0) {
-    const found = await tx.execute<{ id: string; email: string; contact_name: string; cancelled: boolean; seats: string[] | null }>(sql`
-      select distinct on (lower(r.contact_email::text))
-             r.id, lower(r.contact_email::text) as email, r.contact_name, r.status = 'CANCELLED' as cancelled,
+    const found = await tx.execute<{
+      id: string;
+      email: string;
+      contact_name: string;
+      cancelled: boolean;
+      player_id: string | null;
+      seats: string[] | null;
+    }>(sql`
+      select r.id, lower(r.contact_email::text) as email, r.contact_name, r.status = 'CANCELLED' as cancelled,
+             r.player_id,
              (select array_agg(case when a.name_source = 'PLACEHOLDER' then '' else lower(btrim(a.full_name)) end)
                 from attendees a
                where a.registration_id = r.id and a.deleted_at is null and a.status <> 'CANCELLED') as seats
@@ -368,7 +392,16 @@ export async function validateBatch(tx: Tx, batchId: number): Promise<void> {
        order by lower(r.contact_email::text), (r.status = 'CANCELLED'), r.requested_at, r.id
     `);
     for (const row of found) {
-      existing.set(row.email, { id: Number(row.id), name: row.contact_name, cancelled: row.cancelled, seats: row.seats ?? [] });
+      existing.set(row.email, [
+        ...(existing.get(row.email) ?? []),
+        {
+          id: Number(row.id),
+          name: row.contact_name,
+          cancelled: row.cancelled,
+          playerId: row.player_id === null ? null : Number(row.player_id),
+          seats: row.seats ?? [],
+        },
+      ]);
     }
   }
 
@@ -419,7 +452,20 @@ export async function validateBatch(tx: Tx, batchId: number): Promise<void> {
       });
     }
 
-    const match = email ? existing.get(email) : undefined;
+    if (email && (keysByEmail.get(email)?.length ?? 0) > 1) {
+      add(head, {
+        field: 'player',
+        code: 'EMAIL_ACROSS_PLAYERS',
+        level: 'WARNING',
+        message: 'This address registers guests for more than one player. Each player keeps a party of their own.',
+      });
+    }
+
+    // The party already here for this address — for the same player, in a
+    // player-invited segment. A live one before a cancelled one.
+    const match = email
+      ? (existing.get(email) ?? []).find((party) => !byPlayer || party.playerId === head.fields.playerId)
+      : undefined;
     let action = match && head.existingId === match.id ? head.existingAction : null;
     if (match) {
       action ??= match.cancelled ? 'SKIP' : 'ADD_SEATS';

@@ -54,6 +54,7 @@ type Row = {
   timezone: string | null;
   confirmation_message_md: string | null;
   theme: unknown;
+  joined: boolean;
 };
 
 export default async function RegistrationDonePage({
@@ -93,7 +94,11 @@ export default async function RegistrationDonePage({
       s.venue_name as venue,
       c.timezone,
       f.confirmation_message_md,
-      f.theme
+      f.theme,
+      -- A submission merged into a party already under this address (spec/v3.md
+      -- §25.5): not the party's own response, and not an edit it replaced.
+      (r.form_response_id is distinct from fr.id
+        and not exists (select 1 from form_responses later where later.supersedes_id = fr.id)) as joined
     from form_responses fr
     -- Every response knows its party (\`0204\`): a submission merged into an
     -- existing party by email (spec/v3.md §25.5) reports the whole party,
@@ -106,19 +111,50 @@ export default async function RegistrationDonePage({
     where fr.edit_token = ${editToken}
       and r.deleted_at is null
     group by r.contact_name, r.contact_email, r.status, s.name, s.starts_at, s.venue_name,
-             c.timezone, f.confirmation_message_md, f.theme
+             c.timezone, f.confirmation_message_md, f.theme, r.form_response_id, fr.id
     limit 1
   `);
 
   const row = rows[0];
   if (!row) return <FormNotFound />;
 
+  const theme = parseTheme(row.theme);
+
+  /**
+   * **A submission that joined a party already under this address learns
+   * nothing about that party** (spec/v3.md §25.5). Anyone can type an address
+   * on a public form; showing the registrant's name and seats here would let
+   * them look up who is registered. Everything the party holds goes by email
+   * to the address itself, in the updated receipt.
+   */
+  if (row.joined) {
+    return (
+      <ThemedForm theme={theme} bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}>
+        <FormHeaderCard
+          title="Thank you"
+          description={
+            <div className="flex flex-col gap-2">
+              <p className="text-form-accent flex items-center gap-2 font-medium">
+                <CircleCheckIcon className="size-5" aria-hidden />
+                Your registration has been recorded.
+              </p>
+              <p>
+                This email address already had a registration, so these seats were added to it. An
+                email to that address will list every seat and what happens next.
+              </p>
+              {row.confirmation_message_md ? <p>{row.confirmation_message_md}</p> : null}
+            </div>
+          }
+        />
+      </ThemedForm>
+    );
+  }
+
   const confirmed = Number(row.confirmed_base) + Number(row.confirmed_extra);
   const pending = Number(row.pending);
   const waitlisted = Number(row.waitlisted);
   const showTime = formatDateTime(row.starts_at ? new Date(row.starts_at) : null, row.timezone);
 
-  const theme = parseTheme(row.theme);
   return (
     <ThemedForm theme={theme} bannerSrc={theme?.bannerPath ? bannerUrl(theme.bannerPath) : null}>
       {/*

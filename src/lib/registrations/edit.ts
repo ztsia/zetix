@@ -450,6 +450,45 @@ export async function requestExtraSeats(
       const registrationId = current.registrationId;
       await tx.execute(sql`select id from registrations where id = ${registrationId}::bigint for update`);
 
+      /**
+       * **The cap is the party's, not the request's** (spec/v3.md §25.5): the
+       * seats join the same party, so a party that asks again and again must
+       * not grow past what one submission could have held. On a public form
+       * that is `form.max_tickets_per_response`, the party cap; on a player
+       * form, the extras a party may ask for in all, `form.extra_rows_max`.
+       */
+      const [held] = await tx.execute<{ kind: string; live: number; extras: number; party_cap: unknown }>(sql`
+        select f.kind::text as kind,
+               (select count(*)::int from attendees a
+                 where a.registration_id = ${registrationId}::bigint and a.deleted_at is null
+                   and a.status <> 'CANCELLED') as live,
+               (select count(*)::int from attendees a
+                 where a.registration_id = ${registrationId}::bigint and a.deleted_at is null
+                   and a.status <> 'CANCELLED' and a.allocation_type = 'EXTRA') as extras,
+               resolve_setting('form.max_tickets_per_response', ${current.segmentId}::bigint,
+                               ${current.showId}::bigint, ${current.concertId}::bigint) as party_cap
+          from registration_forms f where f.id = ${current.formId}::bigint
+      `);
+      const partyCap = typeof held?.party_cap === 'number' ? Math.trunc(held.party_cap) : null;
+      if (held?.kind === 'PUBLIC' && partyCap !== null && held.live + wanted.length > partyCap) {
+        const left = Math.max(0, partyCap - held.live);
+        return {
+          error:
+            left > 0
+              ? `A party may have at most ${partyCap} seats, and yours has ${held.live}. You can ask for ${left} more.`
+              : `A party may have at most ${partyCap} seats, and yours already has ${held.live}.`,
+        };
+      }
+      if (held?.kind === 'PLAYER' && held.extras + wanted.length > Math.trunc(cap)) {
+        const left = Math.max(0, Math.trunc(cap) - held.extras);
+        return {
+          error:
+            left > 0
+              ? `A party may ask for at most ${Math.trunc(cap)} extra seats in all. You can ask for ${left} more.`
+              : `Your party has already asked for the ${Math.trunc(cap)} extra seats it may.`,
+        };
+      }
+
       const outcome = await claimSeats(
         current.segmentId,
         registrationId,

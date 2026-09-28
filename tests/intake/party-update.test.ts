@@ -177,3 +177,22 @@ describe('waitlist mode (§25.6)', () => {
     expect(seat.status).toBe('WAITLIST');
   });
 });
+
+describe('giving back seats keeps a waiting party whole (QA)', () => {
+  it('promotes a waitlisted party only when all of it fits', async () => {
+    const id = await partyWithToken('Holder', ['H1', 'H2', 'H3'], TOKEN);
+    const pair = await partyWithToken('Pair', ['P1', 'P2'], 'pair-token-eeeeeeeeeeee');
+    const status = async () =>
+      (await sql<{ status: string }[]>`select status::text from attendees where registration_id = ${pair} order by id`).map(
+        (r) => r.status,
+      );
+    expect(await status()).toEqual(['WAITLIST', 'WAITLIST']);
+    const held = await sql<{ id: number }[]>`select id::int from attendees where registration_id = ${id} order by id`;
+
+    await giveBackSeats(TOKEN, [held[2].id]);
+    expect(await status()).toEqual(['WAITLIST', 'WAITLIST']);
+
+    await giveBackSeats(TOKEN, [held[1].id]);
+    expect(await status()).toEqual(['CONFIRMED', 'CONFIRMED']);
+  });
+});

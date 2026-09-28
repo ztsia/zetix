@@ -232,14 +232,16 @@ function pruneBlankRows(schema: FormSchema, answers: FormAnswers): FormAnswers {
 function partyFor(
   schema: FormSchema,
   answers: FormAnswers,
-): { seats: SeatRequest[]; seatCustom: (Record<string, unknown> | null)[] } {
+): { seats: SeatRequest[]; seatCustom: (Record<string, unknown> | null)[]; registrantIndex: number } {
   const seats: SeatRequest[] = [];
   const seatCustom: (Record<string, unknown> | null)[] = [];
+  let registrantIndex = -1;
 
   for (const block of schema.blocks) {
     if (block.type === 'REGISTRANT') {
       if (!('creates_seat' in block) || !block.creates_seat) continue;
       const values = flatValues(answers, block.id);
+      registrantIndex = seats.length;
       seats.push({
         fullName: text(values[CONTACT_NAME]),
         email: text(values[CONTACT_EMAIL]),
@@ -267,7 +269,7 @@ function partyFor(
     }
   }
 
-  return { seats, seatCustom };
+  return { seats, seatCustom, registrantIndex };
 }
 
 export async function submitRegistration(input: SubmitInput): Promise<SubmitResult> {
@@ -280,6 +282,11 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       ok: false,
       message: `Too many requests. Please wait ${verdict.retryAfterSeconds} seconds and try again.`,
     };
+  }
+
+  // A Server Action is a public endpoint: its argument is whatever was sent.
+  if (!input || typeof input.slug !== 'string' || !input.answers || typeof input.answers !== 'object') {
+    return { ok: false, message: 'That submission could not be read. Please reload the page and try again.' };
   }
 
   const now = new Date();
@@ -419,7 +426,9 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
       : contactEmail
     : null;
 
-  const { seats, seatCustom } = partyFor(form.schema, answers);
+  const { seats: allSeats, seatCustom: allCustom, registrantIndex } = partyFor(form.schema, answers);
+  let seats = allSeats;
+  let seatCustom = allCustom;
   if (seats.length === 0) return { ok: false, message: 'Please add at least one seat.' };
 
   /**
@@ -502,6 +511,29 @@ export async function submitRegistration(input: SubmitInput): Promise<SubmitResu
            limit 1
         `);
         if (same) return { url: `/f/${form.slug}/done?r=${same.edit_token}` };
+
+        /**
+         * **The registrant is already a seat of their own party.** On a public
+         * form the person filling it in is seat #1 (decision 36); coming back
+         * to add guests must not book them a second seat in their own name.
+         */
+        if (registrantIndex >= 0) {
+          const [already] = await tx.execute<{ n: number }>(sql`
+            select count(*)::int as n from attendees
+             where registration_id = ${existingId}::bigint and deleted_at is null and status <> 'CANCELLED'
+               and lower(btrim(full_name)) = lower(btrim(${contactName}))
+          `);
+          if (already.n > 0) {
+            seats = allSeats.filter((_, index) => index !== registrantIndex);
+            seatCustom = allCustom.filter((_, index) => index !== registrantIndex);
+            if (seats.length === 0) {
+              return {
+                refused:
+                  'You are already registered under this email address, and this adds no one new. Nothing was submitted.',
+              };
+            }
+          }
+        }
 
         /**
          * The party-size cap covers the whole party, not each submission —

@@ -243,3 +243,35 @@ describe('staging', () => {
     expect(receipt.n).toBe(1);
   });
 });
+
+describe('one address, two players (QA)', () => {
+  it('keeps a party per player, and says so', async () => {
+    const [p1, p2] = await createPlayers(concertId, 2);
+    const profile = parseMappingProfile({
+      columns: { requested_at: null, contact_name: 'Name', contact_email: 'Email', attendee_name: 'Guest' },
+      player_match: { column: 'Player', strategy: 'NAME' },
+      default_allocation_type: 'BASE',
+    });
+    const { batchId } = await stage(
+      playerSeg,
+      [
+        line(2, { Name: 'Mum', Email: 'mum@example.test', Guest: 'G1', Player: 'Player 1' }),
+        line(3, { Name: 'Mum', Email: 'mum@example.test', Guest: 'G2', Player: 'Player 2' }),
+      ],
+      profile,
+    );
+    const rows = await staged(batchId);
+    expect(new Set(rows.map((r) => r.party_key)).size).toBe(2);
+    expect(rows.every((r) => r.issues.some((i) => i.code === 'EMAIL_ACROSS_PLAYERS'))).toBe(true);
+
+    await run('intake.commit_rows', { filter: { batchId }, excludedIds: [] });
+    const parties = await sql<{ player_id: number; seats: string[] }[]>`
+      select r.player_id::int, array(select a.full_name from attendees a where a.registration_id = r.id order by a.id) as seats
+        from registrations r where r.segment_id = ${playerSeg} order by r.player_id
+    `;
+    expect(parties).toEqual([
+      { player_id: p1, seats: ['G1'] },
+      { player_id: p2, seats: ['G2'] },
+    ]);
+  });
+});

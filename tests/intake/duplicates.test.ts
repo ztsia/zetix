@@ -209,3 +209,23 @@ describe('the party record', () => {
     expect((await loadPartyRecord(concertId, first))!.duplicates).toEqual([]);
   });
 });
+
+describe("merge against the player's own quota (QA)", () => {
+  it('reads the base_quota_override, and marks the seats the override was needed for', async () => {
+    const [p1, p2] = await createPlayers(concertId, 2);
+    await sql`insert into player_allocations (player_id, segment_id, base_quota_override) values (${p1}, ${playerSeg}, 1)`;
+    const a = await party(playerSeg, 'Sam Ong', 'sam@example.test', ['Sam Ong'], p1);
+    const b = await party(playerSeg, 'Sam Ong', 'sam@example.test', ['Uma Ong'], p2);
+    const pair = await candidate(a, b);
+
+    expect((await run('intake.merge', [pair])).skipped).toBe(1);
+    expect((await run('intake.merge', [pair], { override: true })).done).toBe(1);
+    const marks = await sql<{ full_name: string; over: boolean }[]>`
+      select full_name, over_capacity_at is not null as over from attendees where registration_id = ${a} order by id
+    `;
+    expect(marks).toEqual([
+      { full_name: 'Sam Ong', over: false },
+      { full_name: 'Uma Ong', over: true },
+    ]);
+  });
+});

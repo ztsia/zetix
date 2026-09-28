@@ -25,9 +25,12 @@ const cellSchema = z.object({
   value: z.string().max(500).nullable(),
 });
 
+/** Fields that came from the file's line rather than from one guest's cells. */
+const LINE_FIELDS = new Set(['contactName', 'contactEmail', 'requestedAt', 'groupKey']);
+
 async function stagedRow(concertId: number, batchId: number, rowId: number) {
-  const [row] = await getDb().execute<{ normalized: StagedFields; concert_id: string }>(sql`
-    select r.normalized, s.concert_id
+  const [row] = await getDb().execute<{ party_key: string | null; row_number: number }>(sql`
+    select r.party_key, r.row_number
       from import_rows r join import_batches b on b.id = r.batch_id join shows s on s.id = b.show_id
      where r.id = ${rowId} and r.batch_id = ${batchId} and s.concert_id = ${concertId}
        and r.status = 'STAGED' and b.status = 'STAGED' and r.deleted_at is null
@@ -44,31 +47,54 @@ export async function updateStagedCellAction(input: z.input<typeof cellSchema>):
   const row = await stagedRow(concertId, batchId, rowId);
   if (!row) return { ok: false, error: 'That row is no longer staged.' };
 
-  let next: StagedFields;
+  let player: { id: number; name: string } | null = null;
   if (field === 'player') {
     const playerId = Number(value);
-    const [player] = await getDb().execute<{ id: string; full_name: string }>(sql`
+    const [found] = await getDb().execute<{ id: string; full_name: string }>(sql`
       select id, full_name from players
        where id = ${Number.isSafeInteger(playerId) ? playerId : 0} and concert_id = ${concertId}
          and is_active and deleted_at is null
     `);
-    if (!player) return { ok: false, error: 'Choose a player from this concert.' };
-    next = { ...row.normalized, playerId: Number(player.id), playerName: player.full_name, playerConfirmed: true };
-  } else {
-    next = applyEdit(row.normalized, field, value);
+    if (!found) return { ok: false, error: 'Choose a player from this concert.' };
+    player = { id: Number(found.id), name: found.full_name };
   }
 
+  /**
+   * Which rows an edit reaches. The player is the party's, so it is set on
+   * every row of the party; the contact, the timestamp and the group column
+   * came from one line of the file, so they change on every seat that line
+   * produced (a wide sheet's line is several rows). A guest's own cells are
+   * that row's alone.
+   */
+  const scope =
+    field === 'player'
+      ? sql`party_key is not distinct from ${row.party_key}`
+      : LINE_FIELDS.has(field)
+        ? sql`row_number = ${row.row_number}`
+        : sql`id = ${rowId}`;
+
   await getDb().transaction(async (tx) => {
-    await tx.execute(sql`
-      update import_rows set normalized = ${JSON.stringify(next)}::jsonb, updated_at = now() where id = ${rowId}
+    const targets = await tx.execute<{ id: string; normalized: StagedFields }>(sql`
+      select id, normalized from import_rows
+       where batch_id = ${batchId} and status = 'STAGED' and deleted_at is null and ${scope}
+       for update
     `);
+    for (const target of targets) {
+      const next: StagedFields = player
+        ? { ...target.normalized, playerId: player.id, playerName: player.name, playerConfirmed: true }
+        : applyEdit(target.normalized, field as Exclude<typeof field, 'player'>, value);
+      await tx.execute(sql`
+        update import_rows set normalized = ${JSON.stringify(next)}::jsonb, updated_at = now()
+         where id = ${Number(target.id)}
+      `);
+    }
     await validateBatch(tx, batchId);
     await writeAuditLog(
       {
         action: 'import_row.edited',
         entityType: 'import_batch',
         entityId: batchId,
-        after: { row: rowId, field },
+        after: { row: rowId, field, rows: targets.length },
         actorId: admin.id,
       },
       tx,

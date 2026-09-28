@@ -235,7 +235,7 @@ export async function giveBackSeats(token: string, attendeeIds: number[]): Promi
       tx,
     );
     const freed = released.filter((seat) => seat.was_confirmed).length;
-    return freed > 0 ? promoteWaitlist(tx, Number(where.segment_id), freed) : 0;
+    return freed > 0 ? promoteWaitlist(tx, Number(where.segment_id)) : 0;
   });
 
   const n = ids.length;
@@ -249,17 +249,21 @@ export async function giveBackSeats(token: string, attendeeIds: number[]): Promi
 }
 
 /**
- * Promote waitlisted seats into room just freed, first come first served by
- * each seat's own request time (§21.3), stopping at the first seat the engine
- * refuses so a later, smaller request never jumps an earlier one.
+ * Offer the room just freed to the waitlist, first come first served by each
+ * party's earliest waiting seat (§21.3) — **a whole party at a time**: its
+ * waiting seats are promoted together or not at all (`promote_seats()` is
+ * all-or-nothing), because cutting a party in half is a worse answer than
+ * making it wait (`allocation.md` §7.4). The engine decides what fits — the
+ * room just freed and any left open before — and the walk stops at the first
+ * party it refuses, so a later, smaller party never jumps it.
  *
- * Only what the segment's policy would grant unreviewed: every waitlisted seat
+ * Only what the segment's policy would grant unreviewed: every waiting seat
  * under `AUTO_FCFS`, and under `REVIEW` only base seats — an extra there waits
  * for the admin's review, as §7.5 requires of every extra.
  */
-async function promoteWaitlist(tx: Tx, segmentId: number, room: number): Promise<number> {
-  const waiting = await tx.execute<{ id: string; registration_id: string }>(sql`
-    select a.id, a.registration_id
+async function promoteWaitlist(tx: Tx, segmentId: number): Promise<number> {
+  const waiting = await tx.execute<{ registration_id: string; ids: string[] }>(sql`
+    select a.registration_id, array_agg(a.id order by a.requested_at, a.id) as ids
       from attendees a
       join registrations r on r.id = a.registration_id
      where a.segment_id = ${segmentId}
@@ -269,21 +273,22 @@ async function promoteWaitlist(tx: Tx, segmentId: number, room: number): Promise
        and r.status <> 'CANCELLED'
        and (a.allocation_type = 'BASE'
             or (resolve_setting('allocation.extras_policy', ${segmentId}::bigint) #>> '{}') = 'AUTO_FCFS')
-     order by a.requested_at, a.id
-     limit ${room}
+     group by a.registration_id
+     order by min(a.requested_at), a.registration_id
   `);
   let confirmed = 0;
-  for (const seat of waiting) {
-    const outcome = await promoteSeats(segmentId, [Number(seat.id)], { executor: tx });
+  for (const party of waiting) {
+    const ids = party.ids.map(Number);
+    const outcome = await promoteSeats(segmentId, ids, { executor: tx });
     if (outcome.refused || outcome.confirmed === 0) break;
     confirmed += outcome.confirmed;
-    await recomputeStatus(tx, Number(seat.registration_id));
+    await recomputeStatus(tx, Number(party.registration_id));
     await writeAuditLog(
       {
         action: 'registration.promoted',
         entityType: 'registration',
-        entityId: Number(seat.registration_id),
-        after: { confirmed: 1, by: 'seats given back by another party' },
+        entityId: Number(party.registration_id),
+        after: { confirmed: outcome.confirmed, by: 'seats given back by another party' },
         actorId: null,
       },
       tx,

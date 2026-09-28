@@ -1,6 +1,7 @@
 import 'server-only';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { dbErrorMessage } from '@/db/errors';
 import { moveRegistration, recomputeStatus } from '@/lib/registrations/mutations';
 import { defineCommand, SkipItem, type AnyCommand, type BlastLine, type Tx } from '@/lib/commands/define';
 import { idSchema } from '@/lib/commands/selection';
@@ -299,9 +300,7 @@ export async function mergeParties(
       await moveRegistration(absorbed.id, survivor.segmentId, { override: options.override, executor: tx });
       await tx.execute(sql`set constraints all immediate`);
     } catch (error) {
-      throw new SkipItem(
-        `${survivor.name}'s segment has no room for the seats: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new SkipItem(`${survivor.name}'s segment has no room for the seats: ${dbErrorMessage(error)}`);
     }
   }
 
@@ -313,21 +312,38 @@ export async function mergeParties(
   `);
 
   // Base seats now count against the survivor's player (`claim_seats()`
-  // counts base by the party's player). Past that player's quota is the same
-  // line the engine draws, and the same override crosses it (§23.5).
-  if (!options.override) {
+  // counts base by the party's player), against that player's own quota — the
+  // override on `player_allocations` if there is one, else the segment's.
+  // Past it is the line the engine draws, and the same override crosses it,
+  // marking the seats that needed it (§23.5).
+  if (survivor.playerId !== null) {
     const [quota] = await tx.execute<{ quota: number | null; claimed: number }>(sql`
-      select (resolve_setting('allocation.base_quota', ${survivor.segmentId}::bigint) #>> '{}')::int as quota,
+      select coalesce(pa.base_quota_override,
+                      (resolve_setting('allocation.base_quota', ${survivor.segmentId}::bigint) #>> '{}')::int) as quota,
              (select count(*)::int from attendees a join registrations r on r.id = a.registration_id
                where a.segment_id = ${survivor.segmentId} and a.allocation_type = 'BASE'
                  and a.status = 'CONFIRMED' and a.deleted_at is null and r.deleted_at is null
                  and r.status <> 'CANCELLED'
-                 and r.player_id is not distinct from ${survivor.playerId}::bigint) as claimed
+                 and r.player_id = ${survivor.playerId}::bigint) as claimed
+        from (select 1) one
+        left join player_allocations pa
+               on pa.player_id = ${survivor.playerId}::bigint and pa.segment_id = ${survivor.segmentId}::bigint
     `);
-    if (survivor.playerId !== null && quota && quota.quota !== null && quota.claimed > quota.quota) {
+    const over = quota && quota.quota !== null ? quota.claimed - quota.quota : 0;
+    if (over > 0 && !options.override) {
       throw new SkipItem(
-        `The merged party would hold ${quota.claimed} base seats against a quota of ${quota.quota}. Use the override to merge anyway.`,
+        `The merged party would hold ${quota!.claimed} base seats against a quota of ${quota!.quota}. Use the override to merge anyway.`,
       );
+    }
+    if (over > 0) {
+      await tx.execute(sql`
+        update attendees set over_capacity_at = now()
+         where id in (select id from attendees
+                       where registration_id = ${survivor.id} and merged_from_id = ${absorbed.id}
+                         and allocation_type = 'BASE' and status = 'CONFIRMED' and deleted_at is null
+                       order by id desc
+                       limit ${over})
+      `);
     }
   }
 
@@ -475,9 +491,7 @@ const undoMerge = defineCommand({
         await moveRegistration(detail.absorbedId, detail.fromSegmentId, { executor: tx });
         await tx.execute(sql`set constraints all immediate`);
       } catch (error) {
-        throw new SkipItem(
-          `The segment it came from has no room to take its seats back: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw new SkipItem(`The segment it came from has no room to take its seats back: ${dbErrorMessage(error)}`);
       }
     }
     if (detail.responseIds.length > 0) {

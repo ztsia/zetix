@@ -130,7 +130,8 @@ describe('one party per email per segment (§25.5)', () => {
     const rows = await parties(segmentId);
     expect(rows).toHaveLength(1);
     const party = await seats(rows[0].id);
-    expect(party.map((s) => s.full_name)).toEqual(['Alice Tan', 'Bob Tan', 'Alice Tan', 'Cara Tan']);
+    // The registrant is already seat #1; coming back adds only the new guest.
+    expect(party.map((s) => s.full_name)).toEqual(['Alice Tan', 'Bob Tan', 'Cara Tan']);
     // §21.3: the later submission's seats carry their own, later time.
     expect(new Date(party[2].requested_at).getTime()).toBeGreaterThan(new Date(party[0].requested_at).getTime());
 
@@ -238,7 +239,7 @@ describe('the receipt (§25.3)', () => {
     expect(rows[0].status).toBe('CANCELLED');
     expect(rows[0].superseded_by_id).toBe(rows[1].id);
     expect(rows[1].status).toBe('QUEUED');
-    expect(rows[1].body_md).toMatch(/4 seat/);
+    expect(rows[1].body_md).toMatch(/3 seat/);
     expect(rows[1].body_md).toMatch(/Cara Tan/);
   });
 
@@ -367,5 +368,100 @@ describe('duplicate detection (§25.5)', () => {
       select status::text from duplicate_candidates where registration_b_id = ${second}
     `;
     expect(kept.status).toBe('DISMISSED');
+  });
+});
+
+describe('the hall lock (§7.8)', () => {
+  /**
+   * The submit takes the show lock before it looks for a party under the
+   * address, so two submits from one address queue rather than both creating
+   * one. Proved from outside: another connection holds the show row with a lock
+   * that conflicts only with that one (`FOR NO KEY UPDATE` lets the insert's
+   * foreign-key check through), and the submit must be waiting on it before it
+   * has written anything.
+   */
+  it('waits for the show lock before it reads or writes the party', async () => {
+    const { showId } = await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    const reserved = await sql.reserve();
+    try {
+      await reserved`begin`;
+      await reserved`select 1 from shows where id = ${showId} for no key update`;
+      const [{ pid: holder }] = await reserved<{ pid: number }[]>`select pg_backend_pid() as pid`;
+
+      const pending = submit(publicAnswers('alice@example.test', ['Bob Tan']));
+
+      let waiter: number | null = null;
+      for (let i = 0; i < 50 && waiter === null; i++) {
+        const [row] = await sql<{ pid: number }[]>`
+          select pid from pg_stat_activity
+           where wait_event_type = 'Lock' and pid <> ${holder} and datname = current_database()
+        `;
+        if (row) waiter = row.pid;
+        else await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiter).not.toBeNull();
+
+      const written = await sql<{ relname: string }[]>`
+        select c.relname from pg_locks l join pg_class c on c.oid = l.relation
+         where l.pid = ${waiter} and l.mode = 'RowExclusiveLock'
+           and c.relname in ('registrations', 'form_responses', 'attendees')
+      `;
+      expect(written).toEqual([]);
+
+      await reserved`commit`;
+      expect((await pending).ok).toBe(true);
+    } finally {
+      reserved.release();
+    }
+  });
+});
+
+describe('QA fixes on the submit path', () => {
+  it('does not book the registrant a second seat when they come back to add guests', async () => {
+    const { segmentId } = await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    await submit(publicAnswers('alice@example.test', ['Bob Tan']));
+    expect((await submit(publicAnswers('alice@example.test', ['Cara Tan']))).ok).toBe(true);
+    const [party] = await parties(segmentId);
+    expect((await seats(party.id)).map((s) => s.full_name)).toEqual(['Alice Tan', 'Bob Tan', 'Cara Tan']);
+
+    // Nothing new at all: refused, not a silent no-op.
+    const again = await submit(publicAnswers('alice@example.test', []));
+    expect(again.ok).toBe(false);
+  });
+
+  it('holds "request extra tickets" to the party cap across requests', async () => {
+    await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    const first = await submit(publicAnswers('alice@example.test', ['Bob Tan', 'Cara Tan']));
+    if (!first.ok) throw new Error('submit failed');
+    const token = new URL(first.confirmationUrl, 'http://x').searchParams.get('r')!;
+    const { requestExtraSeats } = await import('@/lib/registrations/edit');
+
+    expect(await requestExtraSeats(token, ['Dan Tan', 'Eve Tan'])).toHaveProperty('error');
+    expect(await requestExtraSeats(token, ['Dan Tan'])).toMatchObject({ requested: 1 });
+    expect(await requestExtraSeats(token, ['Eve Tan'])).toHaveProperty('error');
+  });
+
+  it("shows a stranger who typed someone's address nothing about that person's party", async () => {
+    await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    const owner = await submit(publicAnswers('nadia@example.test', ['Guest One'], 'Nadia Hassan'));
+    const stranger = await submit(publicAnswers('nadia@example.test', [], 'Mallory Stranger'));
+    if (!owner.ok || !stranger.ok) throw new Error('submit failed');
+
+    const Done = (await import('@/app/(registration)/f/[slug]/done/page')).default;
+    const render = async (url: string) => {
+      const r = new URL(url, 'http://x').searchParams.get('r')!;
+      const out = await Done({ params: Promise.resolve({ slug: SLUG }), searchParams: Promise.resolve({ r }) });
+      return JSON.stringify(out);
+    };
+    expect(await render(owner.confirmationUrl)).toContain('Nadia Hassan');
+    const seen = await render(stranger.confirmationUrl);
+    expect(seen).not.toContain('Nadia');
+    expect(seen).not.toMatch(/seats? confirmed/);
+  });
+
+  it('refuses a payload with no answers instead of throwing', async () => {
+    await seedForm({ schema: PUBLIC_FORM, audienceMode: 'PUBLIC', capacity: 50 });
+    const result = await submit(null as unknown as FormAnswers);
+    expect(result.ok).toBe(false);
   });
 });

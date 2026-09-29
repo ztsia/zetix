@@ -65,8 +65,8 @@ value is a validation error, never a silent fallback).
 
 **One capacity, not three.** There is no separate soft threshold and no `held_seats` column. Seats you
 want to withhold — staff, press, guests of honour — are simply seats you do not give to any segment:
-if the hall is 400 and the segments total 390, ten seats are held, and the overview screen shows them
-as unallocated. One number is easier to reason about at 9pm on a concert night than three.
+if the hall is 400 and the segments total 390, ten seats are held, and Home shows them
+as unallocated (the Overview before V3). One number is easier to reason about at 9pm on a concert night than three.
 
 **`show_segments`** — a slice of one show's capacity with its own audience model
 `id`, `show_id`, `name` (e.g. "Public", "Player invited"),

@@ -9,6 +9,10 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { AppSidebar } from './app-sidebar';
 import { BlastQueueBanner, BlastQueueProvider } from './blast-queue';
 import { AdminHeader } from './header';
+import { InlineScript } from '@/components/inline-script';
+import { PRE_PAINT_SCRIPT } from './console-themes';
+import { ConsoleThemeProvider } from './theme-provider';
+import './themes.css';
 
 export const metadata: Metadata = {
   title: { default: 'Admin — Zetix', template: '%s — Zetix' },
@@ -52,17 +56,21 @@ export default async function AdminLayout({
 
   return (
     <RoleProvider role={user.role}>
-      <SidebarProvider>
-        <AppSidebar concerts={rows} userLabel={user.displayName ?? user.email} />
-        <SidebarInset>
-          <BlastQueueProvider>
-            <AdminHeader />
-            {user.role === 'VIEWER' ? <ReadOnlyBanner /> : null}
-            <BlastQueueBanner />
-            <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">{children}</div>
-          </BlastQueueProvider>
-        </SidebarInset>
-      </SidebarProvider>
+      {/* The console's theme, before it paints (spec/v3.md §29.5). */}
+      <InlineScript html={PRE_PAINT_SCRIPT} />
+      <ConsoleThemeProvider>
+        <SidebarProvider>
+          <AppSidebar concerts={rows} userLabel={user.displayName ?? user.email} />
+          <SidebarInset>
+            <BlastQueueProvider>
+              <AdminHeader />
+              {user.role === 'VIEWER' ? <ReadOnlyBanner /> : null}
+              <BlastQueueBanner />
+              <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">{children}</div>
+            </BlastQueueProvider>
+          </SidebarInset>
+        </SidebarProvider>
+      </ConsoleThemeProvider>
     </RoleProvider>
   );
 }

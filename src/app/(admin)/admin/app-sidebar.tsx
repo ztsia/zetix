@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { signOut } from '@/lib/auth/actions';
+import { ThemeSwitcher } from './theme-switcher';
 import { AREAS, RECORD_ITEMS, SETTINGS_ITEM, areaHref, concertPath, locate } from './nav';
 
 export type ConcertSummary = { id: number; name: string; season: string | null };
@@ -188,6 +189,9 @@ export function AppSidebar({
               <SETTINGS_ITEM.icon />
               <span>{SETTINGS_ITEM.label}</span>
             </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <ThemeSwitcher />
           </SidebarMenuItem>
           <SidebarMenuItem>
             <form action={signOut}>

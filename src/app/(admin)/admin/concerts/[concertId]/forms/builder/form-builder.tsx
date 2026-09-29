@@ -320,7 +320,9 @@ export function FormBuilder({
   const pendingBlock = pendingDelete === null ? null : schema.blocks[pendingDelete];
 
   return (
-    <div className="flex flex-col gap-3">
+    // `data-form-surface`: in a themed console the builder keeps the public
+    // form's face, radius and shadows (`admin/themes.css`, spec/v3.md §29.5).
+    <div data-form-surface className="flex flex-col gap-3">
       {!readOnly && (
         <div className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-2 z-20 mx-auto flex w-full max-w-[770px] flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-2 shadow-sm backdrop-blur">
           <p className="text-muted-foreground text-sm" role="status">

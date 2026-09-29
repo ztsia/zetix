@@ -12,6 +12,9 @@ const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', preload: false });
 const montserrat = Montserrat({ subsets: ['latin'], variable: '--font-montserrat', preload: false });
 const outfit = Outfit({ subsets: ['latin'], variable: '--font-outfit', preload: false });
+// Geist again, under a name no theme overrides: a registration form drawn inside
+// a themed console (the builder) keeps the public form's face.
+const geistForm = Geist({ subsets: ['latin'], variable: '--font-geist', preload: false });
 
 export const metadata: Metadata = {
   title: 'Zetix',
@@ -23,7 +26,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={cn("font-sans", geist.variable, inter.variable, montserrat.variable, outfit.variable)}>
+    <html lang="en" suppressHydrationWarning className={cn("font-sans", geist.variable, geistForm.variable, inter.variable, montserrat.variable, outfit.variable)}>
       <body className="antialiased">{children}</body>
     </html>
   );

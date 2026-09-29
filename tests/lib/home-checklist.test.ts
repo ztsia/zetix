@@ -35,6 +35,7 @@ const show = (over: Partial<ShowFacts> = {}): ShowFacts => ({
   segments: [segment()],
   operators: 1,
   feedback: 'OPEN',
+  feedbackEnabled: true,
   ...over,
 });
 
@@ -119,6 +120,12 @@ describe('the setup checklist', () => {
     for (const feedback of ['none', 'DRAFT', 'CLOSED'] as const) {
       expect(items(facts({ shows: [show({ feedback })] })).feedback!.done, feedback).toBe(false);
     }
+  });
+
+  it('an open feedback form the portal hides is not feedback enabled, and says which', () => {
+    const item = items(facts({ shows: [show({ feedbackEnabled: false })] })).feedback!;
+    expect(item.done).toBe(false);
+    expect(item.detail).toBe('The portal hides feedback for “Evening”.');
   });
 
   it('missing templates, booklet, practical info and timezone are each to do', () => {

@@ -49,6 +49,12 @@ const dateSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker, or type YYYY-MM-DD.')
+  // 2027-02-31 matches the pattern and is no date; Postgres would refuse it
+  // in its own words.
+  .refine((value) => {
+    const day = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(day.getTime()) && day.toISOString().startsWith(value);
+  }, 'That date does not exist.')
   .nullable();
 
 const concertSchema = z
@@ -180,32 +186,15 @@ async function readConcertValue(concertId: number, key: string): Promise<{ exist
   return { exists: row !== undefined, value: row?.value ?? null };
 }
 
-/** Parses a value for one of the typed columns, which a bag value never has to satisfy. */
-function columnValue(key: ConcertColumnKey, value: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
-  if (key === 'portal.notes_close_at') {
-    const at = new Date(String(value));
-    if (Number.isNaN(at.getTime())) {
-      return { ok: false, error: 'That is not a timestamp. Use an ISO timestamp, for example 2026-11-20T23:00:00+08:00.' };
-    }
-    return { ok: true, value: at.toISOString() };
-  }
-  if (key === 'portal.public_wall_visibility') {
-    const text = String(value).trim().toUpperCase();
-    if (text !== 'ADMIN_ONLY' && text !== 'AUDIENCE') {
-      return { ok: false, error: 'The wall is visible to ADMIN_ONLY or AUDIENCE.' };
-    }
-    return { ok: true, value: text };
-  }
-  return { ok: true, value };
-}
-
 export async function setConcertSettingAction(
   concertId: number,
   key: string,
   raw: string,
 ): Promise<FormState> {
   await requireRole('ADMIN');
-  if (!idSchema.safeParse(concertId).success) return { error: 'Malformed request.' };
+  if (!idSchema.safeParse(concertId).success || typeof key !== 'string' || typeof raw !== 'string') {
+    return { error: 'Malformed request.' };
+  }
 
   const spec = settingSpec(key);
   if (!spec?.concert) {
@@ -213,12 +202,12 @@ export async function setConcertSettingAction(
   }
   if (raw.trim() === '') return clearConcertSettingAction(concertId, key);
 
-  const parsed = parseSettingValue(spec, raw);
-  if (!parsed.ok) return { error: parsed.error };
-
-  const column = CONCERT_COLUMNS[key as ConcertColumnKey];
-  const value = column ? columnValue(key as ConcertColumnKey, parsed.value) : parsed;
+  // The catalogue's shape checks — a timestamp with its zone, an enum's
+  // spelling, a policy per audience — are what a typed column would have
+  // enforced; the bag is jsonb and enforces nothing.
+  const value = parseSettingValue(spec, raw);
   if (!value.ok) return { error: value.error };
+  const column = CONCERT_COLUMNS[key as ConcertColumnKey];
 
   try {
     const before = await readConcertValue(concertId, key);
@@ -262,7 +251,7 @@ export async function setConcertSettingAction(
  */
 export async function clearConcertSettingAction(concertId: number, key: string): Promise<FormState> {
   await requireRole('ADMIN');
-  if (!idSchema.safeParse(concertId).success) return { error: 'Malformed request.' };
+  if (!idSchema.safeParse(concertId).success || typeof key !== 'string') return { error: 'Malformed request.' };
 
   const spec = settingSpec(key);
   if (!spec?.concert) return { error: `“${key}” is not a setting a concert can override.` };

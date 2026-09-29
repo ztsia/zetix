@@ -52,6 +52,10 @@ export type SettingSpec = {
    * it there would be a control that silently does nothing.
    */
   concert?: true;
+  /** A `text` key that holds one of these, as its database enum spells them. */
+  values?: readonly string[];
+  /** A `text` key that holds an instant, stored as ISO 8601 in UTC. */
+  format?: 'timestamp';
 };
 
 export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSpec[] }[] = [
@@ -101,6 +105,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'After this, unclaimed base seats release into the segment’s extras pool. An ISO timestamp.',
         operational: true,
         level: 'segment',
+        format: 'timestamp',
         concert: true,
       },
       {
@@ -378,6 +383,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'ON_ADMISSION, OPEN_TO_ALL or CLOSED. Normally set per show.',
         operational: true,
         level: 'show',
+        values: ['ON_ADMISSION', 'OPEN_TO_ALL', 'CLOSED'],
         concert: true,
       },
       {
@@ -436,6 +442,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. An ISO timestamp, after which the feedback form stops accepting answers.',
         operational: true,
         level: 'show',
+        format: 'timestamp',
         concert: true,
       },
       {
@@ -467,6 +474,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. An ISO timestamp, after which no new note is accepted.',
         operational: true,
         level: 'concert',
+        format: 'timestamp',
         concert: true,
       },
       {
@@ -487,6 +495,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'V2. ADMIN_ONLY or AUDIENCE. Per-player grouping is admin-only always, whatever this says.',
         operational: true,
         level: 'concert',
+        values: ['ADMIN_ONLY', 'AUDIENCE'],
         concert: true,
       },
     ],
@@ -631,9 +640,14 @@ export function parseSettingValue(
   switch (spec.kind) {
     case 'number': {
       const n = Number(text);
-      if (!Number.isFinite(n)) return { ok: false, error: `“${text}” is not a number.` };
+      if (text === '' || !Number.isFinite(n)) return { ok: false, error: `“${text}” is not a number.` };
       if (spec.integer !== false && !Number.isInteger(n)) {
         return { ok: false, error: `${spec.label} is a whole number — “${text}” is not.` };
+      }
+      // Every whole-number key is read into an `int` somewhere (a pool, a
+      // cap, a quota), and a value past that range fails there, far from here.
+      if (spec.integer !== false && Math.abs(n) > INT_MAX) {
+        return { ok: false, error: `${spec.label} cannot be more than ${INT_MAX}.` };
       }
       if (spec.min !== undefined && n < spec.min) {
         return {
@@ -655,7 +669,15 @@ export function parseSettingValue(
     }
     case 'json': {
       try {
-        return { ok: true, value: JSON.parse(text) };
+        const value: unknown = JSON.parse(text);
+        if (spec.key === 'allocation.extras_policy' && !isExtrasPolicy(value)) {
+          return {
+            ok: false,
+            error:
+              'An extras policy is REVIEW or AUTO_FCFS, or one per audience: {"PLAYER_INVITED":"REVIEW","PUBLIC":"AUTO_FCFS"}.',
+          };
+        }
+        return { ok: true, value };
       } catch {
         return {
           ok: false,
@@ -664,7 +686,47 @@ export function parseSettingValue(
         };
       }
     }
-    default:
+    default: {
+      if (spec.values) {
+        const upper = text.toUpperCase();
+        if (!spec.values.includes(upper)) {
+          return { ok: false, error: `${spec.label} is one of ${spec.values.join(', ')}.` };
+        }
+        return { ok: true, value: upper };
+      }
+      if (spec.format === 'timestamp') {
+        // An instant needs a zone: a bare "2026-11-20T23:00" would be read in
+        // the server's zone, never the concert's (spec/domain.md §6.1).
+        const at = /(Z|[+-]\d{2}:?\d{2})$/i.test(text) ? new Date(text) : new Date(Number.NaN);
+        if (Number.isNaN(at.getTime())) {
+          return {
+            ok: false,
+            error: `${spec.label} is a timestamp with its zone, for example 2026-11-20T23:00:00+08:00.`,
+          };
+        }
+        return { ok: true, value: at.toISOString() };
+      }
       return { ok: true, value: text };
+    }
   }
+}
+
+/** `int4`'s ceiling. Not an operational value: the width of the column a count lands in. */
+const INT_MAX = 2_147_483_647;
+
+const POLICIES = ['REVIEW', 'AUTO_FCFS'];
+
+/**
+ * One policy for every audience, or an object keyed by audience mode —
+ * `resolve_setting()` picks from the object by the segment's own mode, at any
+ * level. Anything else reaches `segment_pool()` as a policy it cannot read.
+ */
+function isExtrasPolicy(value: unknown): boolean {
+  if (typeof value === 'string') return POLICIES.includes(value);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(([mode, policy]) => ['PLAYER_INVITED', 'PUBLIC'].includes(mode) && POLICIES.includes(policy as string))
+  );
 }

@@ -15,7 +15,7 @@ import {
   setConcertSettingAction,
 } from '../concerts/[concertId]/setup/actions';
 import type { SettingSpec } from './catalogue';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * One tunable, at the root of the cascade.
@@ -44,6 +44,9 @@ export function SettingRow({
   concert?: { id: number; inherited: unknown };
 }) {
   const id = useId();
+  // A viewer reads every value but can type into none (spec/v3.md §28): a
+  // field that takes input and then offers no Save reads as a broken screen.
+  const canEdit = useCanEdit();
   const [draft, setDraft] = useState(() => toInput(spec, value));
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -118,6 +121,7 @@ export function SettingRow({
               id={id}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              disabled={!canEdit}
               className="w-32"
             >
               <option value="">{concert ? 'Inherit' : 'Not set'}</option>
@@ -129,6 +133,7 @@ export function SettingRow({
               id={id}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              readOnly={!canEdit}
               inputMode={spec.kind === 'number' ? 'numeric' : undefined}
               placeholder={concert ? (inherited === '' ? 'inherit' : `inherit (${inherited})`) : spec.operational ? 'not set' : ''}
               className={spec.kind === 'json' ? 'w-96 font-mono text-xs' : 'w-40'}

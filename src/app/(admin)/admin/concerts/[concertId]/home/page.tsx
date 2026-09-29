@@ -75,7 +75,13 @@ export default async function HomePage({
   const tz = concert.timezone;
   const beat = heartbeatState(heartbeat, typeof tickMinutes === 'number' ? tickMinutes : null, now);
 
-  const attention = needsAttention(base, counts.views, inbox.waiting, batches, mailbox.folders);
+  // Every string Home hands over is one an admin typed or uploaded — an import's
+  // filename, a form's title, a show's name — and any of them can hold an
+  // address. Masked for a viewer as every page's props are (spec/v3.md §28).
+  const mask = <T,>(value: T): T => maskForRole(user.role, value);
+  const attention = mask(needsAttention(base, counts.views, inbox.waiting, batches, mailbox.folders));
+  const dates = mask(dateEntries(base, shows, forms));
+  const phases = mask(buildChecklist(facts));
 
   return (
     <div className="flex flex-col gap-6">
@@ -92,7 +98,7 @@ export default async function HomePage({
 
       {/* The heartbeat's own error text is the tick's; masked like every
           string a viewer is handed. */}
-      <HeartbeatAlert state={maskForRole(user.role, beat)} now={now} />
+      <HeartbeatAlert state={mask(beat)} now={now} />
 
       <section aria-labelledby="attention" className="flex flex-col gap-3">
         <h2 id="attention" className="font-semibold">
@@ -123,11 +129,11 @@ export default async function HomePage({
         )}
       </section>
 
-      <Funnel base={base} views={counts.views} seats={seats} shows={shows} />
+      <Funnel base={base} views={counts.views} seats={seats} shows={mask(shows)} />
 
       <div className="grid gap-6 xl:grid-cols-[2fr_3fr]">
-        <Dates base={base} shows={shows} forms={forms} timeZone={tz} now={now} />
-        <Checklist concertId={concertId} phases={buildChecklist(facts)} />
+        <Dates all={dates} timeZone={tz} now={now} />
+        <Checklist concertId={concertId} phases={phases} />
       </div>
     </div>
   );
@@ -407,20 +413,7 @@ function dateEntries(base: string, shows: ShowView[], forms: FormDate[]): DateEn
   return entries.sort((a, b) => a.at.getTime() - b.at.getTime());
 }
 
-function Dates({
-  base,
-  shows,
-  forms,
-  timeZone,
-  now,
-}: {
-  base: string;
-  shows: ShowView[];
-  forms: FormDate[];
-  timeZone: string | null;
-  now: Date;
-}) {
-  const all = dateEntries(base, shows, forms);
+function Dates({ all, timeZone, now }: { all: DateEntry[]; timeZone: string | null; now: Date }) {
   const past = all.filter((entry) => entry.at < now).slice(-PAST_SHOWN);
   const upcoming = all.filter((entry) => entry.at >= now);
   const shown = [...past, ...upcoming];

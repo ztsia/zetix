@@ -37,7 +37,7 @@ function read<T>(key: string, valid: (value: unknown) => value is T, fallback: T
   }
 }
 
-type Snapshot = { theme: ConsoleThemeId; mode: ConsoleMode; system: boolean };
+export type Snapshot = { theme: ConsoleThemeId; mode: ConsoleMode; system: boolean };
 
 /** A string, so an unchanged choice is an unchanged snapshot. */
 function getSnapshot(): string {
@@ -82,13 +82,26 @@ function store(key: string, value: string): void {
   for (const listener of listeners) listener();
 }
 
-function apply({ theme, mode, system }: Snapshot): void {
-  const root = document.documentElement;
+/** The slice of <html> the theme touches, so both steps can be tested without a DOM. */
+export type ThemeRoot = Pick<HTMLElement, 'setAttribute' | 'removeAttribute'> & {
+  classList: Pick<DOMTokenList, 'toggle' | 'remove'>;
+  style: { colorScheme: string };
+};
+
+/** Puts a choice on <html>. */
+export function applyTheme(root: ThemeRoot, { theme, mode, system }: Snapshot): void {
   const dark = mode === 'dark' || (mode === 'system' && system);
   if (theme === 'default') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
   root.classList.toggle('dark', dark);
   root.style.colorScheme = dark ? 'dark' : 'light';
+}
+
+/** Takes every trace of the console's theme off <html>, as the console leaves. */
+export function clearTheme(root: ThemeRoot): void {
+  root.removeAttribute('data-theme');
+  root.classList.remove('dark');
+  root.style.colorScheme = '';
 }
 
 /**
@@ -111,18 +124,12 @@ export function ConsoleThemeProvider({ children }: { children: React.ReactNode }
   const { theme, mode, system } = parse(snapshot);
 
   useEffect(() => {
-    apply(parse(getSnapshot()));
+    applyTheme(document.documentElement, parse(getSnapshot()));
   }, [snapshot]);
 
-  useEffect(
-    () => () => {
-      const root = document.documentElement;
-      root.removeAttribute('data-theme');
-      root.classList.remove('dark');
-      root.style.colorScheme = '';
-    },
-    [],
-  );
+  // On unmount: a client-side navigation out of the console must not carry
+  // the theme to a form, the ticket page or the scanner.
+  useEffect(() => () => clearTheme(document.documentElement), []);
 
   const setTheme = useCallback((next: ConsoleThemeId) => store(THEME_KEY, next), []);
   const setMode = useCallback((next: ConsoleMode) => store(MODE_KEY, next), []);

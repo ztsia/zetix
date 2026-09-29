@@ -87,7 +87,7 @@ export async function checklistFacts(
   suspicious: number,
 ): Promise<ChecklistFacts> {
   const db = getDb();
-  const [concertRows, partyRows, operatorRows, templateRows, bookletRows, uncheckedRows] =
+  const [concertRows, partyRows, operatorRows, templateRows, bookletRows, uncheckedRows, feedbackRows] =
     await Promise.all([
       db.execute<{ timezone: string | null; practical: boolean }>(sql`
         select timezone, coalesce(length(trim(practical_info_md)), 0) > 0 as practical
@@ -109,16 +109,21 @@ export async function checklistFacts(
         select exists (select 1 from booklets where concert_id = ${concertId} and published) as published`),
       // Never checked: the address checks run in the app and store their
       // result (§24.6); a party from before V3 has never been through them.
+      // A cancelled party is not sent anything, so it is not counted.
       db.execute<{ unchecked: number }>(sql`
         select count(*)::int as unchecked
           from party_pipeline p join registrations r on r.id = p.registration_id
          where p.concert_id = ${concertId} and r.contact_email is not null
-           and r.email_checked_at is null`),
+           and r.email_checked_at is null and p.stage is distinct from 'CANCELLED'`),
+      db.execute<{ id: string; enabled: unknown }>(sql`
+        select s.id, resolve_setting('portal.feedback_enabled', null, s.id, s.concert_id) as enabled
+          from shows s where s.concert_id = ${concertId} and s.deleted_at is null`),
     ]);
 
   const parties = new Map(partyRows.map((row) => [Number(row.segment_id), row.parties]));
   const operators = new Map(operatorRows.map((row) => [Number(row.show_id), row.operators]));
   const templates = new Set(templateRows.map((row) => row.key));
+  const feedbackEnabled = new Map(feedbackRows.map((row) => [Number(row.id), row.enabled === true]));
 
   const hasDesign = new Map<number, boolean>();
   await Promise.all(
@@ -160,6 +165,7 @@ export async function checklistFacts(
         hasEnd: show.endsAt !== null,
         operators: operators.get(show.id) ?? 0,
         feedback,
+        feedbackEnabled: feedbackEnabled.get(show.id) ?? false,
         segments: show.segments.map((segment) => ({
           id: segment.id,
           name: segment.name,

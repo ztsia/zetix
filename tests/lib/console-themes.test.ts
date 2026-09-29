@@ -7,6 +7,7 @@ import {
   PRE_PAINT_SCRIPT,
   THEME_KEY,
 } from '@/app/(admin)/admin/console-themes';
+import { applyTheme, clearTheme, type ThemeRoot } from '@/app/(admin)/admin/theme-provider';
 
 /**
  * The console's colour themes (spec/v3.md §29.5). The CSS is a pasted export,
@@ -31,7 +32,7 @@ describe('the theme sheet', () => {
     const layout = readFileSync('src/app/layout.tsx', 'utf8');
     const faces = [...new Set([...css.matchAll(/var\((--font-[\w-]+)\)/g)].map((m) => m[1]))];
     expect(faces.length).toBeGreaterThan(0);
-    for (const face of faces) expect(layout, face).toContain(`variable: '${face}'`);
+    for (const face of faces) expect(layout, face).toMatch(new RegExp(`variable:\\s*'${face}'`));
   });
 
   it('pins the form tokens for a themed console, so a form with no theme of its own looks as it does to the public', () => {
@@ -98,5 +99,55 @@ describe('the pre-paint script', () => {
     const root = run({}, true, true);
     expect(root.attrs).toEqual({});
     expect(root.classes.size).toBe(0);
+  });
+});
+
+describe('the provider on <html>', () => {
+  function fakeRoot() {
+    const attrs: Record<string, string> = {};
+    const classes = new Set<string>();
+    const root = {
+      setAttribute: (key: string, value: string) => void (attrs[key] = value),
+      removeAttribute: (key: string) => void delete attrs[key],
+      classList: {
+        toggle: (name: string, on?: boolean) => (on ? classes.add(name) : classes.delete(name), Boolean(on)),
+        remove: (name: string) => void classes.delete(name),
+      },
+      style: { colorScheme: '' },
+    };
+    return { root: root as unknown as ThemeRoot, attrs, classes, style: root.style };
+  }
+
+  it('applies a theme and mode, and clears every trace of them as the console leaves', () => {
+    const { root, attrs, classes, style } = fakeRoot();
+    applyTheme(root, { theme: 'graphite', mode: 'system', system: true });
+    expect(attrs['data-theme']).toBe('graphite');
+    expect(classes.has('dark')).toBe(true);
+    expect(style.colorScheme).toBe('dark');
+
+    clearTheme(root);
+    expect(attrs).toEqual({});
+    expect(classes.size).toBe(0);
+    expect(style.colorScheme).toBe('');
+  });
+
+  it('removes the attribute for the default theme rather than setting "default"', () => {
+    const { root, attrs } = fakeRoot();
+    applyTheme(root, { theme: 'amber', mode: 'light', system: false });
+    applyTheme(root, { theme: 'default', mode: 'light', system: false });
+    expect(attrs).toEqual({});
+  });
+
+  it('clears on unmount: the provider’s cleanup effect is clearTheme', () => {
+    // No DOM in this suite (see tests/forms/renderer.test.tsx for why), so the
+    // wiring is read from the source; the Playwright pass exercises it live.
+    const source = readFileSync('src/app/(admin)/admin/theme-provider.tsx', 'utf8');
+    expect(source).toMatch(/useEffect\(\(\) => \(\) => clearTheme\(document\.documentElement\), \[\]\)/);
+  });
+
+  it('keeps a form drawn in a themed console on the public form’s face and radius', () => {
+    expect(css).toMatch(/:root\[data-theme\] \[data-form-surface\] \{[^}]*--font-sans: var\(--font-geist\)[^}]*--radius:/);
+    const builder = readFileSync('src/app/(admin)/admin/concerts/[concertId]/forms/builder/form-builder.tsx', 'utf8');
+    expect(builder).toContain('data-form-surface');
   });
 });

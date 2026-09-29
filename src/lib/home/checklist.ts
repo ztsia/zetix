@@ -41,6 +41,8 @@ export type ShowFacts = {
   operators: number;
   /** The show's feedback form, by its most advanced status. */
   feedback: 'none' | 'DRAFT' | 'OPEN' | 'CLOSED';
+  /** `portal.feedback_enabled`, resolved for the show: whether the portal shows the form at all. */
+  feedbackEnabled: boolean;
 };
 
 export type ChecklistFacts = {
@@ -249,14 +251,26 @@ export function buildChecklist(facts: ChecklistFacts): ChecklistPhase[] {
     ),
   ];
 
+  // Feedback is enabled when the portal shows it and there is a form open to
+  // answer — either alone leaves a guest with nothing to fill in (v2.md §13.5).
+  const noForm = shows.filter((s) => s.feedback !== 'OPEN').map((s) => s.name);
+  const hidden = shows.filter((s) => !s.feedbackEnabled).map((s) => s.name);
+  const feedbackDetail = [
+    noForm.length > 0 ? `No open feedback form for ${nameList(noForm)}.` : null,
+    hidden.length > 0 ? `The portal hides feedback for ${nameList(hidden)}.` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
   const after: ChecklistItem[] = [
-    item(
-      'feedback',
-      'Every show has a feedback form open',
-      shows.filter((s) => s.feedback !== 'OPEN').map((s) => s.name),
-      `${base}/feedback`,
-      noShows,
-    ),
+    noShows
+      ? { id: 'feedback', label: 'Feedback is enabled for every show', done: false, detail: noShows, href: `${base}/feedback` }
+      : {
+          id: 'feedback',
+          label: 'Feedback is enabled for every show',
+          done: feedbackDetail === '',
+          detail: feedbackDetail || null,
+          href: `${base}/feedback`,
+        },
   ];
 
   return [

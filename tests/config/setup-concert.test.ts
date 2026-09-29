@@ -155,11 +155,53 @@ describe('the concert level of the cascade', () => {
 
   it('checks a typed column’s own shape: an enum and a timestamp', async () => {
     expect((await setConcertSettingAction(concertId, 'portal.public_wall_visibility', 'everyone')).error).toMatch(
-      /ADMIN_ONLY or AUDIENCE/,
+      /one of ADMIN_ONLY, AUDIENCE/,
     );
     expect((await setConcertSettingAction(concertId, 'portal.public_wall_visibility', 'audience')).error).toBeNull();
     expect((await setConcertSettingAction(concertId, 'portal.notes_close_at', 'next tuesday')).error).toMatch(
-      /not a timestamp/,
+      /timestamp with its zone/,
+    );
+  });
+
+  it('refuses a value that would break a read of it later, in the bag as much as in a column', async () => {
+    // A QA pass saved each of these, and "next tuesday" as a claim deadline
+    // then made segment_pool() — Home, Shows and the public form — fail.
+    const refused: [string, string][] = [
+      ['allocation.base_claim_deadline', 'next tuesday'],
+      ['allocation.base_claim_deadline', '2026-11-20T23:00'],
+      ['portal.unlock_mode', 'BANANA'],
+      ['allocation.extras_policy', '[1,2,3]'],
+      ['allocation.extras_policy', '{"PUBLIC":"MAYBE"}'],
+      ['allocation.extras_policy', '{"EVERYONE":"REVIEW"}'],
+      ['portal.note_max_length', '1e308'],
+      ['portal.note_max_length', '3000000000'],
+    ];
+    for (const [key, value] of refused) {
+      expect((await setConcertSettingAction(concertId, key, value)).error, `${key} = ${value}`).not.toBeNull();
+    }
+    const [row] = await sql`select defaults from concerts where id = ${concertId}`;
+    expect(row!.defaults).toBeNull();
+
+    // And the shapes it should take are taken, normalised.
+    expect((await setConcertSettingAction(concertId, 'allocation.base_claim_deadline', '2026-11-20T23:00:00+08:00')).error).toBeNull();
+    expect((await setConcertSettingAction(concertId, 'portal.unlock_mode', 'open_to_all')).error).toBeNull();
+    expect((await setConcertSettingAction(concertId, 'allocation.extras_policy', '"AUTO_FCFS"')).error).toBeNull();
+    const [after] = await sql<{ defaults: Record<string, unknown> }[]>`select defaults from concerts where id = ${concertId}`;
+    expect(after!.defaults).toEqual({
+      'allocation.base_claim_deadline': '2026-11-20T15:00:00.000Z',
+      'portal.unlock_mode': 'OPEN_TO_ALL',
+      'allocation.extras_policy': 'AUTO_FCFS',
+    });
+  });
+
+  it('answers a malformed call with a sentence, not a crash', async () => {
+    const call = setConcertSettingAction as unknown as (...args: unknown[]) => Promise<{ error: string | null }>;
+    expect((await call(concertId, 'portal.enabled')).error).toBe('Malformed request.');
+    expect((await updateConcertAction(NO_STATE, concertForm(concertId, { startsOn: '2027-02-31' }))).error).toBe(
+      'That date does not exist.',
+    );
+    expect((await updateConcertAction(NO_STATE, concertForm(concertId, { startsOn: '2027-13-01' }))).error).toBe(
+      'That date does not exist.',
     );
   });
 

@@ -68,6 +68,7 @@ const C = '@/app/(admin)/admin/concerts/[concertId]';
 const PAGES: Array<[string, Record<string, string>]> = [
   ['home', {}],
   ['setup', {}],
+  ['feedback', {}],
   ['shows', {}],
   ['players', {}],
   ['forms', {}],

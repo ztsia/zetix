@@ -13,12 +13,10 @@ import { DeleteButton } from './delete-button';
 import { MoveCapacityDialog } from './move-capacity-dialog';
 import { SegmentDeliveryDialog } from './segment-delivery-dialog';
 import { SegmentFormDialog } from './segment-form-dialog';
-import { GenerateFeedbackButton } from './generate-feedback-button';
 import { ShowFormDialog } from './show-form-dialog';
 import type { SegmentView, ShowView } from './queries';
 import type { FormFunnel } from '@/lib/intake/funnel';
 import { SegmentForms } from '../forms/form-funnel';
-import { AdminOnly } from '@/components/auth/role';
 
 const STATUS_VARIANT: Record<ShowView['status'], 'default' | 'secondary' | 'outline'> = {
   OPEN: 'default',
@@ -116,16 +114,6 @@ export function ShowCard({
             />
           </div>
         </div>
-
-        {/*
-          * The audience only exists once the evening is over, so the control
-          * appears with the status that says so (spec/v2.md §13.5.3).
-          */}
-        {show.status === 'COMPLETED' ? (
-          <AdminOnly>
-            <GenerateFeedbackButton concertId={concertId} showId={show.id} />
-          </AdminOnly>
-        ) : null}
 
         <CapacityBar show={show} hallOrigin={hall} />
       </CardHeader>

@@ -6,7 +6,7 @@ import { MailPlusIcon, SendIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { generateFeedbackEmailsAction, sendFeedbackNowAction } from './actions';
+import { generateFeedbackEmailsAction, sendFeedbackNowAction } from '../shows/actions';
 
 /**
  * **Generate feedback emails** — decision 42's manual twin for the queueing step

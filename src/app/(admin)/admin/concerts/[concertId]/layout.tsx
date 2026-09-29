@@ -6,6 +6,7 @@ import { resolveSetting } from '@/db/settings';
 import { outboxBacklog } from '@/lib/email/dispatch';
 import { QueueScope } from '../../blast-queue';
 import { InboxAutoSync } from './inbox/reply-controls';
+import { AreaTabs } from '../../area-tabs';
 
 /**
  * Everything under a concert.
@@ -48,6 +49,7 @@ export default async function ConcertLayout({
         where pg_cron has not been set up. Unset interval: the tick alone.
       */}
       <InboxAutoSync concertId={id} everyMinutes={typeof tickMinutes === 'number' ? tickMinutes : null} />
+      <AreaTabs />
       {children}
     </>
   );

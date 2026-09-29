@@ -1,6 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
 import { getDb } from '@/db/client';
 import { systemSettings } from '@/db/schema/settings';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -41,20 +39,6 @@ export default async function SettingsPage() {
           same value overrides what is here.
         </p>
       </div>
-
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <div className="space-y-1">
-            <h2 className="font-semibold">People</h2>
-            <p className="text-muted-foreground text-sm">
-              Who can sign in to this console, as an admin or a read-only viewer.
-            </p>
-          </div>
-          <Button variant="outline" nativeButton={false} render={<Link href="/admin/settings/people" />}>
-            Manage people
-          </Button>
-        </CardHeader>
-      </Card>
 
       <Alert>
         <AlertTitle>Operational values have no default in code</AlertTitle>

@@ -44,7 +44,7 @@ const columns: DataTableColumn<ConcertRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Name" />,
     cell: ({ row }) => (
       <Link
-        href={`/admin/concerts/${row.original.id}/overview`}
+        href={`/admin/concerts/${row.original.id}/home`}
         className="font-medium underline-offset-4 hover:underline"
         onClick={(event) => event.stopPropagation()}
       >
@@ -173,7 +173,7 @@ export function ConcertsTable({
       enableSelection
       server={{ rowCount, pageIndex, pageSize, sorting, search, onChange: apply }}
       isLoading={isPending}
-      onRowClick={(row) => router.push(`/admin/concerts/${row.id}/overview`)}
+      onRowClick={(row) => router.push(`/admin/concerts/${row.id}/home`)}
       export={{ filename: 'concerts', columns: exportColumns, timeZone, sheetName: 'Concerts' }}
       emptyTitle="No concerts yet"
       emptyDescription="Create one to start adding shows, segments and players."

@@ -3,12 +3,14 @@ import { resetDb, sql } from '../helpers/db';
 import { createConcert, createSegment, createShow } from '../helpers/fixtures';
 
 /**
- * The concert overview (spec/admin.md §14.1).
+ * Home (spec/v3.md §29.2), which replaced the concert overview.
  *
- * The screen that answers "is this concert configured?" without opening
- * anything, so what is tested is that it renders in every half-configured state
- * it exists to describe — including the ones where the allocation engine
- * refuses to produce numbers.
+ * The screen that answers "what needs me, and is this concert configured?"
+ * without opening anything, so what is tested is that it renders in every
+ * half-configured state it exists to describe — including the ones where the
+ * allocation engine refuses to produce numbers and no ticket design exists.
+ * The checklist's rules themselves are tested without a database in
+ * `tests/lib/home-checklist.test.ts`.
  */
 
 class NotFoundSignal extends Error {}
@@ -20,16 +22,26 @@ vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new NotFoundSignal('notFound');
   },
+  usePathname: () => '/',
+  useRouter: () => ({}),
 }));
 
-const OverviewPage = (
-  await import('@/app/(admin)/admin/concerts/[concertId]/overview/page')
-).default;
+vi.mock('@/lib/auth/session', () => ({
+  getSessionUser: async () => ({
+    id: '00000000-0000-4000-8000-0000000000aa',
+    email: 'ana@example.test',
+    displayName: 'Ana',
+    role: 'ADMIN',
+  }),
+  recordLogin: async () => {},
+}));
+
+const HomePage = (await import('@/app/(admin)/admin/concerts/[concertId]/home/page')).default;
 
 const render = (concertId: number | string) =>
-  OverviewPage({ params: Promise.resolve({ concertId: String(concertId) }) });
+  HomePage({ params: Promise.resolve({ concertId: String(concertId) }) });
 
-describe('the concert overview', () => {
+describe('Home', () => {
   let concertId: number;
 
   beforeEach(async () => {
@@ -68,7 +80,7 @@ describe('the concert overview', () => {
   it('cannot be pushed over the hall in the first place', async () => {
     // `assert_segments_fit_hall` refuses Σ segment capacity > hall with no
     // override flag, so "N over" is a state the database will not produce. The
-    // overview renders it defensively anyway; what is worth asserting is the
+    // page renders it defensively anyway; what is worth asserting is the
     // refusal, and that the numbers on screen stay the ones that were valid.
     const showId = await createShow(concertId, 400);
     await createSegment(showId, { audienceMode: 'PUBLIC', capacity: 300 });

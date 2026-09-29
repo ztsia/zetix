@@ -66,7 +66,7 @@ let secrets: string[] = [];
 const C = '@/app/(admin)/admin/concerts/[concertId]';
 /** Every viewer-readable page that takes a concert, with the query it needs. */
 const PAGES: Array<[string, Record<string, string>]> = [
-  ['overview', {}],
+  ['home', {}],
   ['shows', {}],
   ['players', {}],
   ['forms', {}],

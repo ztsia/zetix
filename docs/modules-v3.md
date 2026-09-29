@@ -18,7 +18,7 @@ P schema delta ──► Q platform kernel ──┬──► S audience workspa
                                        ├──► R roles & accounts
                                        ├──► U inbox & scheduler
                                        └──► V intake
-                         S, T, U, V ──► W home, setup & theme ──► X publication
+                         S, T, U, V ──► W home, setup & theme ──► Y surface fixes ──► X publication
 ```
 
 | Wave | Modules | Runs |
@@ -28,7 +28,8 @@ P schema delta ──► Q platform kernel ──┬──► S audience workspa
 | 2 | `R`, `S`, `U`, `V` | in parallel |
 | 3 | `T` | after `S` |
 | 4 | `W` | after `S`, `T`, `U`, `V` |
-| 5 | `X` | last |
+| 5 | `Y` | after `W` — added on 29 Sep, after the owner used V3 |
+| 6 | `X` | last, after `Y` |
 
 **No integration branch.** Unlike V2, every module opens its PR straight to `main`. All nine branches
 are cut from `main` up front; each is rebased onto `main` when its session starts (§3).
@@ -114,6 +115,24 @@ If it runs long, **import is the clean seam to split out**.
 The seven-area navigation, Home, the setup checklist, Setup consolidation (concert editing included),
 After consolidation, the theme switcher modelled on `ztsia/fyp-web-frontend`.
 
+### `Y` — `claude/Y-surface-fixes`
+
+**Spec:** `v3.md` §32.
+
+Added after `W` merged, from the owner's first use of V3 and a research pass over the three surfaces.
+Letters stay alphabetical by creation, not by order: `Y` runs **before** `X`.
+
+- **Admin tables** (§32.1): whole-set export on every server-paged table, one agreed selection
+  count, exports added and removed per the table, and the import staging grid's selection bug.
+- **The door** (§32.2): per-attendee keys and a sync queue that sets bad rows aside, fixed first
+  because it loses admissions; the account menu and sign-out; the dark sheet; search by party with
+  multi-select; house-wide stats; walk-ins.
+- **The portal** (§32.3): nothing untrue first (waitlisted QR, doors open forever, raw-JSON download,
+  not-found copy), then layout, accessibility, dark mode and the party-of-N copy.
+
+One migration after `0204`. If it runs long, **the door is the clean seam**: split walk-ins and stats
+into a second branch.
+
 ### `X` — `claude/X-publication`
 
 **Spec:** `v3.md` §31.
@@ -151,6 +170,7 @@ deployment, README with screenshots.
    | `T`, `U`, `V` | `W-from-T.md`, `W-from-U.md`, `W-from-V.md` — one file each, so parallel PRs never conflict |
    | `R` | nothing, unless `W` needs to know something — then `W-from-R.md` |
    | `W` | `X-*.md` |
+| `Y` | `X-from-Y.md`, only if `X` needs to know something |
 
 3. **Open the PR to `main`.**
 

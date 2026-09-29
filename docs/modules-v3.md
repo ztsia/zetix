@@ -126,7 +126,7 @@ Letters stay alphabetical by creation, not by order: `Y` runs **before** `X`.
   count, exports added and removed per the table, and the import staging grid's selection bug.
 - **The door** (§32.2): per-attendee keys and a sync queue that sets bad rows aside, fixed first
   because it loses admissions; the account menu and sign-out; the dark sheet; search by party with
-  multi-select; house-wide stats; walk-ins.
+  multi-select; stats for the selected show (total and by this operator); walk-ins.
 - **The portal** (§32.3): nothing untrue first (waitlisted QR, doors open forever, raw-JSON download,
   not-found copy), then layout, accessibility, dark mode and the party-of-N copy.
 

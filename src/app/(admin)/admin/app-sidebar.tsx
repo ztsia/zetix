@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Check, ChevronsUpDown, LogOut, Music4, Settings } from 'lucide-react';
+import { Check, ChevronsUpDown, LayoutList, LogOut, Music4 } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -26,7 +26,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { signOut } from '@/lib/auth/actions';
-import { CONCERT_NAV, PEOPLE_ITEM, SETTINGS_ITEM } from './nav';
+import { ThemeSwitcher } from './theme-switcher';
+import { AREAS, RECORD_ITEMS, SETTINGS_ITEM, areaHref, concertPath, locate } from './nav';
 
 export type ConcertSummary = { id: number; name: string; season: string | null };
 
@@ -47,8 +48,10 @@ export function activeConcertId(pathname: string): number | null {
  * The admin sidebar (spec/surfaces.md §15.1).
  *
  * A concert is selected once and held in context, so its name heads the sidebar
- * and every nav link below is relative to it. Outside a concert the per-concert
- * groups are not rendered at all, rather than rendered as links that go nowhere.
+ * and every link below is relative to it: the seven areas of spec/v3.md §29.1,
+ * then the concert's records. Outside a concert neither is rendered at all,
+ * rather than rendered as links that go nowhere. The console-wide links —
+ * every concert, Settings — sit in the footer.
  */
 export function AppSidebar({
   concerts,
@@ -61,6 +64,8 @@ export function AppSidebar({
   const currentId = activeConcertId(pathname);
   const concert = concerts.find((c) => c.id === currentId) ?? null;
   const base = concert ? `/admin/concerts/${concert.id}` : null;
+  const inside = concertPath(pathname);
+  const here = inside ? locate(inside.rest) : null;
 
   return (
     <Sidebar collapsible="icon">
@@ -101,7 +106,7 @@ export function AppSidebar({
                   <DropdownMenuItem
                     key={option.id}
                     render={
-                      <Link href={`/admin/concerts/${option.id}/overview`}>
+                      <Link href={`/admin/concerts/${option.id}/home`}>
                         <span className="flex-1 truncate">{option.name}</span>
                         {option.id === concert?.id && <Check className="size-4" />}
                       </Link>
@@ -118,59 +123,75 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        {base &&
-          CONCERT_NAV.map((group) => (
-            // Tightened so all fourteen screens of admin.md §14.1 fit a 720px
-            // laptop without scrolling. It still scrolls if a later module adds
-            // rows, but nothing in the shipped set is hidden on open.
-            <SidebarGroup key={group.label || 'top'} className="py-0.5">
-              {group.label && (
-                <SidebarGroupLabel className="h-6">{group.label}</SidebarGroupLabel>
-              )}
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {group.items.map((item) => {
-                    const href = `${base}/${item.slug}`;
-                    return (
-                      <SidebarMenuItem key={item.slug}>
-                        <SidebarMenuButton
-                          isActive={pathname === href || pathname.startsWith(`${href}/`)}
-                          tooltip={item.label}
-                          render={<Link href={href} />}
-                        >
-                          <item.icon />
-                          <span>{item.label}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ))}
+        {base && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {AREAS.map((area) => (
+                  <SidebarMenuItem key={area.id}>
+                    <SidebarMenuButton
+                      isActive={here?.kind === 'area' && here.area.id === area.id}
+                      tooltip={area.label}
+                      render={<Link href={areaHref(concert!.id, area)} />}
+                    >
+                      <area.icon />
+                      <span>{area.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+        {base && (
+          // Global to the areas (§29.1): every area writes to the audit log
+          // and the Trash, so neither belongs to one of them.
+          <SidebarGroup className="mt-auto">
+            <SidebarGroupLabel>Records</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {RECORD_ITEMS.map((item) => (
+                  <SidebarMenuItem key={item.slug}>
+                    <SidebarMenuButton
+                      isActive={here?.kind === 'record' && here.item.slug === item.slug}
+                      tooltip={item.label}
+                      render={<Link href={`${base}/${item.slug}`} />}
+                    >
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={pathname === '/admin/settings/people'}
-              tooltip={PEOPLE_ITEM.label}
-              render={<Link href="/admin/settings/people" />}
+              isActive={pathname === '/admin/concerts'}
+              tooltip="All concerts"
+              render={<Link href="/admin/concerts" />}
             >
-              <PEOPLE_ITEM.icon />
-              <span>{PEOPLE_ITEM.label}</span>
+              <LayoutList />
+              <span>All concerts</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={pathname === '/admin/settings'}
+              isActive={pathname === '/admin/settings' || pathname.startsWith('/admin/settings/')}
               tooltip={SETTINGS_ITEM.label}
               render={<Link href="/admin/settings" />}
             >
-              <Settings />
+              <SETTINGS_ITEM.icon />
               <span>{SETTINGS_ITEM.label}</span>
             </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <ThemeSwitcher />
           </SidebarMenuItem>
           <SidebarMenuItem>
             <form action={signOut}>

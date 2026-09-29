@@ -38,7 +38,7 @@ import { NO_FORM_STATE, slugify } from './form-state';
  * console supports; the fallback keeps the field usable rather than empty if it
  * is ever missing, since the action validates the value anyway.
  */
-function timezoneOptions(): string[] {
+export function timezoneOptions(): string[] {
   const supported = Intl as typeof Intl & {
     supportedValuesOf?: (key: string) => string[];
   };

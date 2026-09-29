@@ -65,7 +65,7 @@ export function ConcertRowActions({
 
   return (
     // The row itself navigates to the concert, so the menu must not: without
-    // this every click on the trigger would also open the overview.
+    // this every click on the trigger would also open the concert.
     <div onClick={(event) => event.stopPropagation()}>
       <DropdownMenu>
         <DropdownMenuTrigger

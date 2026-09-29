@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { findNavItem } from './nav';
+import { areaHref, concertPath, locate } from './nav';
 
 /**
  * The breadcrumb header (spec/surfaces.md §15.1).
@@ -22,6 +22,15 @@ import { findNavItem } from './nav';
  * that adds a screen gets a correct breadcrumb without touching this file — and
  * cannot give its screen a different chrome from every other screen.
  */
+/** What a route below each screen opens. */
+const DEEPER: Record<string, string> = {
+  audience: 'Party',
+  inbox: 'Thread',
+  forms: 'Form',
+  import: 'Batch',
+  'tickets/templates': 'Design',
+};
+
 export function AdminHeader() {
   const pathname = usePathname();
   const segments = pathname.split('/').filter(Boolean);
@@ -33,13 +42,30 @@ export function AdminHeader() {
   } else if (segments[1] === 'settings') {
     crumbs.push({ label: 'Settings' });
   } else if (segments[1] === 'concerts') {
-    if (segments.length === 2) {
+    const inside = concertPath(pathname);
+    if (!inside) {
       crumbs.push({ label: 'Concerts' });
     } else {
       crumbs.push({ label: 'Concerts', href: '/admin/concerts' });
-      const slug = segments[3];
-      const item = slug ? findNavItem(slug) : undefined;
-      crumbs.push({ label: item?.label ?? 'Concert' });
+      const here = locate(inside.rest);
+      if (here?.kind === 'record') {
+        crumbs.push({ label: here.item.label });
+      } else if (here?.kind === 'area') {
+        // Area, then the screen when the area has more than one — and then
+        // what is open below a screen's own route (a party, a thread, a
+        // form), with the screen linked back.
+        const tabHref = `/admin/concerts/${inside.concertId}/${here.tab.slug}`;
+        const deeper = pathname !== tabHref;
+        if (here.area.tabs.length > 1) {
+          crumbs.push({ label: here.area.label, href: areaHref(inside.concertId, here.area) });
+          crumbs.push({ label: here.tab.label, href: deeper ? tabHref : undefined });
+        } else {
+          crumbs.push({ label: here.area.label, href: deeper ? tabHref : undefined });
+        }
+        if (deeper) crumbs.push({ label: DEEPER[here.tab.slug] ?? 'Detail' });
+      } else {
+        crumbs.push({ label: 'Concert' });
+      }
     }
   }
 

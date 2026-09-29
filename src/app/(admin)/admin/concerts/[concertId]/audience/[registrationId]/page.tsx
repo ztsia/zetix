@@ -17,7 +17,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty';
 import { getConcertHeader } from '../../shows/queries';
-import { listPlayerOptions, listSegmentOptions } from '../../registrations/queries';
+import { listPlayerOptions, listSegmentOptions } from '../queries';
 import { CommandHost } from '../command-host';
 import { InboxAutoSync } from '../../inbox/reply-controls';
 import { PartyRecord } from './party-record';

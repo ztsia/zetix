@@ -21,7 +21,7 @@ import {
   viewCounts,
 } from '@/lib/audience/queries';
 import { getConcertHeader } from '../shows/queries';
-import { listPlayerOptions, listSegmentOptions } from '../registrations/queries';
+import { listPlayerOptions, listSegmentOptions } from './queries';
 import { AudienceTable } from './audience-table';
 import { CommandHost } from './command-host';
 import { NewParty } from './new-party';

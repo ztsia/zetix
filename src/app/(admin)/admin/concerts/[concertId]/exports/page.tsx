@@ -1,15 +1,14 @@
-import { notFound } from 'next/navigation';
-import { ModulePlaceholder } from '../../../placeholder';
-import { findNavItem } from '../../../nav';
+import { redirect } from 'next/navigation';
 
-export default function Page() {
-  const item = findNavItem('exports');
-  if (!item) notFound();
-  return (
-    <ModulePlaceholder
-      title={item.label}
-      description={item.description}
-      module={item.module}
-    />
-  );
+/**
+ * `/exports` — a placeholder since V1. Removed by spec/v3.md §29.1: every view
+ * exports itself from its own table. Kept as a redirect for bookmarks.
+ */
+export default async function RetiredPage({
+  params,
+}: {
+  params: Promise<{ concertId: string }>;
+}) {
+  const { concertId } = await params;
+  redirect(`/admin/concerts/${concertId}/audience`);
 }

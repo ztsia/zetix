@@ -45,7 +45,7 @@ import {
 } from './operations';
 import { QuestionCard } from './question-card';
 import { SectionCard } from './section-card';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * The builder, drawn as Google Forms draws its editor (spec/v2.md §8.2).
@@ -91,7 +91,7 @@ export function FormBuilder({
   initialTitle,
   initialDescription,
   copy,
-  readOnly,
+  readOnly: closed,
   canRekey,
 }: {
   concertId: number;
@@ -109,6 +109,10 @@ export function FormBuilder({
    */
   canRekey?: boolean;
 }) {
+  // A viewer reads the questions as a closed form shows them: no controls to
+  // type into and then find no Save for (spec/v3.md §28).
+  const canEdit = useCanEdit();
+  const readOnly = Boolean(closed) || !canEdit;
   const [schema, setSchema] = useState<FormSchema>(initialSchema);
   const [saved, setSaved] = useState<FormSchema>(initialSchema);
   const [title, setTitle] = useState(initialTitle);
@@ -316,7 +320,9 @@ export function FormBuilder({
   const pendingBlock = pendingDelete === null ? null : schema.blocks[pendingDelete];
 
   return (
-    <div className="flex flex-col gap-3">
+    // `data-form-surface`: in a themed console the builder keeps the public
+    // form's face, radius and shadows (`admin/themes.css`, spec/v3.md §29.5).
+    <div data-form-surface className="flex flex-col gap-3">
       {!readOnly && (
         <div className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-2 z-20 mx-auto flex w-full max-w-[770px] flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-2 shadow-sm backdrop-blur">
           <p className="text-muted-foreground text-sm" role="status">
@@ -358,7 +364,7 @@ export function FormBuilder({
         </Alert>
       )}
 
-      {readOnly && (
+      {closed && (
         <Alert className="mx-auto max-w-[770px]">
           <AlertTitle>This form is closed</AlertTitle>
           <AlertDescription>

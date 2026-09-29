@@ -101,9 +101,7 @@ const fail = (error: string): FormState => ({ error, message: null });
 
 function refresh(concertId: number): void {
   revalidatePath(`/admin/concerts/${concertId}/audience`, 'layout');
-  revalidatePath(`/admin/concerts/${concertId}/registrations`);
-  revalidatePath(`/admin/concerts/${concertId}/extras-review`);
-  revalidatePath(`/admin/concerts/${concertId}/overview`);
+  revalidatePath(`/admin/concerts/${concertId}/home`);
 }
 
 /**

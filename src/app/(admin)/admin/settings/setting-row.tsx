@@ -10,8 +10,12 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Spinner } from '@/components/ui/spinner';
 import { clearSystemSettingAction, setSystemSettingAction } from './actions';
+import {
+  clearConcertSettingAction,
+  setConcertSettingAction,
+} from '../concerts/[concertId]/setup/actions';
 import type { SettingSpec } from './catalogue';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * One tunable, at the root of the cascade.
@@ -24,16 +28,25 @@ import { AdminOnly } from '@/components/auth/role';
  * A blank field **clears** the key rather than writing an empty value. For an
  * operational value "nobody has set this" is a real state (spec/domain.md §6),
  * and it has to be reachable from the screen that set it.
+ *
+ * **Two levels, one row.** On Settings it edits `system_settings`; given a
+ * `concert`, it edits that concert's level (Setup › Concert, spec/v3.md
+ * §29.1), and says what the key inherits when the concert sets nothing.
  */
 export function SettingRow({
   spec,
   value,
+  concert,
 }: {
   spec: SettingSpec;
-  /** The raw jsonb at the system level, or undefined when the key has no row. */
+  /** The raw jsonb at this level, or undefined/null when this level sets nothing. */
   value: unknown;
+  concert?: { id: number; inherited: unknown };
 }) {
   const id = useId();
+  // A viewer reads every value but can type into none (spec/v3.md §28): a
+  // field that takes input and then offers no Save reads as a broken screen.
+  const canEdit = useCanEdit();
   const [draft, setDraft] = useState(() => toInput(spec, value));
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -59,11 +72,17 @@ export function SettingRow({
   }
 
   function save() {
+    if (concert) {
+      run(() => setConcertSettingAction(concert.id, spec.key, draft));
+      return;
+    }
     const formData = new FormData();
     formData.append('key', spec.key);
     formData.append('value', draft);
     run(() => setSystemSettingAction({ error: null }, formData));
   }
+
+  const inherited = concert ? toInput(spec, concert.inherited) : '';
 
   return (
     <div className="flex flex-col gap-2 border-b px-4 py-3 last:border-b-0">
@@ -75,14 +94,20 @@ export function SettingRow({
           <p className="text-muted-foreground mt-0.5 text-sm">{spec.description}</p>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <code className="text-muted-foreground text-xs">{spec.key}</code>
-            {spec.level !== 'system' && (
+            {spec.level !== 'system' && spec.level !== 'concert' && (
               <Badge variant="outline" className="font-normal">
                 usually set per {spec.level}
               </Badge>
             )}
+            {concert && isSet && <Badge className="font-normal">set for this concert</Badge>}
+            {concert && !isSet && (
+              <Badge variant="outline" className="text-muted-foreground font-normal">
+                {inherited === '' ? 'not set anywhere' : `inherits ${inherited} from the system`}
+              </Badge>
+            )}
             {/* An operational value with no row anywhere is not "off" — it is a
                 save-time error waiting to happen at allocation or at a blast. */}
-            {spec.operational && !isSet && (
+            {!concert && spec.operational && !isSet && (
               <Badge variant="outline" className="text-muted-foreground font-normal">
                 not set anywhere
               </Badge>
@@ -96,9 +121,10 @@ export function SettingRow({
               id={id}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              disabled={!canEdit}
               className="w-32"
             >
-              <option value="">Not set</option>
+              <option value="">{concert ? 'Inherit' : 'Not set'}</option>
               <option value="true">On</option>
               <option value="false">Off</option>
             </NativeSelect>
@@ -107,8 +133,9 @@ export function SettingRow({
               id={id}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              readOnly={!canEdit}
               inputMode={spec.kind === 'number' ? 'numeric' : undefined}
-              placeholder={spec.operational ? 'not set' : ''}
+              placeholder={concert ? (inherited === '' ? 'inherit' : `inherit (${inherited})`) : spec.operational ? 'not set' : ''}
               className={spec.kind === 'json' ? 'w-96 font-mono text-xs' : 'w-40'}
             />
           )}
@@ -123,11 +150,13 @@ export function SettingRow({
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={`Clear ${spec.label}`}
+                aria-label={concert ? `Inherit ${spec.label}` : `Clear ${spec.label}`}
                 disabled={isPending}
                 onClick={() => {
                   setDraft('');
-                  run(() => clearSystemSettingAction(spec.key));
+                  run(() =>
+                    concert ? clearConcertSettingAction(concert.id, spec.key) : clearSystemSettingAction(spec.key),
+                  );
                 }}
               >
                 <RotateCcw />

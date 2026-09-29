@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import QRCode from 'qrcode';
+import { useCanEdit } from '@/components/auth/role';
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from 'react-konva';
 import { interpolate, resolveBinding, type TicketData } from '@/lib/tickets/bindings';
 import { clampSize } from '@/lib/tickets/editor-elements';
@@ -165,6 +166,7 @@ export default function EditorCanvas({
   onChange,
 }: EditorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const canEdit = useCanEdit();
   const transformerRef = useRef<Konva.Transformer>(null);
   const nodes = useRef(new Map<string, Konva.Group>());
   const [width, setWidth] = useState(0);
@@ -266,6 +268,7 @@ export default function EditorCanvas({
                   if (node) nodes.current.set(element.id, node);
                   else nodes.current.delete(element.id);
                 }}
+                draggable={canEdit}
                 onSelect={() => onSelect(element.id)}
                 onDragEnd={(node) =>
                   onChange(element.id, { x: round(node.x()), y: round(node.y()) })
@@ -276,7 +279,10 @@ export default function EditorCanvas({
 
             <Transformer
               ref={transformerRef}
-              rotateEnabled
+              // A viewer can select an element to read its properties, but
+              // the handles move nothing (spec/v3.md §28).
+              rotateEnabled={canEdit}
+              resizeEnabled={canEdit}
               flipEnabled={false}
               // Handles are drawn in stage space, so they shrink with the zoom
               // unless they are scaled back up — at a 0.5 fit they become too
@@ -306,10 +312,12 @@ function ElementNode({
   assetUrl,
   showBox,
   register,
+  draggable,
   onSelect,
   onDragEnd,
   onTransformEnd,
 }: {
+  draggable: boolean;
   element: LayoutElement;
   data: TicketData;
   assetUrl: (src: string) => string;
@@ -332,7 +340,7 @@ function ElementNode({
       x={element.x}
       y={element.y}
       rotation={element.rotation}
-      draggable
+      draggable={draggable}
       onMouseDown={onSelect}
       onTouchStart={onSelect}
       onDragEnd={(event) => onDragEnd(event.target as Konva.Group)}

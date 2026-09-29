@@ -12,6 +12,9 @@ See [`../modules.md`](../modules.md) for what each label owns and when it runs.
 
 ## 14.1 Structure
 
+**Superseded in V3 by the seven areas of `v3.md` §29.1** — the routes below still exist (or redirect),
+and `v3.md` §29.6 maps each to its area. This is the V1 layout, kept as the record.
+
 ```
 /admin
   /concerts                    list, create, archive

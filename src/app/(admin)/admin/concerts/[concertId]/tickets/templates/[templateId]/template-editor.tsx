@@ -52,7 +52,7 @@ import type { PreviewOption, PreviewSubject } from '@/lib/tickets/preview';
 import type { TemplateDetail } from '@/lib/tickets/templates';
 import { ElementProperties } from './element-properties';
 import { saveTemplateAction } from '../actions';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * The canvas editor (spec/tickets.md §10.3).
@@ -89,6 +89,7 @@ export function TemplateEditor({
   savedMessage,
 }: TemplateEditorProps) {
   const router = useRouter();
+  const canEdit = useCanEdit();
   const [name, setName] = useState(template.name);
   const [layout, setLayout] = useState<Layout>(template.layout);
   const [backgroundPath, setBackgroundPath] = useState<string | null>(
@@ -379,6 +380,7 @@ export function TemplateEditor({
           <Input
             id="template-name"
             value={name}
+            readOnly={!canEdit}
             onChange={(event) => setName(event.target.value)}
           />
         </Field>
@@ -603,7 +605,7 @@ export function TemplateEditor({
                 These three fields are the escape hatch: without them a wrong
                 guess leaves an admin with a 43 × 62 cm ticket and no way back.
               */}
-              <div className="grid grid-cols-3 gap-2">
+              <fieldset disabled={!canEdit} className="grid grid-cols-3 gap-2">
                 <Field>
                   <FieldLabel htmlFor="page-w">Width pt</FieldLabel>
                   <Input
@@ -656,7 +658,7 @@ export function TemplateEditor({
                     }}
                   />
                 </Field>
-              </div>
+              </fieldset>
             </CardContent>
           </Card>
 
@@ -665,6 +667,9 @@ export function TemplateEditor({
               <CardTitle className="text-sm">Element</CardTitle>
             </CardHeader>
             <CardContent>
+              {/* A viewer reads an element's properties; a disabled fieldset
+                  disables every control inside it natively (spec/v3.md §28). */}
+              <fieldset disabled={!canEdit} className="contents">
               <ElementProperties
                 element={selected}
                 onChange={patchSelected}
@@ -678,6 +683,7 @@ export function TemplateEditor({
                   setLayout((current) => reorderElement(current, selectedId, direction));
                 }}
               />
+              </fieldset>
             </CardContent>
           </Card>
         </div>

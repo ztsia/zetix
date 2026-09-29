@@ -1,251 +1,239 @@
 import type { LucideIcon } from 'lucide-react';
 import {
-  CalendarDays,
-  Download,
-  FileSpreadsheet,
-  FileText,
-  Gauge,
+  DoorOpen,
   History,
+  House,
   Inbox,
-  Mail,
-  MessageSquareQuote,
-  MessagesSquare,
-  ScanLine,
+  LibraryBig,
   Settings,
-  Smartphone,
-  Ticket,
+  Settings2,
   Trash2,
-  UserCog,
-  UserRoundCog,
   Users,
-  UsersRound,
+  ClipboardList,
 } from 'lucide-react';
 
 /**
- * The admin console's information architecture, exactly as spec/admin.md §14.1
- * lists it.
+ * The admin console's information architecture: seven areas per concert
+ * (spec/v3.md §29.1).
  *
- * Kept as data rather than as markup so the sidebar, the breadcrumb and the
- * route skeleton all read from one description. Wave-2 modules fill these pages
- * in; **the shape is F2's and should not be edited to add a module's own page**
- * without a reason — the nav is one of the few files eight parallel sessions all
- * touch (spec/modules.md §4).
+ * Kept as data rather than as markup so the sidebar, the area tabs and the
+ * breadcrumb all read one description.
  *
- * `module` records which branch owns the screen, so an empty page can say who is
- * building it instead of looking broken.
+ * **An area is a set of screens, not a URL prefix.** Each tab keeps the route
+ * it had before V3 — `/shows`, `/checkin`, `/tickets/templates` — so every
+ * `revalidatePath`, printed link and old email still points at a live screen.
+ * What changed is where those routes sit in the navigation: the sidebar lists
+ * the seven areas, and an area with more than one screen shows them as tabs.
+ * Moving the routes would have bought a tidier address bar for a few hundred
+ * edited paths and a redirect per screen.
  */
-export type NavItem = {
+export type AreaTab = {
+  /** The route under `/admin/concerts/{id}/`, as it has always been. */
   slug: string;
+  label: string;
+  description: string;
+};
+
+export type AreaId = 'home' | 'audience' | 'inbox' | 'intake' | 'door' | 'after' | 'setup';
+
+export type Area = {
+  id: AreaId;
   label: string;
   icon: LucideIcon;
   description: string;
-  module: string;
+  /** The first tab is where the sidebar link goes. */
+  tabs: AreaTab[];
 };
 
-/** An empty `label` renders the group with no heading — see `app-sidebar.tsx`. */
-export type NavGroup = { label: string; items: NavItem[] };
-
-/** Everything under `/admin/concerts/{id}`. */
-export const CONCERT_NAV: NavGroup[] = [
+export const AREAS: Area[] = [
   {
-    // No heading: a one-item group whose label repeats the item is 48px of the
-    // sidebar's height spent saying nothing, and the sidebar has to fit a 720px
-    // laptop with every group visible.
-    label: '',
-    items: [
+    id: 'home',
+    label: 'Home',
+    icon: House,
+    description: 'What needs a person, where every party is, the dates ahead and what is left to set up.',
+    tabs: [{ slug: 'home', label: 'Home', description: 'The concert at a glance.' }],
+  },
+  {
+    id: 'audience',
+    label: 'Audience',
+    icon: Users,
+    description: 'Every party and seat, the party record, and every message.',
+    tabs: [
       {
-        slug: 'overview',
-        label: 'Overview',
-        icon: Gauge,
-        description: 'Capacity across all shows, at-a-glance status.',
-        module: 'A',
+        slug: 'audience',
+        label: 'Parties',
+        description: 'Every party and seat, with its stage, its flags and the commands that move it on.',
+      },
+      {
+        slug: 'audience/messages',
+        label: 'Messages',
+        description: 'Every message in every state, and what can be done with each.',
       },
     ],
   },
   {
-    label: 'Configuration',
-    items: [
+    id: 'inbox',
+    label: 'Inbox',
+    icon: Inbox,
+    description: 'Replies waiting for an answer, and messages that bounced.',
+    tabs: [{ slug: 'inbox', label: 'Inbox', description: 'Open threads and bounces.' }],
+  },
+  {
+    id: 'intake',
+    label: 'Intake',
+    icon: ClipboardList,
+    description: 'Registration forms and spreadsheet imports.',
+    tabs: [
+      { slug: 'forms', label: 'Forms', description: 'Form builder, links, funnels and responses.' },
+      { slug: 'import', label: 'Import', description: 'Upload, stage, fix and commit rows.' },
+    ],
+  },
+  {
+    id: 'door',
+    label: 'Door',
+    icon: DoorOpen,
+    description: 'Live check-in, the scan log and the operators who scan.',
+    tabs: [
+      { slug: 'checkin', label: 'Check-in', description: 'Live dashboard and scan log.' },
+      {
+        slug: 'operators',
+        label: 'Operators',
+        description: 'Provision operators, assign shows, reset codes, deactivate.',
+      },
+    ],
+  },
+  {
+    id: 'after',
+    label: 'After',
+    icon: LibraryBig,
+    description: 'Feedback, notes and the wall, the portal and the booklet.',
+    tabs: [
+      {
+        slug: 'feedback',
+        label: 'Feedback',
+        description: 'Each show’s feedback form and the email that carries it.',
+      },
+      { slug: 'notes', label: 'Notes', description: 'The wall, and per-player grouping.' },
+      { slug: 'portal', label: 'Portal', description: 'Booklet upload and practical info.' },
+    ],
+  },
+  {
+    id: 'setup',
+    label: 'Setup',
+    icon: Settings2,
+    description: 'The concert, its shows and segments, players, ticket designs and email templates.',
+    tabs: [
+      {
+        slug: 'setup',
+        label: 'Concert',
+        description: 'Name, dates, timezone and the concert’s own settings.',
+      },
       {
         slug: 'shows',
         label: 'Shows',
-        icon: CalendarDays,
-        description:
-          'Shows and their segments: capacity, quota, deadline, policy and portal mode.',
-        module: 'A',
+        description: 'Shows and their segments: capacity, quota, deadline, forms and delivery.',
       },
       {
         slug: 'players',
         label: 'Players',
-        icon: UsersRound,
         description: 'Players, CSV import, invite links, resend and rotate tokens.',
-        module: 'A',
       },
       {
-        slug: 'forms',
-        label: 'Forms',
-        icon: FileText,
-        description: 'Form builder, preview, open and close, response list.',
-        module: 'V2',
-      },
-      {
-        // The Tickets table became the Audience workspace's Seats grain
-        // (spec/v3.md §22.1). The design and wording editors are setup, not
-        // delivery (§29.1), so they sit here; `W` gives them their Setup home.
         slug: 'tickets/templates',
         label: 'Ticket designs',
-        icon: Ticket,
         description: 'Ticket design editor and preview.',
-        module: 'D / E',
       },
       {
         slug: 'email/templates',
         label: 'Email templates',
-        icon: Mail,
         description: 'The wording of every message, with merge fields and a preview.',
-        module: 'F',
-      },
-    ],
-  },
-  {
-    label: 'Audience',
-    items: [
-      {
-        // V3's one table over every party and seat (spec/v3.md §22). It replaced
-        // Registrations, Unverified and Extras review, whose old URLs redirect
-        // here with the matching view.
-        slug: 'audience',
-        label: 'Audience',
-        icon: Users,
-        description: 'Every party and seat, with its stage, its flags and the commands that move it on.',
-        module: 'S',
-      },
-      {
-        // Every message of the concert, in every status, with its exit
-        // (spec/v3.md §24.4). It replaced Email and Email › Delivery, whose old
-        // URLs redirect here.
-        slug: 'audience/messages',
-        label: 'Messages',
-        icon: Inbox,
-        description: 'Every message in every state, and what can be done with each.',
-        module: 'T',
-      },
-      {
-        // Replies to what the concert sent, and bounces (spec/v3.md §26).
-        slug: 'inbox',
-        label: 'Inbox',
-        icon: MessagesSquare,
-        description: 'Replies waiting for an answer, and messages that bounced.',
-        module: 'U',
-      },
-      {
-        slug: 'import',
-        label: 'Import',
-        icon: FileSpreadsheet,
-        description: 'Upload, map, validate, dry run, commit.',
-        module: 'C',
-      },
-    ],
-  },
-  {
-    label: 'Delivery',
-    items: [
-      {
-        slug: 'checkin',
-        label: 'Check-in',
-        icon: ScanLine,
-        description: 'Live dashboard and scan log.',
-        module: 'H',
-      },
-      {
-        slug: 'operators',
-        label: 'Operators',
-        icon: UserCog,
-        description: 'Provision operators, assign shows, reset codes, deactivate.',
-        module: 'H',
-      },
-    ],
-  },
-  {
-    label: 'After the concert',
-    items: [
-      {
-        slug: 'portal',
-        label: 'Portal',
-        icon: Smartphone,
-        /**
-         * Unlock mode is deliberately not on this screen: it is a per-show value
-         * and the Shows screen edits it with a cascade hint beside it.
-         */
-        description: 'Booklet upload and practical info.',
-        module: 'N',
-      },
-      {
-        slug: 'notes',
-        label: 'Notes',
-        icon: MessageSquareQuote,
-        description: 'The wall, and per-player grouping.',
-        module: 'O',
-      },
-      {
-        slug: 'exports',
-        label: 'Exports',
-        icon: Download,
-        description: 'CSV or XLSX of any table view.',
-        module: 'F2',
-      },
-    ],
-  },
-  {
-    // V3's record-keeping screens (spec/v3.md §23.1, §23.6). `W` folds the nav
-    // into its seven areas (§29.1); until then they sit together here.
-    label: 'Records',
-    items: [
-      {
-        slug: 'activity',
-        label: 'Activity',
-        icon: History,
-        description: 'Every change and every bulk command, with its report.',
-        module: 'Q',
-      },
-      {
-        slug: 'trash',
-        label: 'Trash',
-        icon: Trash2,
-        description: 'Deleted rows: restore them, or delete them permanently.',
-        module: 'Q',
       },
     ],
   },
 ];
 
-export const CONCERT_NAV_ITEMS: NavItem[] = CONCERT_NAV.flatMap((group) => group.items);
+/** A console link outside the seven areas. */
+export type NavItem = {
+  slug: string;
+  label: string;
+  icon: LucideIcon;
+  description: string;
+};
 
+/**
+ * The concert's records: global in the sense of §29.1 — they belong to no
+ * area, because every area writes to them — but still per concert, because
+ * the audit log and the Trash are concert-scoped (§23.6).
+ */
+export const RECORD_ITEMS: NavItem[] = [
+  {
+    slug: 'activity',
+    label: 'Activity',
+    icon: History,
+    description: 'Every change and every bulk command, with its report.',
+  },
+  {
+    slug: 'trash',
+    label: 'Trash',
+    icon: Trash2,
+    description: 'Deleted rows: restore them, or delete them permanently.',
+  },
+];
+
+/** Settings holds the system defaults and the console's people (§29.1). */
 export const SETTINGS_ITEM: NavItem = {
   slug: 'settings',
   label: 'Settings',
   icon: Settings,
-  description: 'Users, roles, system defaults, SMTP test, audit log.',
-  module: 'A',
+  description: 'System defaults, and the people who can sign in.',
 };
+
+export const SETTINGS_TABS: { href: string; label: string }[] = [
+  { href: '/admin/settings', label: 'System defaults' },
+  { href: '/admin/settings/people', label: 'People' },
+];
+
+export const AREA_BY_ID = Object.fromEntries(AREAS.map((area) => [area.id, area])) as Record<
+  AreaId,
+  Area
+>;
+
+export type Location =
+  | { kind: 'area'; area: Area; tab: AreaTab }
+  | { kind: 'record'; item: NavItem };
 
 /**
- * Settings › People (spec/v3.md §28, module `R`). Beside Settings in the
- * sidebar footer rather than in a concert's groups: accounts belong to the
- * console, not to a concert. `W` folds both into its seven areas (§29.1).
+ * Where a path inside a concert sits: its area and tab, or one of the
+ * records.
+ *
+ * `rest` is the path after `/admin/concerts/{id}/`. The longest slug that is a
+ * whole-segment prefix wins, so `audience/messages/…` is Messages and
+ * `audience/12` is Parties.
  */
-export const PEOPLE_ITEM: NavItem = {
-  slug: 'settings/people',
-  label: 'People',
-  icon: UserRoundCog,
-  description: 'Named console accounts: admins and read-only viewers.',
-  module: 'R',
-};
+export function locate(rest: string): Location | null {
+  const path = rest.replace(/^\/+|\/+$/g, '');
+  const within = (slug: string) => path === slug || path.startsWith(`${slug}/`);
 
-export function findNavItem(slug: string): NavItem | undefined {
-  // `tickets` finds `tickets/templates`: the breadcrumb passes only the first
-  // path segment.
-  return (
-    CONCERT_NAV_ITEMS.find((item) => item.slug === slug) ??
-    CONCERT_NAV_ITEMS.find((item) => item.slug.split('/')[0] === slug)
-  );
+  let best: { area: Area; tab: AreaTab } | null = null;
+  for (const area of AREAS) {
+    for (const tab of area.tabs) {
+      if (within(tab.slug) && (!best || tab.slug.length > best.tab.slug.length)) {
+        best = { area, tab };
+      }
+    }
+  }
+  if (best) return { kind: 'area', ...best };
+
+  const item = RECORD_ITEMS.find((record) => within(record.slug));
+  return item ? { kind: 'record', item } : null;
+}
+
+/** The path after `/admin/concerts/{id}/`, or null outside a concert. */
+export function concertPath(pathname: string): { concertId: number; rest: string } | null {
+  const match = /^\/admin\/concerts\/(\d+)(?:\/(.*))?$/.exec(pathname);
+  return match ? { concertId: Number(match[1]), rest: match[2] ?? '' } : null;
+}
+
+export function areaHref(concertId: number, area: Area): string {
+  return `/admin/concerts/${concertId}/${area.tabs[0]!.slug}`;
 }

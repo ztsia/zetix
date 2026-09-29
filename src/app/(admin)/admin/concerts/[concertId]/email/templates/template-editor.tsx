@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { TOKENS, markdownToEmailHtml, markdownToPlainText, renderTemplate } from '@/lib/email/render';
 import { editTemplateAction } from '../actions';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 export type PreviewRecipient = { label: string; context: Record<string, string> };
 
@@ -60,6 +60,9 @@ export function TemplateEditor({
   recipients: PreviewRecipient[];
 }) {
   const router = useRouter();
+  // A viewer reads the wording and previews it, but cannot type into it: a
+  // field that accepts input and then has no Save reads as a broken screen.
+  const canEdit = useCanEdit();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{ error: string | null; message?: string | null } | null>(null);
 
@@ -93,7 +96,7 @@ export function TemplateEditor({
         <CardContent className="space-y-4">
           <Field>
             <FieldLabel htmlFor="subject">Subject</FieldLabel>
-            <Input id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+            <Input id="subject" value={subject} readOnly={!canEdit} onChange={(e) => setSubject(e.target.value)} />
           </Field>
 
           <Field>
@@ -102,6 +105,7 @@ export function TemplateEditor({
               id="bodyMd"
               value={bodyMd}
               onChange={(e) => setBodyMd(e.target.value)}
+              readOnly={!canEdit}
               rows={18}
               className="font-mono text-sm"
             />
@@ -119,8 +123,8 @@ export function TemplateEditor({
                   key={token.token}
                   variant="outline"
                   title={token.description}
-                  className="cursor-pointer font-mono text-xs"
-                  onClick={() => setBodyMd((current) => `${current}{{ ${token.token} }}`)}
+                  className={canEdit ? 'cursor-pointer font-mono text-xs' : 'font-mono text-xs'}
+                  onClick={canEdit ? () => setBodyMd((current) => `${current}{{ ${token.token} }}`) : undefined}
                 >
                   {token.token}
                 </Badge>

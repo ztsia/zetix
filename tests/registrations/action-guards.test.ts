@@ -22,17 +22,23 @@ import { describe, expect, it } from 'vitest';
  * remembers to add it here.
  */
 
-const ACTION_DIRS = [
-  'src/app/(admin)/admin/concerts/[concertId]/registrations',
-  'src/app/(admin)/admin/concerts/[concertId]/extras-review',
+/**
+ * Module B's directories. `recursive: false` for Audience, where module W moved
+ * B's `actions.ts` (spec/v3.md §29.1): its sub-folders are other modules'
+ * actions, which scope their ids in SQL rather than through an `…InConcert()`
+ * helper, and the second test below reads only for the helper.
+ */
+const ACTION_DIRS: { dir: string; recursive: boolean }[] = [
+  { dir: 'src/app/(admin)/admin/concerts/[concertId]/audience', recursive: false },
+  { dir: 'src/app/(admin)/admin/concerts/[concertId]/extras-review', recursive: true },
 ];
 
 async function actionFiles(): Promise<string[]> {
   const found: string[] = [];
-  for (const dir of ACTION_DIRS) {
+  for (const { dir, recursive } of ACTION_DIRS) {
     let entries;
     try {
-      entries = await readdir(dir, { recursive: true, withFileTypes: true });
+      entries = await readdir(dir, { recursive, withFileTypes: true });
     } catch {
       continue;
     }

@@ -45,7 +45,7 @@ import {
 } from './operations';
 import { QuestionCard } from './question-card';
 import { SectionCard } from './section-card';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * The builder, drawn as Google Forms draws its editor (spec/v2.md §8.2).
@@ -91,7 +91,7 @@ export function FormBuilder({
   initialTitle,
   initialDescription,
   copy,
-  readOnly,
+  readOnly: closed,
   canRekey,
 }: {
   concertId: number;
@@ -109,6 +109,10 @@ export function FormBuilder({
    */
   canRekey?: boolean;
 }) {
+  // A viewer reads the questions as a closed form shows them: no controls to
+  // type into and then find no Save for (spec/v3.md §28).
+  const canEdit = useCanEdit();
+  const readOnly = Boolean(closed) || !canEdit;
   const [schema, setSchema] = useState<FormSchema>(initialSchema);
   const [saved, setSaved] = useState<FormSchema>(initialSchema);
   const [title, setTitle] = useState(initialTitle);
@@ -358,7 +362,7 @@ export function FormBuilder({
         </Alert>
       )}
 
-      {readOnly && (
+      {closed && (
         <Alert className="mx-auto max-w-[770px]">
           <AlertTitle>This form is closed</AlertTitle>
           <AlertDescription>

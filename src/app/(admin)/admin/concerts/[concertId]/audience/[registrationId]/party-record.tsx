@@ -48,9 +48,9 @@ import { OVERSELL_PHRASE } from '@/lib/registrations/confirmation';
 import type { MessageStatus } from '@/lib/delivery/message-filter';
 import { ActionDialog } from '../../../action-dialog';
 import { MessageActions } from '../messages/message-actions';
-import { RegistrationFormDialog } from '../../registrations/registration-form-dialog';
-import { addAttendeesAction, renameAttendeeAction } from '../../registrations/actions';
-import type { PlayerOption, RegistrationRow, SegmentOption } from '../../registrations/queries';
+import { RegistrationFormDialog } from '../registration-form-dialog';
+import { addAttendeesAction, renameAttendeeAction } from '../actions';
+import type { PlayerOption, RegistrationRow, SegmentOption } from '../queries';
 import {
   ALLOCATION_LABEL,
   FlagBadges,

@@ -16,7 +16,7 @@ import {
   SettingsGroup,
   SettingsSubheading,
 } from './settings/settings-layout';
-import { AdminOnly } from '@/components/auth/role';
+import { AdminOnly, useCanEdit } from '@/components/auth/role';
 
 /**
  * The form's own settings — its window, its limits and its copy (spec/v2.md
@@ -60,6 +60,7 @@ export function FormSettings({
 }) {
   const id = useId();
   const router = useRouter();
+  const canEdit = useCanEdit();
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [editingConfirmation, setEditingConfirmation] = useState(false);
@@ -83,6 +84,9 @@ export function FormSettings({
 
   return (
     <form action={submit} className="flex flex-col gap-3">
+      {/* A viewer reads the settings; the fieldset disables every control in
+          it natively, where a hidden Save alone would leave them typeable. */}
+      <fieldset disabled={!canEdit} className="contents">
       {!timeZone && (
         <Alert variant="destructive">
           <AlertTitle>This concert has no timezone</AlertTitle>
@@ -310,6 +314,7 @@ export function FormSettings({
           </AdminOnly>
         </div>
       </SettingsCard>
+      </fieldset>
     </form>
   );
 }

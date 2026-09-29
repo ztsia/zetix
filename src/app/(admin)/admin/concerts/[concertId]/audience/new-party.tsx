@@ -5,8 +5,8 @@ import { Plus } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useCanEdit } from '@/components/auth/role';
-import { RegistrationFormDialog } from '../registrations/registration-form-dialog';
-import type { PlayerOption, SegmentOption } from '../registrations/queries';
+import { RegistrationFormDialog } from './registration-form-dialog';
+import type { PlayerOption, SegmentOption } from './queries';
 
 /**
  * New party (spec/allocation.md §7.6), from the Audience header. What the engine

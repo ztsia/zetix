@@ -42,6 +42,16 @@ export type SettingSpec = {
   operational: boolean;
   /** The level §6 says owns this key, for the "usually set on…" hint. */
   level: 'segment' | 'show' | 'concert' | 'system';
+  /**
+   * A concert may override it: Setup › Concert lists it (spec/v3.md §29.1).
+   *
+   * **True only where every read of the key carries the concert** — a segment,
+   * a show or the concert itself, which `resolve_setting()` walks up from. A
+   * key read with no context at all (the dispatcher's rate limits, the
+   * scheduler, sign-in lockout) would ignore a concert's value, and offering
+   * it there would be a control that silently does nothing.
+   */
+  concert?: true;
 };
 
 export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSpec[] }[] = [
@@ -59,6 +69,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'How many bodies fit in the room. Segments must fit inside it. Normally set per show rather than here.',
         operational: true,
         level: 'show',
+        concert: true,
       },
       {
         key: 'segment.capacity',
@@ -69,6 +80,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           "A segment's slice of the hall. Seats in no segment are held seats — that is the only way to withhold any.",
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'allocation.base_quota',
@@ -79,6 +91,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'Seats each active player is entitled to in a player-invited segment. Raising it here raises it for every segment that does not override it, and the entitlement guard checks all of them.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'allocation.base_claim_deadline',
@@ -88,6 +101,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'After this, unclaimed base seats release into the segment’s extras pool. An ISO timestamp.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'allocation.extras_policy',
@@ -97,6 +111,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'REVIEW or AUTO_FCFS. Stored as an object keyed by audience mode — {"PLAYER_INVITED":"REVIEW","PUBLIC":"AUTO_FCFS"} — so one root value serves both.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'allocation.allow_partial_grant',
@@ -106,6 +121,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'Whether a request at the boundary of the pool may be granted in part rather than skipped whole.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'form.max_tickets_per_response',
@@ -115,6 +131,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'Party size cap.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'form.extra_rows_max',
@@ -124,6 +141,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'Rows in the "request extras" repeater.',
         operational: true,
         level: 'segment',
+        concert: true,
       },
     ],
   },
@@ -209,6 +227,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'How long a downloaded manifest stays usable after the show starts.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'checkin.scan_debounce_ms',
@@ -218,6 +237,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'Stops one ticket registering twice as the camera holds focus.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'import.fuzzy_match_threshold',
@@ -229,6 +249,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'Below this, a player match needs confirmation rather than being applied.',
         operational: false,
         level: 'system',
+        concert: true,
       },
     ],
   },
@@ -278,6 +299,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'Longest note an attendee may leave.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'form.rate_limit_per_ip_per_min',
@@ -298,6 +320,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           '“only a few seats left”. It exists to avoid a stampede, so scarcity is what goes vague.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'form.verification_grace_hours',
@@ -346,6 +369,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'V2. Whether the portal’s sections appear at all. The ticket status page is always served, flag or no flag.',
         operational: true,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'portal.unlock_mode',
@@ -354,6 +378,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'ON_ADMISSION, OPEN_TO_ALL or CLOSED. Normally set per show.',
         operational: true,
         level: 'show',
+        concert: true,
       },
       {
         key: 'ticket.default_template_id',
@@ -384,6 +409,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
          */
         operational: false,
         level: 'show',
+        concert: true,
       },
       {
         key: 'portal.booklet_enabled',
@@ -392,6 +418,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. The booklet still only appears once a booklet is published.',
         operational: true,
         level: 'show',
+        concert: true,
       },
       {
         key: 'portal.feedback_enabled',
@@ -400,6 +427,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. Whether the post-show feedback form appears in the portal at all.',
         operational: true,
         level: 'show',
+        concert: true,
       },
       {
         key: 'portal.feedback_close_at',
@@ -408,6 +436,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. An ISO timestamp, after which the feedback form stops accepting answers.',
         operational: true,
         level: 'show',
+        concert: true,
       },
       {
         key: 'portal.feedback_send_hour',
@@ -420,6 +449,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         /** Seeded for the same reason as `show.auto_complete_after_hours` above. */
         operational: false,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'portal.notes_enabled',
@@ -428,6 +458,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. Whether attendees may leave notes at all.',
         operational: true,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'portal.notes_close_at',
@@ -436,6 +467,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         description: 'V2. An ISO timestamp, after which no new note is accepted.',
         operational: true,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'portal.public_wall_enabled',
@@ -445,6 +477,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'V2. Publishing to the wall is always an explicit admin action regardless (decision 6).',
         operational: true,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'portal.public_wall_visibility',
@@ -454,6 +487,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'V2. ADMIN_ONLY or AUDIENCE. Per-player grouping is admin-only always, whatever this says.',
         operational: true,
         level: 'concert',
+        concert: true,
       },
     ],
   },
@@ -477,6 +511,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'How long a receipt waits before it is due. Repeat submissions from the same address inside it collapse into one email. Usually set per concert.',
         operational: false,
         level: 'concert',
+        concert: true,
       },
       {
         key: 'review.auto_approve_clean',
@@ -486,6 +521,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'Approve a party with no flags the moment it submits, so only flagged parties wait in Needs review. Usually set per segment.',
         operational: false,
         level: 'segment',
+        concert: true,
       },
       {
         key: 'review.duplicate_name_similarity',
@@ -498,6 +534,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'Two parties in a show whose contact or guest names are at least this similar (0–1) are shown as possible duplicates.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'delivery.review_single_party',
@@ -507,6 +544,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'Whether resending to a single party from its record must pass the wizard’s design and email steps. Bulk sends always do.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'admin.typed_confirm_above',
@@ -517,6 +555,7 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
           'An irreversible command touching more rows than this needs its confirmation phrase typed out.',
         operational: false,
         level: 'system',
+        concert: true,
       },
       {
         key: 'scheduler.tick_minutes',
@@ -570,4 +609,62 @@ export const ALL_SETTINGS: SettingSpec[] = SETTING_GROUPS.flatMap((group) => gro
 
 export function settingSpec(key: string): SettingSpec | undefined {
   return ALL_SETTINGS.find((spec) => spec.key === key);
+}
+
+/**
+ * Parses the posted string into the type the catalogue declares, and checks it
+ * means something.
+ *
+ * The bounds are not fussiness. `system_settings` is the root of the cascade (and
+ * `concerts.defaults` the level below it), so a value accepted here is handed to the dispatcher, the scanner and the
+ * entitlement guard — which multiplies `allocation.base_quota` by the active
+ * player count. "−1 messages per dispatch" and "3.7 messages a day" are not
+ * tight configurations; they are nonsense that fails somewhere far from the
+ * screen that accepted it.
+ */
+export function parseSettingValue(
+  spec: SettingSpec,
+  raw: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const text = raw.trim();
+
+  switch (spec.kind) {
+    case 'number': {
+      const n = Number(text);
+      if (!Number.isFinite(n)) return { ok: false, error: `“${text}” is not a number.` };
+      if (spec.integer !== false && !Number.isInteger(n)) {
+        return { ok: false, error: `${spec.label} is a whole number — “${text}” is not.` };
+      }
+      if (spec.min !== undefined && n < spec.min) {
+        return {
+          ok: false,
+          error:
+            spec.min === 0
+              ? `${spec.label} cannot be negative.`
+              : `${spec.label} must be at least ${spec.min}; ${n} would leave it doing nothing at all.`,
+        };
+      }
+      if (spec.max !== undefined && n > spec.max) {
+        return { ok: false, error: `${spec.label} cannot be more than ${spec.max}.` };
+      }
+      return { ok: true, value: n };
+    }
+    case 'boolean': {
+      if (text === 'true' || text === 'false') return { ok: true, value: text === 'true' };
+      return { ok: false, error: 'Choose on or off.' };
+    }
+    case 'json': {
+      try {
+        return { ok: true, value: JSON.parse(text) };
+      } catch {
+        return {
+          ok: false,
+          error:
+            'That is not valid JSON. An extras policy looks like {"PLAYER_INVITED":"REVIEW","PUBLIC":"AUTO_FCFS"}.',
+        };
+      }
+    }
+    default:
+      return { ok: true, value: text };
+  }
 }

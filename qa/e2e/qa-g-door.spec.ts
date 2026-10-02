@@ -258,7 +258,7 @@ test('FLOW-10 admits offline, and the whole queue drains on reconnect', async ({
   await shot(page, 'FLOW-10-step-1-offline-party-sheet');
 
   const t0 = Date.now();
-  await page.getByRole('button', { name: /Admit remaining 4/ }).click();
+  await page.getByRole('button', { name: /^Admit 4$/ }).click();
   await expect(page.getByText(/queued/)).toBeVisible();
   await shot(page, 'FLOW-10-step-2-four-queued');
 
@@ -352,10 +352,10 @@ test.describe('FLOW-2 / FLOW-14 a valid ticket, from a QR whose origin is dead',
     // FLOW-7: the party control, on the result itself.
     await expect(overlay(page)).toContainText('Party of 4 · 1 in, 3 remaining');
     await shot(page, 'FLOW-7-step-1-party-context');
-    await page.getByRole('button', { name: 'Admit remaining 3' }).click();
+    await page.getByRole('button', { name: /choose who/ }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await shot(page, 'FLOW-7-step-2-party-sheet');
-    await page.getByRole('dialog').getByRole('button', { name: /Admit remaining 3/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: /^Admit 3$/ }).click();
     await expect
       .poll(async () => (await sql`select count(*)::int as count from check_ins`)[0].count, {
         timeout: 20000,
@@ -691,7 +691,7 @@ test.describe('FLOW-8 a party of one', () => {
     await expect(overlay(page)).toHaveAttribute('data-outcome', 'ADMITTED', { timeout: 30000 });
     await expect(overlay(page)).toContainText('Priya Nair');
     await expect(overlay(page)).not.toContainText('Party of');
-    await expect(page.getByRole('button', { name: /Admit remaining/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /choose who/ })).toHaveCount(0);
     await shot(page, 'FLOW-8-step-1-solo-no-party-control');
    });
   });

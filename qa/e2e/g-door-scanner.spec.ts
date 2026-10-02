@@ -287,7 +287,7 @@ test('admits a whole party in one tap, which is what stops the stats going wrong
 
   await expect(page.getByText('Party of 4')).toBeVisible();
   await shot(page, 'party-sheet');
-  await page.getByRole('button', { name: /Admit remaining 4/ }).click();
+  await page.getByRole('button', { name: /^Admit 4$/ }).click();
 
   await expect
     .poll(async () => {

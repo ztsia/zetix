@@ -133,8 +133,10 @@ export function ResultOverlay({
 
       <div className="mt-2 flex w-full max-w-xs flex-col gap-2">
         {result.entry && (result.party?.remaining ?? 0) > 0 && admitted && (
+          // Opens the party sheet with everyone still outside ticked: one more
+          // tap, which buys the usher the chance to untick who is not here.
           <Button size="lg" variant="secondary" className="h-14 text-base" onClick={onOpenDetail}>
-            Admit remaining {result.party?.remaining}
+            Party of {result.party?.size} · choose who&rsquo;s here
           </Button>
         )}
 

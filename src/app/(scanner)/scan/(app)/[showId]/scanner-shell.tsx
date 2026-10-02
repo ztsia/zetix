@@ -22,7 +22,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { useScanner } from './use-scanner';
 import { Camera } from './camera';
 import { ResultOverlay } from './result-overlay';
-import { AttendeeSheet } from './attendee-sheet';
+import { PartySheet } from './party-sheet';
 import { SearchTab } from './search-tab';
 import { StatsTab } from './stats-tab';
 import { AccountMenu } from './account-menu';
@@ -112,6 +112,10 @@ export function ScannerShell({
   const [flash, setFlash] = useState<string | null>(null);
   const [selected, setSelected] = useState<ManifestEntry | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /** Which bottom tab is showing, so Search can take focus when it opens. */
+  const [tab, setTab] = useState('scan');
+  /** Bumped after an admission from Search: the query clears for the next guest. */
+  const [searchReset, setSearchReset] = useState(0);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const localCheckIns = toLocalCheckIns(state.scans, index);
@@ -290,7 +294,11 @@ export function ScannerShell({
         </div>
       )}
 
-      <Tabs defaultValue="scan" className="flex min-h-0 flex-1 flex-col gap-0">
+      <Tabs
+        value={tab}
+        onValueChange={(next) => setTab(String(next))}
+        className="flex min-h-0 flex-1 flex-col gap-0"
+      >
         {/* Panels above, tab bar below: thumb-reachable, no hamburger. */}
         <div className="relative min-h-0 flex-1">
           <TabsContent
@@ -318,7 +326,7 @@ export function ScannerShell({
                 }}
                 onAdmitAnyway={async () => {
                   if (state.result?.entry) {
-                    await admit([state.result.entry], 'Admitted at door over a warning');
+                    await admit([{ entry: state.result.entry, reason: 'Admitted at door over a warning' }]);
                     dismissResult();
                   }
                 }}
@@ -330,6 +338,8 @@ export function ScannerShell({
             <SearchTab
               index={index}
               checkIns={localCheckIns}
+              active={tab === 'search' && !sheetOpen}
+              resetSignal={searchReset}
               onSelect={(entry) => {
                 setSelected(entry);
                 setSheetOpen(true);
@@ -369,16 +379,19 @@ export function ScannerShell({
         </TabsList>
       </Tabs>
 
-      <AttendeeSheet
+      <PartySheet
         entry={selected}
         index={index}
         checkIns={localCheckIns}
+        timeZone={show.timezone}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        onAdmit={async (entries, reason) => {
-          await admit(entries, reason);
+        onAdmit={async (items) => {
+          await admit(items);
+          setSheetOpen(false);
           showFlash('admitted');
           playTone('admitted');
+          if (tab === 'search') setSearchReset((n) => n + 1);
         }}
       />
 

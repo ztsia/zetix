@@ -390,22 +390,20 @@ export function useScanner({
   );
 
   /**
-   * "Admit anyway" on an amber or red result, and the party sheet.
+   * "Admit anyway" on an amber or red result, and the party sheet — each seat
+   * with its own reason, because one tap can admit a guest who is fine beside
+   * one who is already in (spec/v3.md §32.2).
    *
    * A seat with no ticket is admitted by its attendee id, and its reason always
-   * starts with the one spec/v3.md §32.2 names.
+   * starts with the one §32.2 names.
    */
   const admit = useCallback(
-    async (entries: readonly ManifestEntry[], overrideReason: string | null) => {
-      for (const entry of entries) {
+    async (items: readonly { entry: ManifestEntry; reason: string | null }[]) => {
+      for (const { entry, reason } of items) {
         await enqueue(
           entry,
           'MANUAL',
-          entry.hasTicket
-            ? overrideReason
-            : overrideReason
-              ? `${NO_TICKET_REASON} · ${overrideReason}`
-              : NO_TICKET_REASON,
+          entry.hasTicket ? reason : reason ? `${NO_TICKET_REASON} · ${reason}` : NO_TICKET_REASON,
         );
       }
     },

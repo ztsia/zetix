@@ -7,6 +7,7 @@ import {
   createSegment,
   createShow,
   seedAttendees,
+  setSystemSetting,
   withDirectAttendeeWrites,
 } from '../helpers/fixtures';
 
@@ -186,7 +187,7 @@ describe('a ticket that has not been used yet', () => {
     // The concert is Asia/Singapore; doors are 11:00Z, which is 19:00 there.
     const html = await render(token);
     expect(html).toContain('Sat 19 Sep 2026');
-    expect(html).toContain('Doors open 19:00');
+    expect(html).toContain('Doors 19:00');
     expect(html).toContain('Starts 19:30');
     // The UTC clock time must not appear anywhere.
     expect(html).not.toContain('11:00');
@@ -358,5 +359,55 @@ describe('a token that resolves to nothing', () => {
   it('never reaches notFound(), which would blank the page on 3G', async () => {
     // The mock throws a distinct error if the page ever goes back to throwing.
     await expect(render('ZzZzZzZzZzZzZzZzZzZzZz')).resolves.toContain(NOT_FOUND_COPY);
+  });
+});
+
+describe('layout and access (spec/v3.md §32.3)', () => {
+  it('puts the date, doors time and venue above every other section', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    const facts = html.indexOf('Doors ');
+    const venue = html.indexOf('Victoria Concert Hall');
+    const ticket = html.indexOf('data-slot="card"');
+    expect(facts).toBeGreaterThan(-1);
+    expect(venue).toBeGreaterThan(-1);
+    expect(facts).toBeLessThan(ticket);
+    expect(venue).toBeLessThan(ticket);
+  });
+
+  it('gives the QR an accessible name and section titles a heading level', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toContain(`role="img" aria-label="QR code for ticket ${ticketCode}"`);
+    expect(html).toMatch(/data-slot="card-title"[^>]*role="heading" aria-level="2"/);
+  });
+
+  it('says a seat is one of N in the booking, naming nobody else', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toContain('one of 2 seats in your booking');
+    expect(html).toContain('check in the whole party');
+    expect(html).not.toContain('Guest 2');
+  });
+
+  it('offers the download as a real link, 48px tall', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toMatch(/<a href="\/api\/portal\/[^"]+\/ticket\?download=1"[^>]*h-12/);
+  });
+
+  it('shows "Before you come" from the moment the ticket is issued, before admission', async () => {
+    await showIsAhead();
+    await setSystemSetting('portal.enabled', true);
+    await setSystemSetting('portal.unlock_mode', 'ON_ADMISSION');
+    await sql`update concerts set practical_info_md = 'Parking is behind the hall.' where id = ${concertId}`;
+    const html = await render(token);
+    expect(html).toContain('Before you come');
+    expect(html).toContain('Parking is behind the hall.');
+  });
+
+  it('gives the not-found page a heading', async () => {
+    const html = await render('C'.repeat(22));
+    expect(html).toMatch(/role="heading" aria-level="1"[^>]*>We could not find that ticket/);
   });
 });

@@ -26,12 +26,17 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 export function TicketNotFound() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-8">
-      <Empty className="border">
+      {/* No dashed border: stretched over the whole viewport it read as a
+          broken page rather than an answer (spec/v3.md §32.3). */}
+      <Empty className="flex-none">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <TicketXIcon />
           </EmptyMedia>
-          <EmptyTitle>We could not find that ticket</EmptyTitle>
+          {/* The page's one heading, for a screen reader's heading list. */}
+          <EmptyTitle role="heading" aria-level={1} className="text-lg">
+            We could not find that ticket
+          </EmptyTitle>
           <EmptyDescription>
             The link may be incomplete, or the ticket may have been replaced. Open the most
             recent ticket email we sent you and use the link there. If it still doesn&rsquo;t

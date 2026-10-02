@@ -33,7 +33,7 @@ export function BookletSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
           <BookOpenIcon className="size-4 text-muted-foreground" />
           {title}
         </CardTitle>
@@ -60,7 +60,7 @@ export function BookletSection({
         <Button
           variant="outline"
           size="lg"
-          className="w-full"
+          className="h-12 w-full text-base"
           /** Renders an `<a>`, so the button semantics go with it — see `TicketSection`. */
           nativeButton={false}
           render={<a href={`${href}?download=1`} target="_blank" rel="noreferrer noopener" />}

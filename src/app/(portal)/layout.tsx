@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from 'next';
+import { InlineScript } from '@/components/inline-script';
+import { PORTAL_PRE_PAINT, PortalTheme } from './portal-theme';
 
 /**
  * The concert portal surface (spec/surfaces.md §15.3).
@@ -13,11 +15,12 @@ import type { Metadata, Viewport } from 'next';
  * guest holding their own phone, and enlarging the QR or the venue address is
  * exactly what they may want to do.
  *
- * **It does not force a theme either.** The scanner forces dark to protect an
- * usher's night vision over an hour of camera use; a ticket holder glancing at
- * their own phone is better served by the theme they chose. The one thing that
- * must not follow the theme is the QR, which carries its own opaque light plate
- * (`src/lib/portal/qr.ts`).
+ * **It follows the device's theme** (spec/v3.md §32.3). The scanner forces dark
+ * to protect an usher's night vision; a ticket holder glancing at their own
+ * phone is better served by the theme they chose — and a white page at full
+ * brightness in a dark auditorium is what §15.3 warns against. The one thing
+ * that must not follow the theme is the QR, which carries its own opaque light
+ * plate (`src/lib/portal/qr.ts`).
  */
 export const viewport: Viewport = {
   width: 'device-width',
@@ -38,5 +41,11 @@ export const metadata: Metadata = {
 };
 
 export default function PortalSurfaceLayout({ children }: { children: React.ReactNode }) {
-  return <div className="bg-background text-foreground">{children}</div>;
+  return (
+    <div className="bg-background text-foreground min-h-dvh">
+      <InlineScript html={PORTAL_PRE_PAINT} />
+      <PortalTheme />
+      {children}
+    </div>
+  );
 }

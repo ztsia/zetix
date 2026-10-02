@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   BarChart3,
-  CloudOff,
+  ChevronDown,
+  LogIn,
   ScanLine,
   Search as SearchIcon,
   TriangleAlert,
@@ -14,7 +15,6 @@ import {
 import type { ManifestEntry } from '@/lib/checkin/manifest';
 import { toLocalCheckIns } from '@/lib/checkin/store';
 import { FLASH_MS } from '@/lib/checkin/feedback';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -25,6 +25,8 @@ import { ResultOverlay } from './result-overlay';
 import { AttendeeSheet } from './attendee-sheet';
 import { SearchTab } from './search-tab';
 import { StatsTab } from './stats-tab';
+import { AccountMenu } from './account-menu';
+import { SyncStatus } from './sync-status';
 
 /**
  * How long a green result stays up before clearing itself (ref.md §1.2, "~2s").
@@ -72,12 +74,14 @@ export type ShowSummary = {
  */
 export function ScannerShell({
   show,
+  operatorId,
   operatorName,
   manifestExpiresAt,
   scanDebounceMs,
   canSwitchShows,
 }: {
   show: ShowSummary;
+  operatorId: string;
   operatorName: string;
   manifestExpiresAt: string | null;
   scanDebounceMs: number;
@@ -91,11 +95,18 @@ export function ScannerShell({
     submitScan,
     admit,
     refresh,
+    prepareSignOut,
     dismissResult,
     unlockAudio,
     setMuted,
     playTone,
-  } = useScanner({ showId: show.id, manifestExpiresAt, scanDebounceMs });
+  } = useScanner({
+    showId: show.id,
+    manifestExpiresAt,
+    scanDebounceMs,
+    operatorId,
+    operatorName,
+  });
 
   const [started, setStarted] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -177,10 +188,12 @@ export function ScannerShell({
           <Button
             variant="secondary"
             size="sm"
-            className="h-9 min-w-0 flex-1 justify-start"
-            render={<Link href="/scan" />}
+            className="h-9 min-w-0 flex-1 justify-between"
+            nativeButton={false}
+            render={<Link href="/scan" aria-label={`${show.name} — switch show`} />}
           >
             <span className="truncate font-semibold">{show.name}</span>
+            <ChevronDown className="opacity-70" />
           </Button>
         ) : (
           <div
@@ -191,22 +204,73 @@ export function ScannerShell({
           </div>
         )}
 
-        <ConnectionBadge online={state.online} pending={state.summary.pending} />
+        <SyncStatus
+          online={state.online}
+          syncing={state.syncing}
+          pending={state.summary.pending}
+          refused={state.refused}
+          index={index}
+          timeZone={show.timezone}
+        />
 
         <Button
           variant="ghost"
           size="icon"
-          className="size-9"
+          className="size-11"
           onClick={toggleMute}
           aria-label={muted ? 'Unmute scan sounds' : 'Mute scan sounds'}
           aria-pressed={muted}
         >
           {muted ? <VolumeX /> : <Volume2 />}
         </Button>
+
+        <AccountMenu
+          operatorName={operatorName}
+          canSwitchShows={canSwitchShows}
+          unsynced={state.summary.pending}
+          onPrepareSignOut={prepareSignOut}
+        />
       </header>
 
-      {(state.warning || !state.durable) && (
-        <div className="shrink-0 px-3 pt-2">
+      {(state.warning || !state.durable || state.signedOut || state.othersWaiting.length > 0) && (
+        <div className="flex shrink-0 flex-col gap-2 px-3 pt-2">
+          {state.signedOut && (
+            // A session that expired mid-shift used to fail silently: a
+            // "queued" badge that never cleared (spec/v3.md §32.2).
+            <Alert variant="destructive">
+              <LogIn />
+              <AlertTitle>
+                Signed out
+                {state.summary.pending > 0
+                  ? ` — sign in again to send ${state.summary.pending} queued`
+                  : ''}
+              </AlertTitle>
+              <AlertDescription>
+                <p>Scanning still works. Admissions wait on this phone until you sign in.</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-10"
+                  nativeButton={false}
+                  render={<a href={`/scan/login?next=${encodeURIComponent(`/scan/${show.id}`)}`} />}
+                >
+                  Sign in again
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {state.othersWaiting.map((other) => (
+            <Alert key={other.operatorName}>
+              <TriangleAlert />
+              <AlertTitle>
+                {other.count} admission{other.count === 1 ? '' : 's'} from {other.operatorName}{' '}
+                {other.count === 1 ? 'is' : 'are'} waiting
+              </AlertTitle>
+              <AlertDescription>
+                Only {other.operatorName} can send them. Ask them to sign in on this phone.
+              </AlertDescription>
+            </Alert>
+          ))}
           {state.warning && (
             <Alert>
               <TriangleAlert />
@@ -361,16 +425,6 @@ function BottomTab({
       {icon}
       {label}
     </TabsTrigger>
-  );
-}
-
-function ConnectionBadge({ online, pending }: { online: boolean; pending: number }) {
-  if (online && pending === 0) return null;
-  return (
-    <Badge variant={online ? 'secondary' : 'destructive'} className="shrink-0 gap-1">
-      {!online && <CloudOff className="size-3" />}
-      {pending > 0 ? `${pending} queued` : 'Offline'}
-    </Badge>
   );
 }
 

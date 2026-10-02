@@ -4,6 +4,8 @@ import {
   manifestStaleness,
   pendingScans,
   scanSummary,
+  othersWaiting,
+  ownScans,
   prepareBatch,
   refusedScans,
   settleReceipts,
@@ -176,5 +178,24 @@ describe('one bad row never blocks the queue (spec/v3.md §32.2)', () => {
     ]);
     expect(send.map((s) => s.id)).toEqual([1]);
     expect(setAside).toEqual([]);
+  });
+});
+
+describe('queued admissions belong to whoever made them (spec/v3.md §32.2)', () => {
+  const rows = [
+    queued({ id: 1, operatorId: 'wei', operatorName: 'Wei Ling' }),
+    queued({ id: 2, operatorId: 'wei', operatorName: 'Wei Ling' }),
+    queued({ id: 3, operatorId: 'sam', operatorName: 'Sam' }),
+    queued({ id: 4 }), // queued before rows were tagged
+    queued({ id: 5, operatorId: 'wei', operatorName: 'Wei Ling', syncedAt: '2026-09-19T11:05:00.000Z' }),
+  ];
+
+  it('sends only the signed-in operator`s rows, and untagged ones', () => {
+    expect(ownScans(rows, 'sam').map((s) => s.id)).toEqual([3, 4]);
+  });
+
+  it('never re-attributes another operator`s unsynced rows; it names them instead', () => {
+    expect(othersWaiting(rows, 'sam')).toEqual([{ operatorName: 'Wei Ling', count: 2 }]);
+    expect(othersWaiting(rows, 'wei')).toEqual([{ operatorName: 'Sam', count: 1 }]);
   });
 });

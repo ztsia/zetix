@@ -61,6 +61,14 @@ export type QueuedScan = {
   refusedAt?: string | null;
   /** What the operator reads under "couldn't sync — tap for details". */
   refusedReason?: string | null;
+  /**
+   * Who made the admission (spec/v3.md §32.2). A queued row is only ever sent
+   * by the operator who made it, and never re-attributed to whoever signs in
+   * on this phone next. Absent on rows queued before the tag existed.
+   */
+  operatorId?: string | null;
+  /** Their name, so the next person can be told whose scans are waiting. */
+  operatorName?: string | null;
 };
 
 export type CheckinStore = {
@@ -74,6 +82,12 @@ export type CheckinStore = {
   markSynced(ids: number[], at: string): Promise<void>;
   /** Set rows aside as refused, each with its reason. */
   markRefused(rows: { id: number; reason: string }[], at: string): Promise<void>;
+  /**
+   * Sign-out (spec/v3.md §32.2): every roster on this phone goes, and so does
+   * every row the server already has. Unsynced rows stay — a person was let in
+   * and the record of it is not this operator's to throw away.
+   */
+  wipeForSignOut(): Promise<void>;
 };
 
 export async function openCheckinStore(): Promise<CheckinStore> {
@@ -171,6 +185,15 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
         rows.map(({ id, reason }) => ({ id, change: { refusedAt: at, refusedReason: reason } })),
       );
     },
+
+    async wipeForSignOut() {
+      await run(MANIFESTS, 'readwrite', (s) => s.clear());
+      const rows = await run<QueuedScan[]>(QUEUE, 'readonly', (s) => s.getAll());
+      const synced = (rows ?? []).filter((r) => r.syncedAt && r.id !== undefined);
+      await Promise.all(
+        synced.map((r) => run(QUEUE, 'readwrite', (s) => s.delete(r.id as number))),
+      );
+    },
   };
 
   function patch(changes: { id: number; change: Partial<QueuedScan> }[]): Promise<void[]> {
@@ -233,6 +256,12 @@ function memoryStore(): CheckinStore {
       for (const { id, reason } of rows) {
         const row = queue.find((r) => r.id === id);
         if (row) Object.assign(row, { refusedAt: at, refusedReason: reason });
+      }
+    },
+    async wipeForSignOut() {
+      manifests.clear();
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].syncedAt) queue.splice(i, 1);
       }
     },
   };

@@ -5,6 +5,7 @@ import { BrowserMultiFormatReader } from '@zxing/browser';
 import { Check, Copy, Minus, X } from 'lucide-react';
 import { createScanFeedback, supportsVibration } from '@/lib/checkin/feedback';
 import { openCheckinStore } from '@/lib/checkin/store';
+import { ScannerSignOutButton } from '../../sign-out-button';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
@@ -102,12 +103,15 @@ export function DeviceReport({ operatorName }: { operatorName: string }) {
 
   return (
     <main className="flex flex-col gap-4 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <header>
-        <h1 className="text-xl font-semibold">Device check</h1>
-        <p className="text-muted-foreground text-sm">
-          Two taps and two questions. Send the summary at the bottom to whoever set up the
-          scanner.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Device check</h1>
+          <p className="text-muted-foreground text-sm">
+            Two taps and two questions. Send the summary at the bottom to whoever set up the
+            scanner.
+          </p>
+        </div>
+        <ScannerSignOutButton className="h-10 shrink-0" />
       </header>
 
       <section className="flex flex-col gap-2">

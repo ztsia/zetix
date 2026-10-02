@@ -16,7 +16,10 @@ import {
 import { extractQrToken } from '@/lib/checkin/token';
 import {
   manifestStaleness,
+  othersWaiting,
+  ownScans,
   pendingScans,
+  refusedScans,
   prepareBatch,
   scanSummary,
   settleReceipts,
@@ -62,6 +65,16 @@ export type ScannerState = {
   summary: { total: number; pending: number; synced: number; refused: number };
   /** True while a drain is in flight, so the header can say "Syncing". */
   syncing: boolean;
+  /**
+   * The server answered 401: the session expired or was revoked. Said out
+   * loud, with the count, rather than leaving a "queued" badge that never
+   * clears (spec/v3.md §32.2).
+   */
+  signedOut: boolean;
+  /** Rows the server refused, with their reasons: "couldn't sync". */
+  refused: QueuedScan[];
+  /** Unsynced admissions somebody else left on this phone, by name. */
+  othersWaiting: { operatorName: string; count: number }[];
 };
 
 type ManifestResponse = { fetchedAt: string; attendees: ManifestEntry[] };
@@ -71,10 +84,15 @@ export function useScanner({
   showId,
   manifestExpiresAt,
   scanDebounceMs,
+  operatorId,
+  operatorName,
 }: {
   showId: number;
   manifestExpiresAt: string | null;
   scanDebounceMs: number;
+  /** The signed-in operator. Every queued row is tagged with them. */
+  operatorId: string;
+  operatorName: string;
 }) {
   const storeRef = useRef<CheckinStore | null>(null);
   const feedbackRef = useRef<ScanFeedback | null>(null);
@@ -91,6 +109,7 @@ export function useScanner({
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [muted, setMutedState] = useState(false);
 
   const index = useMemo(() => buildManifestIndex(manifest?.attendees ?? []), [manifest]);
@@ -106,7 +125,9 @@ export function useScanner({
       const response = await fetch(`/api/checkin/manifest?showId=${showId}`, {
         cache: 'no-store',
       });
+      if (response.status === 401) setSignedOut(true);
       if (!response.ok) return;
+      setSignedOut(false);
       const body = (await response.json()) as ManifestResponse;
       const next: StoredManifest = {
         showId,
@@ -157,7 +178,7 @@ export function useScanner({
       for (;;) {
         const all = await store.allScans(showId);
         setScans(all);
-        const { send, setAside } = prepareBatch(pendingScans(all));
+        const { send, setAside } = prepareBatch(pendingScans(ownScans(all, operatorId)));
         if (setAside.length > 0) await store.markRefused(setAside, new Date().toISOString());
         if (send.length === 0) return;
 
@@ -201,7 +222,9 @@ export function useScanner({
         }
         // Signed out, or the server is struggling: keep everything and retry
         // on the next reconnect. Neither is an answer about any one row.
+        if (response.status === 401) setSignedOut(true);
         if (!response.ok) return;
+        setSignedOut(false);
 
         const body = (await response.json()) as ReceiptResponse;
         const { synced, refused } = settleReceipts(send, body.receipts ?? []);
@@ -220,7 +243,7 @@ export function useScanner({
       const latest = await store.allScans(showId);
       setScans(latest);
     }
-  }, [showId]);
+  }, [showId, operatorId]);
 
   /** A legacy row's seat, found through the manifest, so it can be sent by id. */
   function attendeeIdFor(hash: string | null): number | null {
@@ -254,11 +277,13 @@ export function useScanner({
         source: source === 'MANUAL' ? 'MANUAL' : navigator.onLine ? 'ONLINE' : 'OFFLINE_SYNC',
         deviceId: deviceIdRef.current,
         overrideReason,
+        operatorId,
+        operatorName,
       });
       setScans(await store.allScans(showId));
       if (navigator.onLine) void drain();
     },
-    [showId, drain],
+    [showId, drain, operatorId, operatorName],
   );
 
   /**
@@ -367,8 +392,8 @@ export function useScanner({
   /**
    * "Admit anyway" on an amber or red result, and the party sheet.
    *
-   * A seat with no ticket is admitted by its attendee id, with the reason
-   * spec/v3.md §32.2 names, unless a more specific one was given.
+   * A seat with no ticket is admitted by its attendee id, and its reason always
+   * starts with the one spec/v3.md §32.2 names.
    */
   const admit = useCallback(
     async (entries: readonly ManifestEntry[], overrideReason: string | null) => {
@@ -376,7 +401,11 @@ export function useScanner({
         await enqueue(
           entry,
           'MANUAL',
-          entry.hasTicket ? overrideReason : (overrideReason ?? NO_TICKET_REASON),
+          entry.hasTicket
+            ? overrideReason
+            : overrideReason
+              ? `${NO_TICKET_REASON} · ${overrideReason}`
+              : NO_TICKET_REASON,
         );
       }
     },
@@ -456,6 +485,23 @@ export function useScanner({
 
   const dismissResult = useCallback(() => setResult(null), []);
 
+  /**
+   * Make this phone safe to hand back (spec/v3.md §32.2, ref.md §4: "assume at
+   * least one usher phone will be left unlocked on a table").
+   *
+   * One last drain if there is signal, then every roster on the phone goes, and
+   * every row the server already holds. What is still unsynced stays, tagged
+   * with this operator, for them to send when they next sign in here. The
+   * server-side sign-out is the caller's next step.
+   */
+  const prepareSignOut = useCallback(async () => {
+    const store = storeRef.current;
+    if (!store) return;
+    if (navigator.onLine) await drain();
+    await store.wipeForSignOut();
+    setManifest(null);
+  }, [drain]);
+
   const state: ScannerState = {
     ready,
     durable,
@@ -465,8 +511,11 @@ export function useScanner({
     refreshing,
     result,
     scans,
-    summary: scanSummary(scans),
+    summary: scanSummary(ownScans(scans, operatorId)),
     syncing,
+    signedOut,
+    refused: refusedScans(ownScans(scans, operatorId)),
+    othersWaiting: othersWaiting(scans, operatorId),
   };
 
   return {
@@ -477,6 +526,7 @@ export function useScanner({
     admit,
     refresh,
     drain,
+    prepareSignOut,
     dismissResult,
     unlockAudio,
     setMuted,

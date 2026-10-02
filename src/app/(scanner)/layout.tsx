@@ -1,4 +1,5 @@
 import type { Viewport } from 'next';
+import { ScannerDark } from './scanner-dark';
 
 /**
  * The door scanner surface (spec/surfaces.md §15.4).
@@ -47,13 +48,20 @@ export const viewport: Viewport = {
  * It also costs less battery on the OLED panels most of these phones have, over
  * an hour of continuous camera use.
  *
- * `.dark` is a class variant in `globals.css`, so scoping it to this element
- * confines it to the scanner and leaves the admin console alone.
+ * `.dark` is a class variant in `globals.css`. The wrapper carries it for the
+ * first paint; {@link ScannerDark} also puts it on `<html>`, because sheets,
+ * dialogs and toasts portal to `<body>` and would otherwise render light
+ * (spec/v3.md §32.2). Both come off as the surface unmounts.
  */
 export default function ScannerSurfaceLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <div className="dark bg-background text-foreground">{children}</div>;
+  return (
+    <div className="dark bg-background text-foreground">
+      <ScannerDark />
+      {children}
+    </div>
+  );
 }

@@ -4,6 +4,7 @@ import { CheckCircle2, CircleAlert, CircleSlash, TriangleAlert } from 'lucide-re
 import { cn } from '@/lib/utils';
 import type { ScanResult } from '@/lib/checkin/evaluate';
 import { Button } from '@/components/ui/button';
+import { formatDoorTime } from './format';
 
 /**
  * The scan result, over the camera (spec/checkin.md §12.1, spec/ref.md §1.2).
@@ -111,7 +112,7 @@ export function ResultOverlay({
 
       {result.firstScan && (
         <p className="text-sm opacity-80">
-          First scanned {formatTime(result.firstScan.at, timeZone)}
+          First scanned {formatDoorTime(result.firstScan.at, timeZone)}
           {result.firstScan.operatorName ? ` by ${result.firstScan.operatorName}` : ''}
         </p>
       )}
@@ -149,32 +150,4 @@ export function ResultOverlay({
       </div>
     </div>
   );
-}
-
-/**
- * The first-scan time, **in the concert's zone and never the phone's**
- * (`CLAUDE.md`, spec/domain.md §6.1).
- *
- * This is the one absolute time the door renders, and it is read to decide
- * whether a duplicate is somebody's second attempt tonight or a scan from an
- * earlier show. An usher whose phone is set to another timezone — or is simply
- * roaming — would otherwise be handed a number that is wrong by hours and looks
- * entirely plausible.
- *
- * A null zone falls back to the device's, and says so, because the alternative
- * is either a hardcoded zone (an operational value in code) or refusing to show
- * a time the operator needs.
- */
-function formatTime(iso: string, timeZone: string | null): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      ...(timeZone ? { timeZone } : {}),
-    });
-  } catch {
-    // An unknown zone makes Intl throw a RangeError. A wrong-looking time is
-    // still better than an overlay that fails to render at a door.
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
 }

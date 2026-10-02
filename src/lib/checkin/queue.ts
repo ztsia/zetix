@@ -21,6 +21,36 @@ export function pendingScans(scans: readonly QueuedScan[]): QueuedScan[] {
   return scans.filter((s) => !s.syncedAt && !s.refusedAt);
 }
 
+/**
+ * Who may send a queued row: the operator who made it (spec/v3.md §32.2).
+ *
+ * The server stamps `check_ins.operator_id` from the session, so a row sent by
+ * the next person to sign in on this phone would be recorded as theirs — and if
+ * they are not rostered on the show, refused outright. A row with no tag was
+ * queued before the tag existed, and is sent by whoever is signed in, which is
+ * what every build before this one did.
+ */
+export function ownScans(scans: readonly QueuedScan[], operatorId: string): QueuedScan[] {
+  return scans.filter((s) => !s.operatorId || s.operatorId === operatorId);
+}
+
+/**
+ * Unsynced admissions left on this phone by somebody else, by name, so the
+ * operator now signed in can be told whose scans are waiting.
+ */
+export function othersWaiting(
+  scans: readonly QueuedScan[],
+  operatorId: string,
+): { operatorName: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const scan of pendingScans(scans)) {
+    if (!scan.operatorId || scan.operatorId === operatorId) continue;
+    const name = scan.operatorName || 'another operator';
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts].map(([operatorName, count]) => ({ operatorName, count }));
+}
+
 /** Scans the server refused, or that could never be sent: "couldn't sync". */
 export function refusedScans(scans: readonly QueuedScan[]): QueuedScan[] {
   return scans.filter((s) => !s.syncedAt && Boolean(s.refusedAt));

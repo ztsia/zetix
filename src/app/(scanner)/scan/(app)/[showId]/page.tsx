@@ -112,6 +112,7 @@ export default async function ScannerShowPage({
         doorsOpenAt: show.doorsOpenAt?.toISOString() ?? null,
         timezone: show.timezone,
       }}
+      operatorId={user.id}
       operatorName={user.displayName ?? user.email}
       canSwitchShows={canSwitchShows}
       manifestExpiresAt={expiresAt}

@@ -3,6 +3,7 @@ import {
   ARRIVAL_BUCKET_MINUTES,
   getArrivalBuckets,
   getCheckinStats,
+  getDoorStats,
   getOperatorCounts,
   getScanLog,
 } from '@/lib/checkin/dashboard';
@@ -186,8 +187,8 @@ describe('getArrivalBuckets', () => {
 
     const buckets = await getArrivalBuckets(fx.showId, 5);
     expect(buckets).toEqual([
-      { bucketStart: '2026-09-19T11:00:00Z', count: 2 },
-      { bucketStart: '2026-09-19T11:05:00Z', count: 1 },
+      { bucketStart: '2026-09-19T11:00:00Z', count: 2, walkIns: 0 },
+      { bucketStart: '2026-09-19T11:05:00Z', count: 1, walkIns: 0 },
     ]);
   });
 
@@ -197,7 +198,7 @@ describe('getArrivalBuckets', () => {
     await scan({ attendeeId: attendee, showId: fx.showId, scannedAt: '2026-09-19T11:30:00Z' });
 
     const buckets = await getArrivalBuckets(fx.showId, 5);
-    expect(buckets).toEqual([{ bucketStart: '2026-09-19T11:00:00Z', count: 1 }]);
+    expect(buckets).toEqual([{ bucketStart: '2026-09-19T11:00:00Z', count: 1, walkIns: 0 }]);
   });
 
   it('buckets on scanned_at, not synced_at, so an offline drain is not a spike', async () => {
@@ -210,7 +211,7 @@ describe('getArrivalBuckets', () => {
     `;
 
     const buckets = await getArrivalBuckets(fx.showId, 5);
-    expect(buckets).toEqual([{ bucketStart: '2026-09-19T11:00:00Z', count: 1 }]);
+    expect(buckets).toEqual([{ bucketStart: '2026-09-19T11:00:00Z', count: 1, walkIns: 0 }]);
   });
 
   it('leaves out reverted scans', async () => {
@@ -237,8 +238,8 @@ describe('getOperatorCounts', () => {
 
     const counts = await getOperatorCounts(fx.showId);
     expect(counts).toEqual([
-      { operatorId: WEI_ID, operatorName: 'Wei', count: 2 },
-      { operatorId: MEI_ID, operatorName: 'Mei', count: 1 },
+      { operatorId: WEI_ID, operatorName: 'Wei', count: 2, walkIns: 0 },
+      { operatorId: MEI_ID, operatorName: 'Mei', count: 1, walkIns: 0 },
     ]);
   });
 
@@ -251,7 +252,58 @@ describe('getOperatorCounts', () => {
     });
 
     const counts = await getOperatorCounts(fx.showId);
-    expect(counts).toEqual([{ operatorId: null, operatorName: null, count: 1 }]);
+    expect(counts).toEqual([{ operatorId: null, operatorName: null, count: 1, walkIns: 0 }]);
+  });
+});
+
+describe('walk-ins (spec/v3.md §32.2)', () => {
+  async function walkIn(over: { headcount: number; operatorId?: string | null; at?: string; reverted?: boolean }) {
+    await sql`
+      insert into walk_ins (client_id, show_id, headcount, operator_id, admitted_at, reverted_at)
+      values (gen_random_uuid(), ${fx.showId}, ${over.headcount}, ${over.operatorId ?? WEI_ID},
+              ${over.at ?? '2026-09-19T11:02:00Z'}, ${over.reverted ? sql`now()` : null})
+    `;
+  }
+
+  it('count in the hall by headcount, and a reverted one does not', async () => {
+    await scan({ attendeeId: fx.attendeeIds[0]!, showId: fx.showId, scannedAt: '2026-09-19T11:00:00Z' });
+    await walkIn({ headcount: 3 });
+    await walkIn({ headcount: 5, reverted: true });
+
+    const stats = await getCheckinStats(fx.showId);
+    expect(stats.walkIns).toBe(3);
+    expect(stats.inHall).toBe(stats.checkedIn + stats.admittedUnconfirmed + 3);
+    // Walk-ins are not expected guests: "remaining" is about the roster only.
+    expect(stats.remaining).toBe(stats.confirmed - stats.checkedIn);
+    expect(stats.capacity).not.toBeNull();
+  });
+
+  it('stack beside ticketed arrivals in the chart', async () => {
+    await scan({ attendeeId: fx.attendeeIds[0]!, showId: fx.showId, scannedAt: '2026-09-19T11:00:00Z' });
+    await walkIn({ headcount: 2, at: '2026-09-19T11:01:00Z' });
+    expect(await getArrivalBuckets(fx.showId, 5)).toEqual([
+      { bucketStart: '2026-09-19T11:00:00Z', count: 1, walkIns: 2 },
+    ]);
+  });
+
+  it('count for the operator who recorded them', async () => {
+    await scan({ attendeeId: fx.attendeeIds[0]!, showId: fx.showId, operatorId: MEI_ID, scannedAt: '2026-09-19T11:00:00Z' });
+    await walkIn({ headcount: 4, operatorId: WEI_ID });
+    expect(await getOperatorCounts(fx.showId)).toEqual([
+      { operatorId: WEI_ID, operatorName: 'Wei', count: 0, walkIns: 4 },
+      { operatorId: MEI_ID, operatorName: 'Mei', count: 1, walkIns: 0 },
+    ]);
+  });
+
+  it('give the door the house and this operator`s share of it', async () => {
+    await scan({ attendeeId: fx.attendeeIds[0]!, showId: fx.showId, operatorId: WEI_ID, scannedAt: '2026-09-19T11:00:00Z' });
+    await scan({ attendeeId: fx.attendeeIds[1]!, showId: fx.showId, operatorId: MEI_ID, scannedAt: '2026-09-19T11:00:00Z' });
+    await walkIn({ headcount: 2, operatorId: WEI_ID });
+
+    const stats = await getDoorStats(fx.showId, WEI_ID);
+    expect(stats.inHall).toBe(4);
+    expect(stats.byYou).toEqual({ admitted: 1, walkIns: 2 });
+    expect(Number.isNaN(Date.parse(stats.asOf))).toBe(false);
   });
 });
 

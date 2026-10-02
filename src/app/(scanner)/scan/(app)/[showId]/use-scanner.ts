@@ -19,19 +19,24 @@ import {
   othersWaiting,
   ownScans,
   pendingScans,
+  pendingWalkIns,
   refusedScans,
   prepareBatch,
   scanSummary,
   settleReceipts,
+  settleWalkIns,
   type ScanReceipt,
+  type WalkInReceipt,
 } from '@/lib/checkin/queue';
 import {
   openCheckinStore,
   toLocalCheckIns,
   type CheckinStore,
   type QueuedScan,
+  type QueuedWalkIn,
   type StoredManifest,
 } from '@/lib/checkin/store';
+import type { DoorStats } from '@/lib/checkin/dashboard';
 import { createScanFeedback, type ScanFeedback } from '@/lib/checkin/feedback';
 
 /**
@@ -75,6 +80,10 @@ export type ScannerState = {
   refused: QueuedScan[];
   /** Unsynced admissions somebody else left on this phone, by name. */
   othersWaiting: { operatorName: string; count: number }[];
+  /** This operator's walk-ins on this phone, synced or not. */
+  walkIns: QueuedWalkIn[];
+  /** The last figures the server gave, or null before the first. */
+  serverStats: DoorStats | null;
 };
 
 type ManifestResponse = { fetchedAt: string; attendees: ManifestEntry[] };
@@ -105,6 +114,9 @@ export function useScanner({
   const [durable, setDurable] = useState(true);
   const [manifest, setManifest] = useState<StoredManifest | null>(null);
   const [scans, setScans] = useState<QueuedScan[]>([]);
+  const [walkIns, setWalkIns] = useState<QueuedWalkIn[]>([]);
+  /** The last figures from the server, kept so an offline Stats tab can show them, marked stale. */
+  const [serverStats, setServerStats] = useState<DoorStats | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(true);
@@ -175,12 +187,12 @@ export function useScanner({
        * "couldn't sync" and never sent again. Before, one row the server could
        * not read made every later batch a 400, for the rest of the night.
        */
-      for (;;) {
+      scans: for (;;) {
         const all = await store.allScans(showId);
         setScans(all);
         const { send, setAside } = prepareBatch(pendingScans(ownScans(all, operatorId)));
         if (setAside.length > 0) await store.markRefused(setAside, new Date().toISOString());
-        if (send.length === 0) return;
+        if (send.length === 0) break;
 
         const response = await fetch('/api/checkin/scan', {
           method: 'POST',
@@ -218,7 +230,7 @@ export function useScanner({
             ),
             new Date().toISOString(),
           );
-          return;
+          break;
         }
         // Signed out, or the server is struggling: keep everything and retry
         // on the next reconnect. Neither is an answer about any one row.
@@ -233,15 +245,69 @@ export function useScanner({
         if (refused.length > 0) await store.markRefused(refused, at);
         // Nothing settled means another pass would send the same rows forever.
         // Stop and let the next reconnect try again.
-        if (synced.length + refused.length === 0) return;
+        if (synced.length + refused.length === 0) break scans;
       }
+
+      /**
+       * Walk-ins, in the same loop and under the same assignment check
+       * (spec/v3.md §32.2), settled row by row the same way.
+       */
+      for (;;) {
+        const rows = await store.allWalkIns(showId);
+        setWalkIns(rows);
+        const send = pendingWalkIns(rows, operatorId);
+        if (send.length === 0) break;
+
+        const response = await fetch('/api/checkin/walk-ins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            showId,
+            walkIns: send.map((w) => ({
+              clientId: w.clientId,
+              headcount: w.headcount,
+              label: w.label,
+              admittedAt: w.admittedAt,
+              deviceId: w.deviceId,
+            })),
+          }),
+        });
+        const at = new Date().toISOString();
+        if (response.status === 404) {
+          await store.updateWalkIns(
+            send.map((w) => ({
+              clientId: w.clientId,
+              change: {
+                refusedAt: at,
+                refusedReason:
+                  'This account is no longer assigned to this show. The desk has been told about these admissions.',
+              },
+            })),
+          );
+          break;
+        }
+        if (response.status === 401) setSignedOut(true);
+        if (!response.ok) return;
+
+        const body = (await response.json()) as { receipts: WalkInReceipt[] };
+        const { synced, refused } = settleWalkIns(send, body.receipts ?? []);
+        await store.updateWalkIns([
+          ...synced.map((clientId) => ({ clientId, change: { syncedAt: at } })),
+          ...refused.map(({ clientId, reason }) => ({
+            clientId,
+            change: { refusedAt: at, refusedReason: reason },
+          })),
+        ]);
+        if (synced.length + refused.length === 0) break;
+      }
+
     } catch {
       // Still offline. The queue keeps its rows and the next `online` retries.
     } finally {
       drainingRef.current = false;
       setSyncing(false);
-      const latest = await store.allScans(showId);
-      setScans(latest);
+      setScans(await store.allScans(showId));
+      setWalkIns(await store.allWalkIns(showId));
     }
   }, [showId, operatorId]);
 
@@ -433,14 +499,17 @@ export function useScanner({
       setDurable(store.durable);
       setMutedState(feedbackRef.current.muted());
 
-      const [saved, existing] = await Promise.all([
+      const [saved, existing, walkInRows] = await Promise.all([
         store.loadManifest(showId),
         store.allScans(showId),
+        store.allWalkIns(showId),
       ]);
       if (cancelled) return;
       // A roster saved by an older build lacks the fields 0205 added.
       setManifest(saved ? { ...saved, attendees: normaliseEntries(saved.attendees) } : null);
       setScans(existing);
+      setWalkIns(walkInRows);
+      setServerStats(loadStats(showId));
       setReady(true);
 
       if (navigator.onLine) void refresh();
@@ -484,6 +553,61 @@ export function useScanner({
   const dismissResult = useCallback(() => setResult(null), []);
 
   /**
+   * Record a walk-in (spec/v3.md §32.2): stored on the phone first, then sent
+   * with the next drain. Feedback is the same flash and tone as an admission.
+   */
+  const recordWalkIn = useCallback(
+    async (headcount: number, label: string | null) => {
+      const store = storeRef.current;
+      if (!store) return;
+      await store.enqueueWalkIn({
+        clientId: crypto.randomUUID(),
+        showId,
+        headcount,
+        label,
+        admittedAt: new Date().toISOString(),
+        deviceId: deviceIdRef.current,
+        operatorId,
+        operatorName,
+      });
+      setWalkIns(await store.allWalkIns(showId));
+      feedbackRef.current?.play('admitted');
+      if (navigator.onLine) void drain();
+    },
+    [showId, operatorId, operatorName, drain],
+  );
+
+  /** Undo one of this operator's own walk-ins, only before it has synced. */
+  const undoWalkIn = useCallback(
+    async (clientId: string) => {
+      const store = storeRef.current;
+      if (!store) return false;
+      const done = await store.deleteUnsyncedWalkIn(clientId);
+      setWalkIns(await store.allWalkIns(showId));
+      return done;
+    },
+    [showId],
+  );
+
+  /**
+   * The house, from the server (spec/v3.md §32.2, decision 59). Kept, and
+   * remembered across a reload, so an offline Stats tab can show the last
+   * figures marked stale rather than nothing.
+   */
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/checkin/stats?showId=${showId}`, { cache: 'no-store' });
+      if (response.status === 401) setSignedOut(true);
+      if (!response.ok) return;
+      const body = (await response.json()) as DoorStats;
+      setServerStats(body);
+      saveStats(showId, body);
+    } catch {
+      // Offline: the last figures stand, and the tab says how old they are.
+    }
+  }, [showId]);
+
+  /**
    * Make this phone safe to hand back (spec/v3.md §32.2, ref.md §4: "assume at
    * least one usher phone will be left unlocked on a table").
    *
@@ -497,8 +621,9 @@ export function useScanner({
     if (!store) return;
     if (navigator.onLine) await drain();
     await store.wipeForSignOut();
+    saveStats(showId, null);
     setManifest(null);
-  }, [drain]);
+  }, [drain, showId]);
 
   const state: ScannerState = {
     ready,
@@ -514,6 +639,8 @@ export function useScanner({
     signedOut,
     refused: refusedScans(ownScans(scans, operatorId)),
     othersWaiting: othersWaiting(scans, operatorId),
+    walkIns: walkIns.filter((w) => w.operatorId === operatorId),
+    serverStats,
   };
 
   return {
@@ -525,6 +652,9 @@ export function useScanner({
     refresh,
     drain,
     prepareSignOut,
+    recordWalkIn,
+    undoWalkIn,
+    fetchStats,
     dismissResult,
     unlockAudio,
     setMuted,
@@ -548,5 +678,26 @@ function deviceId(): string {
     return created;
   } catch {
     return `dev-ephemeral-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+/** Where the last server figures are kept, per show: a convenience, never the record. */
+const statsKey = (showId: number) => `zetix.scanner.stats.${showId}`;
+
+function loadStats(showId: number): DoorStats | null {
+  try {
+    const raw = localStorage.getItem(statsKey(showId));
+    return raw ? (JSON.parse(raw) as DoorStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStats(showId: number, stats: DoorStats | null): void {
+  try {
+    if (stats) localStorage.setItem(statsKey(showId), JSON.stringify(stats));
+    else localStorage.removeItem(statsKey(showId));
+  } catch {
+    // Storage refused: the figures live for this tab only.
   }
 }

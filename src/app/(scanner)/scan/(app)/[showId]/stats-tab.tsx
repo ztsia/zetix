@@ -1,105 +1,196 @@
 'use client';
 
-import { CloudOff, RefreshCw } from 'lucide-react';
-import type { ManifestIndex } from '@/lib/checkin/manifest';
-import type { LocalCheckIn } from '@/lib/checkin/evaluate';
+import { CloudOff, RefreshCw, Undo2, Users } from 'lucide-react';
+import type { DoorStats } from '@/lib/checkin/dashboard';
+import type { QueuedWalkIn } from '@/lib/checkin/store';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/components/ui/item';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { formatDoorTime } from './format';
 
 /**
- * Checked in, expected, remaining (spec/checkin.md §12.4 for the admin view;
- * ref.md §1.2 for this one).
+ * The door's numbers for the selected show (spec/v3.md §32.2, decision 59).
  *
- * **The person running the door reads this to decide when to stop holding
- * seats**, so the number that matters is the one from this device's own
- * history — which is available offline, and is the only one that is.
+ * **Two figures, from the server, for this show and no other:** everyone in the
+ * hall across every phone and operator — tickets plus walk-ins, against the
+ * hall's capacity and the confirmed seats still expected — and what this
+ * operator admitted, from every phone they have used. Before §32.2 the tab
+ * counted only this phone's own queue, which is the one number the person
+ * deciding when to stop holding seats cannot use.
  *
- * It is deliberately honest about being partial: with several ushers on several
- * phones, a single device knows only what it admitted itself until everything
- * syncs. The copy names no count — how many ushers there are is a fact in
- * `context.md`, and a number from there in a `.ts` file is a bug (`CLAUDE.md`),
- * even as prose.
- * Presenting that as the house count would be worse than useless on the one
- * night it is consulted, so the copy says whose count it is.
+ * Offline, the last server figures stay, marked with how old they are, and
+ * this phone's unsynced admissions are shown beside them rather than guessed
+ * into them.
  */
 export function StatsTab({
-  index,
-  checkIns,
-  pending,
+  stats,
   online,
+  timeZone,
+  unsyncedAdmissions,
+  unsyncedWalkIns,
+  refused,
+  walkIns,
+  rosterFetchedAt,
   refreshing,
   onRefresh,
+  onUndoWalkIn,
 }: {
-  index: ManifestIndex;
-  checkIns: readonly LocalCheckIn[];
-  pending: number;
+  stats: DoorStats | null;
   online: boolean;
+  timeZone: string | null;
+  /** This operator's admissions on this phone not yet on the server. */
+  unsyncedAdmissions: number;
+  /** Headcount of this operator's walk-ins not yet on the server. */
+  unsyncedWalkIns: number;
+  refused: number;
+  walkIns: readonly QueuedWalkIn[];
+  rosterFetchedAt: string | null;
   refreshing: boolean;
   onRefresh: () => void;
+  onUndoWalkIn: (clientId: string) => void;
 }) {
-  const expected = index.entries.filter((e) => e.status !== 'CANCELLED').length;
-  const admitted = new Set(checkIns.filter((c) => !c.revertedAt).map((c) => c.key)).size;
-  const remaining = Math.max(expected - admitted, 0);
-  const percent = expected === 0 ? 0 : Math.round((admitted / expected) * 100);
+  const unsynced = unsyncedAdmissions + unsyncedWalkIns;
+  const asOf = stats ? formatDoorTime(stats.asOf, timeZone) : null;
+  const percent =
+    stats?.capacity ? Math.min(100, Math.round((stats.inHall / stats.capacity) * 100)) : null;
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <Figure label="Admitted here" value={admitted} />
-        <Figure label="Remaining" value={remaining} />
-        <Figure label="Expected" value={expected} />
-        <Figure label="Awaiting sync" value={pending} muted={pending === 0} />
-      </div>
+      {stats === null ? (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">{online ? <Users /> : <CloudOff />}</EmptyMedia>
+            <EmptyTitle>No figures yet</EmptyTitle>
+            <EmptyDescription>
+              {online
+                ? 'Fetching the house total…'
+                : 'The house total comes from the server. Connect once to see it.'}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-muted-foreground text-sm font-medium">In the hall</CardTitle>
+              <CardDescription>Every phone, every operator</CardDescription>
+              <CardAction>
+                <AsOf online={online} asOf={asOf} />
+              </CardAction>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-5xl font-bold tabular-nums">
+                {stats.inHall}
+                {stats.capacity ? (
+                  <span className="text-muted-foreground text-2xl font-medium"> / {stats.capacity}</span>
+                ) : null}
+              </p>
+              {percent !== null && <Progress value={percent} aria-label={`${percent}% of capacity`} />}
+              <p className="text-muted-foreground text-sm">
+                {stats.checkedIn + stats.admittedUnconfirmed} with tickets · {stats.walkIns} walk-in
+                {stats.walkIns === 1 ? '' : 's'} · {stats.remaining} still expected
+              </p>
+              {unsynced > 0 && (
+                <p className="text-sm">
+                  +{unsynced} from this phone not yet counted
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
-      <div className="space-y-2">
-        <Progress value={percent} aria-label={`${percent}% admitted`} />
-        <p className="text-muted-foreground text-xs">
-          {percent}% of the roster on this device
+          <Card size="sm">
+            <CardHeader>
+              <CardTitle className="text-muted-foreground text-sm font-medium">Admitted by you</CardTitle>
+              <CardDescription>This show, from every phone you have used</CardDescription>
+              <CardAction>
+                <AsOf online={online} asOf={asOf} />
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              <p className="text-4xl font-bold tabular-nums">
+                {stats.byYou.admitted + stats.byYou.walkIns + unsynced}
+              </p>
+              <p className="text-muted-foreground text-sm">
+                {stats.byYou.admitted} with tickets · {stats.byYou.walkIns} walk-in
+                {stats.byYou.walkIns === 1 ? '' : 's'}
+                {unsynced > 0 ? ` · ${unsynced} waiting to sync` : ''}
+              </p>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {refused > 0 && (
+        <p className="text-destructive text-sm">
+          {refused} admission{refused === 1 ? '' : 's'} couldn&rsquo;t sync — tap the red badge at the
+          top for details.
         </p>
-      </div>
+      )}
 
-      <Alert>
-        <AlertTitle>This phone&rsquo;s count</AlertTitle>
-        <AlertDescription>
-          Every phone at the door sees only its own admissions until everything syncs. The
-          dashboard has the house total.
-        </AlertDescription>
-      </Alert>
-
-      {!online && (
-        <Alert variant="destructive">
-          <CloudOff />
-          <AlertTitle>Offline</AlertTitle>
-          <AlertDescription>
-            Scanning works normally. {pending} scan{pending === 1 ? '' : 's'} will send when
-            signal returns.
-          </AlertDescription>
-        </Alert>
+      {walkIns.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Walk-ins on this phone
+          </h2>
+          <ItemGroup className="gap-2">
+            {[...walkIns]
+              .sort((a, b) => b.admittedAt.localeCompare(a.admittedAt))
+              .map((w) => (
+                <Item key={w.clientId} variant="outline" size="sm">
+                  <ItemContent>
+                    <ItemTitle>
+                      {w.headcount} {w.headcount === 1 ? 'person' : 'people'}
+                      {w.label ? ` · ${w.label}` : ''}
+                    </ItemTitle>
+                    <ItemDescription>
+                      {formatDoorTime(w.admittedAt, timeZone)} ·{' '}
+                      {w.refusedAt ? "couldn't sync" : w.syncedAt ? 'synced' : 'waiting to sync'}
+                    </ItemDescription>
+                  </ItemContent>
+                  {!w.syncedAt && (
+                    <ItemActions>
+                      {/* An usher's own mistake, before the server has it. After
+                          that, reverting is the desk's (§32.2). */}
+                      <Button variant="ghost" className="h-11" onClick={() => onUndoWalkIn(w.clientId)}>
+                        <Undo2 />
+                        Undo
+                      </Button>
+                    </ItemActions>
+                  )}
+                </Item>
+              ))}
+          </ItemGroup>
+        </section>
       )}
 
       <Button
         variant="outline"
         size="lg"
-        className="h-14"
+        className="mt-auto h-14"
         disabled={!online || refreshing}
         onClick={onRefresh}
       >
         <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
-        Refresh roster
+        Refresh roster and figures
       </Button>
+      {rosterFetchedAt && (
+        <p className="text-muted-foreground -mt-2 text-center text-xs">
+          Roster from {formatDoorTime(rosterFetchedAt, timeZone)}
+        </p>
+      )}
     </div>
   );
 }
 
-function Figure({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
+/** When the server's figures are from, and that they are stale when offline (§32.2). */
+function AsOf({ online, asOf }: { online: boolean; asOf: string | null }) {
   return (
-    <div className="bg-card rounded-lg border p-4">
-      {/* Tabular numerals so the count does not jitter as it ticks up. */}
-      <p className={`text-4xl font-bold tabular-nums ${muted ? 'text-muted-foreground' : ''}`}>
-        {value}
-      </p>
-      <p className="text-muted-foreground mt-1 text-xs tracking-wide uppercase">{label}</p>
-    </div>
+    <Badge variant={online ? 'secondary' : 'outline'}>
+      {!online && <CloudOff />}
+      {online ? `as of ${asOf}` : `${asOf} · offline`}
+    </Badge>
   );
 }

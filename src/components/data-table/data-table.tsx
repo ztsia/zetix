@@ -163,7 +163,12 @@ export type DataTableProps<TData extends RowData> = {
     excluded?: number;
   };
 
-  export?: DataTableExport<TData>;
+  /**
+   * The table's export. A whole-set export loaded on the server may write rows
+   * of its own shape — the door's log is scans *and* walk-ins (spec/v3.md
+   * §32.2) — so a config with `load` need not share the table's row type.
+   */
+  export?: DataTableExport<NoInfer<TData>> | LoadedExport;
 
   isLoading?: boolean;
   emptyTitle?: string;
@@ -174,6 +179,10 @@ export type DataTableProps<TData extends RowData> = {
   initialPageSize?: number;
   className?: string;
 };
+
+/** A whole-set export whose loader returns rows of its own shape. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LoadedExport = DataTableExport<any> & { load: NonNullable<DataTableExport<any>['load']> };
 
 /**
  * How long the search box waits before asking the server.
@@ -379,7 +388,7 @@ export function DataTable<TData extends RowData>({
                   ? exportScope({
                       selected: selectedCount ?? selectedRows.length,
                       allMatching: selectAllMatching?.selected ?? false,
-                      total: server?.rowCount ?? filteredRows.length,
+                      total: exportConfig.count ?? server?.rowCount ?? filteredRows.length,
                     })
                   : undefined
               }

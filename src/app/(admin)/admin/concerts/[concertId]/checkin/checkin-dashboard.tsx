@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -22,9 +24,11 @@ import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { DataTable, DataTableColumnHeader, type DataTableColumn } from '@/components/data-table';
 import type { ArrivalBucket, CheckinStats, OperatorCount, ScanLogRow } from '@/lib/checkin/dashboard';
 import type { RejectedSync } from '@/lib/checkin/rejected-sync';
+import type { WalkInRow } from '@/lib/checkin/walk-ins';
 import { formatInZone } from '@/lib/export';
 import type { ExportColumn } from '@/lib/export';
 import { RevertScanButton } from './revert-scan-button';
+import { exportDoorLogAction, type DoorLogRow } from './export-actions';
 import { RejectedSyncsAlert } from './rejected-syncs-alert';
 import { buildDashboardQuery, type DashboardChange } from './dashboard-url';
 import { AdminOnly } from '@/components/auth/role';
@@ -62,6 +66,7 @@ export function CheckinDashboard({
   rejectedSyncs,
   defaultShowId,
   scanLog,
+  walkIns,
   pageIndex,
   pageSize,
   sorting,
@@ -81,6 +86,8 @@ export function CheckinDashboard({
   /** The id the page defaults to, which the query string therefore omits. */
   defaultShowId: number;
   scanLog: { rows: ScanLogRow[]; total: number };
+  /** Every walk-in of the show, reverted ones included (spec/v3.md §32.2). */
+  walkIns: WalkInRow[];
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
@@ -164,7 +171,15 @@ export function CheckinDashboard({
         <OperatorCounts counts={operatorCounts} />
       </div>
 
+      <WalkInsLog
+        concertId={concertId}
+        showId={showId}
+        timeZone={timeZone}
+        rows={walkIns}
+      />
+
       <ScanLog
+        walkInCount={walkIns.filter((w) => includeReverted || !w.revertedAt).length}
         concertId={concertId}
         showId={showId}
         timeZone={timeZone}
@@ -232,14 +247,29 @@ function LiveRefresh() {
 
 function StatCards({ stats }: { stats: CheckinStats }) {
   const percent = stats.confirmed === 0 ? 0 : Math.round((stats.checkedIn / stats.confirmed) * 100);
+  const full = stats.capacity ? Math.round((stats.inHall / stats.capacity) * 100) : null;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <StatCard label="Confirmed" value={stats.confirmed} hint="Seats expected tonight" />
-      <StatCard label="Checked in" value={stats.checkedIn} hint={`${percent}% of confirmed`}>
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <StatCard
+        label="In the hall"
+        value={stats.inHall}
+        hint={
+          stats.capacity
+            ? `of ${stats.capacity} — tickets and walk-ins`
+            : 'Tickets and walk-ins · no capacity set'
+        }
+      >
+        {full !== null && (
+          // Being at capacity warns; it never blocks the door (§12.1).
+          <Progress value={Math.min(full, 100)} className="mt-3" aria-label={`${full}% of capacity`} />
+        )}
+      </StatCard>
+      <StatCard label="Checked in" value={stats.checkedIn} hint={`${percent}% of ${stats.confirmed} confirmed`}>
         <Progress value={percent} className="mt-3" />
       </StatCard>
-      <StatCard label="Remaining" value={stats.remaining} hint="Still to arrive" />
+      <StatCard label="Still expected" value={stats.remaining} hint="Confirmed seats not yet in" />
+      <StatCard label="Walk-ins" value={stats.walkIns} hint="Admitted with no ticket" />
       <StatCard
         label="Admitted anyway"
         value={stats.admittedUnconfirmed}
@@ -277,7 +307,8 @@ function StatCard({
 }
 
 const arrivalChartConfig = {
-  count: { label: 'Arrivals', color: 'var(--chart-1)' },
+  count: { label: 'Ticketed', color: 'var(--chart-1)' },
+  walkIns: { label: 'Walk-ins', color: 'var(--chart-2)' },
 } satisfies ChartConfig;
 
 function ArrivalChart({
@@ -302,15 +333,16 @@ function ArrivalChart({
     const first = new Date(arrivals[0]!.bucketStart).getTime();
     const last = new Date(arrivals[arrivals.length - 1]!.bucketStart).getTime();
     const counts = new Map(
-      arrivals.map((bucket) => [new Date(bucket.bucketStart).getTime(), bucket.count]),
+      arrivals.map((bucket) => [new Date(bucket.bucketStart).getTime(), bucket]),
     );
 
-    const filled: { label: string; count: number }[] = [];
+    const filled: { label: string; count: number; walkIns: number }[] = [];
     for (let at = first; at <= last; at += step) {
       filled.push({
         // Rendered in the concert's zone, never the viewer's (spec/domain.md §6.1).
         label: formatInZone(new Date(at), timeZone).slice(11),
-        count: counts.get(at) ?? 0,
+        count: counts.get(at)?.count ?? 0,
+        walkIns: counts.get(at)?.walkIns ?? 0,
       });
     }
     return filled;
@@ -321,8 +353,9 @@ function ArrivalChart({
       <CardHeader>
         <CardTitle className="text-base">Arrivals</CardTitle>
         <p className="text-muted-foreground text-sm">
-          When people actually reached the door, in {bucketMinutes}-minute buckets — read from
-          the scan time on the phone, so a spell offline does not move anyone.
+          When people actually reached the door, in {bucketMinutes}-minute buckets — ticketed
+          guests and walk-ins stacked, read from the phone&rsquo;s own time, so a spell offline
+          does not move anyone.
         </p>
       </CardHeader>
       <CardContent>
@@ -337,7 +370,9 @@ function ArrivalChart({
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
               <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="count" fill="var(--color-count)" radius={4} />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Bar dataKey="count" stackId="arrivals" fill="var(--color-count)" />
+              <Bar dataKey="walkIns" stackId="arrivals" fill="var(--color-walkIns)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartContainer>
         )}
@@ -352,8 +387,8 @@ function OperatorCounts({ counts }: { counts: OperatorCount[] }) {
       <CardHeader>
         <CardTitle className="text-base">By operator</CardTitle>
         <p className="text-muted-foreground text-sm">
-          Guests admitted, busiest first. One guest scanned on two phones counts for each
-          usher, so these can add up to more than the arrivals above.
+          Guests admitted and walk-ins recorded, busiest first. One guest scanned on two
+          phones counts for each usher, so these can add up to more than the arrivals above.
         </p>
       </CardHeader>
       <CardContent>
@@ -370,7 +405,12 @@ function OperatorCounts({ counts }: { counts: OperatorCount[] }) {
                       <span className="text-muted-foreground">Removed operator</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{row.count}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.count}
+                    {row.walkIns > 0 && (
+                      <span className="text-muted-foreground"> + {row.walkIns} walk-in{row.walkIns === 1 ? '' : 's'}</span>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -381,6 +421,109 @@ function OperatorCounts({ counts }: { counts: OperatorCount[] }) {
   );
 }
 
+/**
+ * The walk-ins of the show (spec/v3.md §32.2): who recorded how many, when,
+ * with the note if there is one. Reverting is the desk's correction, audited;
+ * a reverted row stays, struck through, like a reverted scan.
+ */
+function WalkInsLog({
+  concertId,
+  showId,
+  timeZone,
+  rows,
+}: {
+  concertId: number;
+  showId: number;
+  timeZone: string;
+  rows: WalkInRow[];
+}) {
+  const columns: DataTableColumn<WalkInRow>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'admittedAt',
+        meta: { label: 'At' },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="At" />,
+        cell: ({ row }) => (
+          <span className={row.original.revertedAt ? 'text-sm tabular-nums line-through opacity-60' : 'text-sm tabular-nums'}>
+            {formatInZone(new Date(row.original.admittedAt), timeZone)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'headcount',
+        meta: { label: 'People' },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="People" />,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.headcount}</span>,
+      },
+      {
+        accessorKey: 'label',
+        meta: { label: 'Note' },
+        header: 'Note',
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.label ?? <span className="text-muted-foreground">No name</span>,
+      },
+      {
+        accessorKey: 'operatorName',
+        meta: { label: 'Operator' },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Operator" />,
+        cell: ({ row }) =>
+          row.original.operatorName ?? <span className="text-muted-foreground">Removed operator</span>,
+      },
+      {
+        id: 'state',
+        meta: { label: 'State' },
+        header: 'State',
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.revertedAt ? (
+            <Badge variant="secondary">
+              reverted{row.original.revertedByName ? ` by ${row.original.revertedByName}` : ''}
+            </Badge>
+          ) : null,
+      },
+      {
+        id: 'actions',
+        enableHiding: false,
+        enableSorting: false,
+        meta: { label: 'Actions' },
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) =>
+          row.original.revertedAt ? null : (
+            <AdminOnly>
+              <RevertScanButton
+                kind="walk-in"
+                checkInId={row.original.id}
+                showId={showId}
+                concertId={concertId}
+                attendeeName={
+                  row.original.label
+                    ? `"${row.original.label}"`
+                    : `of ${row.original.headcount} ${row.original.headcount === 1 ? 'person' : 'people'}`
+                }
+              />
+            </AdminOnly>
+          ),
+      },
+    ],
+    [concertId, showId, timeZone],
+  );
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-semibold tracking-tight">Walk-ins</h2>
+      <DataTable
+        columns={columns}
+        data={rows}
+        getRowId={(row) => String(row.id)}
+        initialPageSize={10}
+        emptyTitle="No walk-ins"
+        emptyDescription="People admitted with no ticket appear here, if the concert records walk-ins. They are in the door log export."
+      />
+    </div>
+  );
+}
+
 const SOURCE_LABEL: Record<ScanLogRow['source'], string> = {
   ONLINE: 'Scanned',
   OFFLINE_SYNC: 'Synced later',
@@ -388,6 +531,7 @@ const SOURCE_LABEL: Record<ScanLogRow['source'], string> = {
 };
 
 function ScanLog({
+  walkInCount,
   concertId,
   showId,
   timeZone,
@@ -401,6 +545,8 @@ function ScanLog({
   isPending,
   onApply,
 }: {
+  /** Walk-ins the export adds to the scans (spec/v3.md §32.2). */
+  walkInCount: number;
   concertId: number;
   showId: number;
   timeZone: string;
@@ -510,19 +656,23 @@ function ScanLog({
     [concertId, showId, timeZone],
   );
 
-  const exportColumns: ExportColumn<ScanLogRow>[] = useMemo(
+  /**
+   * The record of the night, whole: every matching scan and every walk-in, in
+   * time order, never the page on screen (spec/v3.md §32.1, §32.2).
+   */
+  const exportColumns: ExportColumn<DoorLogRow>[] = useMemo(
     () => [
-      { header: 'Attendee', value: (row) => row.attendeeName, width: 28 },
+      { header: 'Kind', value: (row) => row.kind },
+      { header: 'At', value: (row) => new Date(row.at) },
+      { header: 'Name or note', value: (row) => row.name, width: 28 },
       { header: 'Ticket code', value: (row) => row.ticketCode },
+      { header: 'People', value: (row) => row.headcount },
       { header: 'Status', value: (row) => row.status },
-      { header: 'Scanned at', value: (row) => new Date(row.scannedAt) },
-      { header: 'Synced at', value: (row) => (row.syncedAt ? new Date(row.syncedAt) : null) },
       { header: 'Operator', value: (row) => row.operatorName },
       { header: 'Device', value: (row) => row.deviceId },
       { header: 'Source', value: (row) => row.source },
-      { header: 'Override reason', value: (row) => row.overrideReason },
+      { header: 'Override reason', value: (row) => row.reason },
       { header: 'Reverted at', value: (row) => (row.revertedAt ? new Date(row.revertedAt) : null) },
-      { header: 'Reverted by', value: (row) => row.revertedByName },
     ],
     [],
   );
@@ -558,10 +708,12 @@ function ScanLog({
         }}
         isLoading={isPending}
         export={{
-          filename: 'scan-log',
+          filename: 'door-log',
           columns: exportColumns,
           timeZone,
-          sheetName: 'Scan log',
+          sheetName: 'Door log',
+          load: () => exportDoorLogAction({ concertId, showId, search, includeReverted }),
+          count: total + walkInCount,
         }}
         emptyTitle="Nothing scanned yet"
         emptyDescription="Admissions appear here as the door works, including scans that synced late."

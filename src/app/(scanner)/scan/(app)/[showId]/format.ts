@@ -13,9 +13,11 @@
  */
 export function formatDoorTime(iso: string, timeZone: string | null): string {
   try {
-    return new Date(iso).toLocaleTimeString([], {
+    // 24-hour, like every other time this system prints (`lib/portal/format.ts`).
+    return new Date(iso).toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false,
       ...(timeZone ? { timeZone } : {}),
     });
   } catch {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { CircleAlert, CloudOff } from 'lucide-react';
-import type { QueuedScan } from '@/lib/checkin/store';
+import type { QueuedScan, QueuedWalkIn } from '@/lib/checkin/store';
 import type { ManifestIndex } from '@/lib/checkin/manifest';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,7 @@ export function SyncStatus({
   syncing,
   pending,
   refused,
+  refusedWalkIns = [],
   index,
   timeZone,
 }: {
@@ -40,23 +41,25 @@ export function SyncStatus({
   syncing: boolean;
   pending: number;
   refused: readonly QueuedScan[];
+  refusedWalkIns?: readonly QueuedWalkIn[];
   index: ManifestIndex;
   timeZone: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const refusedCount = refused.length + refusedWalkIns.length;
 
   return (
     <>
-      {refused.length > 0 ? (
+      {refusedCount > 0 ? (
         <Button
           variant="destructive"
           size="sm"
           className="h-9 shrink-0 gap-1 px-2"
           onClick={() => setOpen(true)}
-          aria-label={`${refused.length} couldn't sync — tap for details`}
+          aria-label={`${refusedCount} couldn't sync — tap for details`}
         >
           <CircleAlert />
-          {refused.length} couldn&rsquo;t sync
+          {refusedCount} couldn&rsquo;t sync
         </Button>
       ) : !online ? (
         <Badge variant="destructive" className="shrink-0 gap-1">
@@ -105,6 +108,21 @@ export function SyncStatus({
                   </Item>
                 );
               })}
+              {refusedWalkIns.map((w) => (
+                <Item key={w.clientId} variant="outline">
+                  <ItemContent>
+                    <ItemTitle className="text-base">
+                      Walk-in · {w.headcount} {w.headcount === 1 ? 'person' : 'people'}
+                      {w.label ? ` · ${w.label}` : ''}
+                    </ItemTitle>
+                    <ItemDescription className="line-clamp-none">
+                      {formatDoorTime(w.admittedAt, timeZone)}
+                      <br />
+                      {w.refusedReason}
+                    </ItemDescription>
+                  </ItemContent>
+                </Item>
+              ))}
             </ItemGroup>
           </div>
           <DrawerFooter>

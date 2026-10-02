@@ -9,6 +9,7 @@ import {
   ScanLine,
   Search as SearchIcon,
   TriangleAlert,
+  UserPlus,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -27,6 +28,8 @@ import { SearchTab } from './search-tab';
 import { StatsTab } from './stats-tab';
 import { AccountMenu } from './account-menu';
 import { SyncStatus } from './sync-status';
+import { WalkInSheet } from './walk-in-sheet';
+import { formatDoorTime } from './format';
 
 /**
  * How long a green result stays up before clearing itself (ref.md §1.2, "~2s").
@@ -37,6 +40,13 @@ import { SyncStatus } from './sync-status';
  * the colour has gone.
  */
 const RESULT_AUTO_DISMISS_MS = 2000;
+
+/**
+ * How often the Stats tab re-reads the house while it is open and online.
+ * An interaction constant like the admin Door screen's `POLL_MS`, not a
+ * capacity or a limit (`CLAUDE.md`).
+ */
+const STATS_POLL_MS = 15_000;
 
 export type ShowSummary = {
   id: number;
@@ -79,6 +89,7 @@ export function ScannerShell({
   manifestExpiresAt,
   scanDebounceMs,
   canSwitchShows,
+  walkIns: walkInConfig,
 }: {
   show: ShowSummary;
   operatorId: string;
@@ -87,6 +98,8 @@ export function ScannerShell({
   scanDebounceMs: number;
   /** False for an operator rostered on exactly one show (§12.1). */
   canSwitchShows: boolean;
+  /** Null when the concert does not record walk-ins (spec/v3.md §32.5). */
+  walkIns: { maxHeadcount: number | null } | null;
 }) {
   const {
     state,
@@ -96,6 +109,9 @@ export function ScannerShell({
     admit,
     refresh,
     prepareSignOut,
+    recordWalkIn,
+    undoWalkIn,
+    fetchStats,
     dismissResult,
     unlockAudio,
     setMuted,
@@ -116,6 +132,27 @@ export function ScannerShell({
   const [tab, setTab] = useState('scan');
   /** Bumped after an admission from Search: the query clears for the next guest. */
   const [searchReset, setSearchReset] = useState(0);
+  const [walkInOpen, setWalkInOpen] = useState(false);
+  const [walkInLabel, setWalkInLabel] = useState('');
+
+  /** The house, re-read while the Stats tab is open and there is signal. */
+  useEffect(() => {
+    if (tab !== 'stats' || !state.online) return;
+    void fetchStats();
+    const id = window.setInterval(() => void fetchStats(), STATS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [tab, state.online, fetchStats]);
+
+  const openWalkIn = (label: string) => {
+    setWalkInLabel(label);
+    setWalkInOpen(true);
+    // The capacity warning reads the latest figures, when there is signal.
+    if (state.online) void fetchStats();
+  };
+
+  const stats = state.serverStats;
+  const pendingWalkIns = state.walkIns.filter((w) => !w.syncedAt && !w.refusedAt);
+  const refusedWalkIns = state.walkIns.filter((w) => !w.syncedAt && w.refusedAt);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const localCheckIns = toLocalCheckIns(state.scans, index);
@@ -211,8 +248,9 @@ export function ScannerShell({
         <SyncStatus
           online={state.online}
           syncing={state.syncing}
-          pending={state.summary.pending}
+          pending={state.summary.pending + pendingWalkIns.length}
           refused={state.refused}
+          refusedWalkIns={refusedWalkIns}
           index={index}
           timeZone={show.timezone}
         />
@@ -313,6 +351,20 @@ export function ScannerShell({
               <StartPrompt onStart={start} />
             )}
 
+            {walkInConfig && !state.result && (
+              // Bottom of the viewfinder, where the thumb is; under the result
+              // overlay, so it never competes with a scan's answer.
+              <Button
+                variant="secondary"
+                size="lg"
+                className="absolute right-4 bottom-4 z-10 h-14 px-5 text-base"
+                onClick={() => openWalkIn('')}
+              >
+                <UserPlus />
+                Walk-in
+              </Button>
+            )}
+
             {state.result && (
               <ResultOverlay
                 result={state.result}
@@ -338,8 +390,9 @@ export function ScannerShell({
             <SearchTab
               index={index}
               checkIns={localCheckIns}
-              active={tab === 'search' && !sheetOpen}
+              active={tab === 'search' && !sheetOpen && !walkInOpen}
               resetSignal={searchReset}
+              onWalkIn={walkInConfig ? openWalkIn : undefined}
               onSelect={(entry) => {
                 setSelected(entry);
                 setSheetOpen(true);
@@ -349,12 +402,20 @@ export function ScannerShell({
 
           <TabsContent value="stats" className="absolute inset-0">
             <StatsTab
-              index={index}
-              checkIns={localCheckIns}
-              pending={state.summary.pending}
+              stats={stats}
               online={state.online}
+              timeZone={show.timezone}
+              unsyncedAdmissions={state.summary.pending}
+              unsyncedWalkIns={pendingWalkIns.reduce((n, w) => n + w.headcount, 0)}
+              refused={state.summary.refused + refusedWalkIns.length}
+              walkIns={state.walkIns}
+              rosterFetchedAt={state.manifest?.fetchedAt ?? null}
               refreshing={state.refreshing}
-              onRefresh={refresh}
+              onRefresh={() => {
+                void refresh();
+                void fetchStats();
+              }}
+              onUndoWalkIn={(clientId) => void undoWalkIn(clientId)}
             />
           </TabsContent>
         </div>
@@ -378,6 +439,26 @@ export function ScannerShell({
           <BottomTab value="stats" icon={<BarChart3 />} label="Stats" />
         </TabsList>
       </Tabs>
+
+      {walkInConfig && (
+        <WalkInSheet
+          open={walkInOpen}
+          onOpenChange={setWalkInOpen}
+          maxHeadcount={walkInConfig.maxHeadcount}
+          initialLabel={walkInLabel}
+          atCapacity={
+            stats?.capacity != null && stats.inHall >= stats.capacity
+              ? { asOf: formatDoorTime(stats.asOf, show.timezone) }
+              : null
+          }
+          onRecord={async (headcount, label) => {
+            await recordWalkIn(headcount, label);
+            setWalkInOpen(false);
+            showFlash('admitted');
+            if (tab === 'search') setSearchReset((n) => n + 1);
+          }}
+        />
+      )}
 
       <PartySheet
         entry={selected}

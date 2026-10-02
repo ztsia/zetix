@@ -21,9 +21,15 @@ import type { LocalCheckIn } from './evaluate';
  */
 
 const DB_NAME = 'zetix-checkin';
-const DB_VERSION = 1;
+/**
+ * 2 adds the walk-ins store (spec/v3.md §32.2). The upgrade only creates what
+ * is missing, so a phone that already holds a v1 roster and queued scans keeps
+ * both — `qa/e2e/y-door.spec.ts` builds a v1 database in a real browser and checks.
+ */
+const DB_VERSION = 2;
 const MANIFESTS = 'manifests';
 const QUEUE = 'queue';
+const WALK_INS = 'walkins';
 
 /** A manifest as stored, with what the door needs to judge whether it is stale. */
 export type StoredManifest = {
@@ -71,6 +77,26 @@ export type QueuedScan = {
   operatorName?: string | null;
 };
 
+/**
+ * A walk-in the phone has recorded (spec/v3.md §32.2): people admitted with no
+ * ticket and no roster row. Written here **before** any network attempt, like a
+ * scan, and keyed by the id minted at tap time, which is what makes a re-sent
+ * sync harmless on the server.
+ */
+export type QueuedWalkIn = {
+  clientId: string;
+  showId: number;
+  headcount: number;
+  label: string | null;
+  admittedAt: string;
+  deviceId: string;
+  operatorId: string;
+  operatorName: string;
+  syncedAt?: string | null;
+  refusedAt?: string | null;
+  refusedReason?: string | null;
+};
+
 export type CheckinStore = {
   /** False when this device fell back to memory — the UI must say so. */
   durable: boolean;
@@ -88,6 +114,12 @@ export type CheckinStore = {
    * and the record of it is not this operator's to throw away.
    */
   wipeForSignOut(): Promise<void>;
+  enqueueWalkIn(walkIn: QueuedWalkIn): Promise<void>;
+  allWalkIns(showId: number): Promise<QueuedWalkIn[]>;
+  /** Settle walk-ins by their phone-minted ids. */
+  updateWalkIns(changes: { clientId: string; change: Partial<QueuedWalkIn> }[]): Promise<void>;
+  /** An operator undoing their own entry before it synced; never a synced one. */
+  deleteUnsyncedWalkIn(clientId: string): Promise<boolean>;
 };
 
 export async function openCheckinStore(): Promise<CheckinStore> {
@@ -127,6 +159,10 @@ function openDatabase(): Promise<IDBDatabase | null> {
       if (!db.objectStoreNames.contains(QUEUE)) {
         const queue = db.createObjectStore(QUEUE, { keyPath: 'id', autoIncrement: true });
         queue.createIndex('showId', 'showId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(WALK_INS)) {
+        const walkIns = db.createObjectStore(WALK_INS, { keyPath: 'clientId' });
+        walkIns.createIndex('showId', 'showId', { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -193,6 +229,37 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
       await Promise.all(
         synced.map((r) => run(QUEUE, 'readwrite', (s) => s.delete(r.id as number))),
       );
+      const walkIns = await run<QueuedWalkIn[]>(WALK_INS, 'readonly', (s) => s.getAll());
+      await Promise.all(
+        (walkIns ?? [])
+          .filter((w) => w.syncedAt)
+          .map((w) => run(WALK_INS, 'readwrite', (s) => s.delete(w.clientId))),
+      );
+    },
+
+    async enqueueWalkIn(walkIn) {
+      await run(WALK_INS, 'readwrite', (s) => s.add(walkIn));
+    },
+
+    async allWalkIns(showId) {
+      const rows = await run<QueuedWalkIn[]>(WALK_INS, 'readonly', (s) =>
+        s.index('showId').getAll(showId),
+      );
+      return rows ?? [];
+    },
+
+    async updateWalkIns(changes) {
+      for (const { clientId, change } of changes) {
+        const row = await run<QueuedWalkIn | undefined>(WALK_INS, 'readonly', (s) => s.get(clientId));
+        if (row) await run(WALK_INS, 'readwrite', (s) => s.put({ ...row, ...change }));
+      }
+    },
+
+    async deleteUnsyncedWalkIn(clientId) {
+      const row = await run<QueuedWalkIn | undefined>(WALK_INS, 'readonly', (s) => s.get(clientId));
+      if (!row || row.syncedAt) return false;
+      await run(WALK_INS, 'readwrite', (s) => s.delete(clientId));
+      return true;
     },
   };
 
@@ -229,6 +296,7 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
 function memoryStore(): CheckinStore {
   const manifests = new Map<number, StoredManifest>();
   const queue: QueuedScan[] = [];
+  const walkIns = new Map<string, QueuedWalkIn>();
   let nextId = 1;
 
   return {
@@ -263,6 +331,25 @@ function memoryStore(): CheckinStore {
       for (let i = queue.length - 1; i >= 0; i--) {
         if (queue[i].syncedAt) queue.splice(i, 1);
       }
+      for (const [id, w] of walkIns) if (w.syncedAt) walkIns.delete(id);
+    },
+    async enqueueWalkIn(walkIn) {
+      walkIns.set(walkIn.clientId, walkIn);
+    },
+    async allWalkIns(showId) {
+      return [...walkIns.values()].filter((w) => w.showId === showId);
+    },
+    async updateWalkIns(changes) {
+      for (const { clientId, change } of changes) {
+        const row = walkIns.get(clientId);
+        if (row) walkIns.set(clientId, { ...row, ...change });
+      }
+    },
+    async deleteUnsyncedWalkIn(clientId) {
+      const row = walkIns.get(clientId);
+      if (!row || row.syncedAt) return false;
+      walkIns.delete(clientId);
+      return true;
     },
   };
 }

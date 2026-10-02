@@ -34,6 +34,11 @@ export type DataTableExport<TData> = {
    * client mode is already the whole filtered set.
    */
   load?: () => Promise<TData[] | { error: string }>;
+  /**
+   * With `load`, when the export covers more than the table's own rows — the
+   * door log adds walk-ins to the scans — how many rows it will hold.
+   */
+  count?: number;
 };
 
 /** What a whole-set export will cover, for the menu label. */

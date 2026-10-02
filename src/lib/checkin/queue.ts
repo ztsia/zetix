@@ -1,4 +1,4 @@
-import type { QueuedScan, StoredManifest } from './store';
+import type { QueuedScan, QueuedWalkIn, StoredManifest } from './store';
 
 /**
  * The decisions the offline queue makes, as pure functions
@@ -222,4 +222,43 @@ export function scanSummary(scans: readonly QueuedScan[]): {
   const pending = pendingScans(scans).length;
   const refused = refusedScans(scans).length;
   return { total: scans.length, pending, synced: scans.length - pending - refused, refused };
+}
+
+// ---------------------------------------------------------------------------
+// Walk-ins (spec/v3.md §32.2)
+// ---------------------------------------------------------------------------
+
+/** This operator's walk-ins the server has not had yet — synced and refused excluded. */
+export function pendingWalkIns(rows: readonly QueuedWalkIn[], operatorId: string): QueuedWalkIn[] {
+  return rows.filter((w) => !w.syncedAt && !w.refusedAt && w.operatorId === operatorId);
+}
+
+export type WalkInReceipt = {
+  index: number;
+  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'REFUSED';
+  reason?: string;
+};
+
+/**
+ * How one batch's receipts settle the walk-ins sent, row by row — the same
+ * rule as scans: recorded or already there is synced; refused is set aside with
+ * the server's reason and never re-sent; no receipt leaves it pending.
+ */
+export function settleWalkIns(
+  sent: readonly QueuedWalkIn[],
+  receipts: readonly WalkInReceipt[],
+): { synced: string[]; refused: { clientId: string; reason: string }[] } {
+  const byIndex = new Map(receipts.map((r) => [r.index, r]));
+  const synced: string[] = [];
+  const refused: { clientId: string; reason: string }[] = [];
+  sent.forEach((walkIn, index) => {
+    const receipt = byIndex.get(index);
+    if (!receipt) return;
+    if (receipt.outcome === 'REFUSED') {
+      refused.push({ clientId: walkIn.clientId, reason: receipt.reason ?? 'The server could not record this walk-in.' });
+    } else {
+      synced.push(walkIn.clientId);
+    }
+  });
+  return { synced, refused };
 }

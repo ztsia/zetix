@@ -12,9 +12,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
  * The tone matters more than it looks. This is the page reached by someone
  * standing outside a hall holding what they believe is a ticket, so it names
  * the two things that actually help — the email the ticket came from, and the
- * front desk — rather than apologising at them. The PDF in their inbox is still
- * the ticket of record (spec/v2.md §13.1) and the door can admit them from it,
- * or from their name, with this page never resolving at all (decision 28).
+ * front desk — rather than apologising at them.
+ *
+ * **It promises nothing about the emailed PDF** (spec/v3.md §32.3). The likeliest
+ * reasons a real guest lands here are a voided QR and a removed seat, and in
+ * both the PDF they hold will not admit them. The most recent email, and the
+ * desk, are what is true in every case.
  *
  * Lives in its own file because it is rendered from two places: `page.tsx`
  * returns it directly (see the note there on why it is not thrown), and
@@ -30,8 +33,9 @@ export function TicketNotFound() {
           </EmptyMedia>
           <EmptyTitle>We could not find that ticket</EmptyTitle>
           <EmptyDescription>
-            The link may be incomplete. Open it again from your ticket email, or show the PDF
-            attached to that email at the door — it is your ticket, and it will get you in.
+            The link may be incomplete, or the ticket may have been replaced. Open the most
+            recent ticket email we sent you and use the link there. If it still doesn&rsquo;t
+            work, the front desk can find you by name on the night.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

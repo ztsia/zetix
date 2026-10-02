@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
-import { CalendarDaysIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
+import { CalendarDaysIcon, ClockIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { BookletSection } from '@/components/portal/booklet-section';
@@ -142,6 +142,8 @@ export default async function TicketStatusPage({
   const { show, timeZone } = status;
   const cancelled = status.state === 'CANCELLED';
   const admitted = status.state === 'ADMITTED';
+  /** Waitlisted or under review: the door refuses it, so no QR (spec/v3.md §32.3). */
+  const onHold = status.state === 'ON_HOLD';
 
   /**
    * **Who, not when** (decision 39). `portal.enabled` is a separate question
@@ -152,6 +154,7 @@ export default async function TicketStatusPage({
     mode: status.portal.unlockMode,
     admitted,
     cancelled,
+    onHold,
   });
   const sectionsVisible = unlocked && status.portal.enabled;
 
@@ -169,7 +172,15 @@ export default async function TicketStatusPage({
   const doorsTime = formatTime(show.doorsOpenAt, timeZone);
   const mapUrl = venueMapUrl(show.venueName, show.venueAddress);
   const admittedAt = admitted ? formatDateTime(status.admittedAt, timeZone) : null;
-  const ticketHref = `/api/portal/${status.qrToken}/ticket`;
+  /** Only for a ticket that has been issued: before that there is no PDF (§32.3). */
+  const ticketHref = status.ticketIssued ? `/api/portal/${status.qrToken}/ticket` : null;
+  /**
+   * The show's day is over and this seat never came in. The page stops offering
+   * the QR and says when the show was, rather than "Present this QR at the
+   * door" for ever — `ends_at` is often null, so this is by calendar day in the
+   * concert's zone, not by an inferred end time (spec/v3.md §32.3).
+   */
+  const missedShow = status.showDayPassed && !admitted;
 
   /**
    * Looked up only when the section could actually be drawn. A concert with the
@@ -257,7 +268,10 @@ export default async function TicketStatusPage({
    * doors are open is worse than one telling them nothing.
    */
   const countdownTarget = show.doorsOpenAt ?? show.startsAt;
-  const countdown = cancelled || status.showIsOver ? null : countdownTo(countdownTarget, new Date());
+  const countdown =
+    cancelled || onHold || status.showIsOver || status.showDayPassed
+      ? null
+      : countdownTo(countdownTarget, new Date());
 
   /**
    * What each slot draws, or `null` for a section this show does not run.
@@ -285,10 +299,11 @@ export default async function TicketStatusPage({
         key="ticket"
         name={status.attendeeName}
         ticketCode={status.ticketCode}
-        qr={await qrSvg(status.qrToken)}
+        qr={missedShow ? null : await qrSvg(status.qrToken)}
         admitted={admitted}
         admittedAt={admittedAt}
         downloadHref={ticketHref}
+        pastNote={missedShow ? (showDate ? `This show took place on ${showDate}` : 'This show has ended') : null}
       />
     ),
     booklet: booklet ? (
@@ -320,6 +335,14 @@ export default async function TicketStatusPage({
           <AlertTitle>This ticket is no longer valid</AlertTitle>
           <AlertDescription>
             Please see the front desk. They can look up your booking and help.
+          </AlertDescription>
+        </Alert>
+      ) : onHold ? (
+        <Alert>
+          <ClockIcon />
+          <AlertTitle>Your seat is on hold</AlertTitle>
+          <AlertDescription>
+            This code won&rsquo;t admit you right now. We&rsquo;ll email you if that changes.
           </AlertDescription>
         </Alert>
       ) : (

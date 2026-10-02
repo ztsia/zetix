@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { backgroundFor, loadTicketAsset } from '@/lib/tickets/background';
 import { loadTicket } from '@/lib/tickets/load';
 import { renderTicket } from '@/lib/tickets/render';
-import { attendeeIdForToken, ticketStatus } from '@/lib/portal/status';
+import { attendeeIdForToken, isTokenShaped, ticketStatus } from '@/lib/portal/status';
 
 /**
  * `GET /api/portal/{token}/ticket` — the holder's own ticket PDF (§13.3 item 1).
@@ -40,8 +40,11 @@ export async function GET(
    * ticket" for all three of its (§13.2). A wrong guess and a near miss must
    * cost the same, and a cancelled party must not be able to tell from a
    * download that their seats were real.
+   *
+   * **A page, never JSON** (spec/v3.md §32.3). A person pressed a button and a
+   * browser tab opened; `{"error":"Not found"}` is not an answer they can use.
    */
-  const notFound = () => NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const notFound = () => unavailablePage(token);
 
   const status = await ticketStatus(token);
   if (!status) return notFound();
@@ -54,6 +57,8 @@ export async function GET(
    * turn away.
    */
   if (status.state === 'CANCELLED') return notFound();
+  /** On hold: the door refuses it, so this route does not hand out a PDF that looks valid. */
+  if (status.state === 'ON_HOLD') return notFound();
 
   const attendeeId = await attendeeIdForToken(token);
   if (attendeeId === null) return notFound();
@@ -85,6 +90,52 @@ export async function GET(
        * than a private max-age because cancellation is the one thing that must
        * not be served from a phone's disk after the fact.
        */
+      'cache-control': 'private, no-store',
+      'x-robots-tag': 'noindex, nofollow',
+    },
+  });
+}
+
+/**
+ * The answer a guest gets when there is no PDF to give them.
+ *
+ * Self-contained HTML rather than a rendered route, because this is the
+ * render route's failure path and must not depend on anything that could be
+ * the reason for the failure. It follows the device's dark mode, like the page
+ * the button sat on, and points back to that page — which says, in the guest's
+ * own words, why there is nothing to download yet.
+ */
+function unavailablePage(token: string): NextResponse {
+  const back = isTokenShaped(token)
+    ? `<p><a href="/t/${token}">Back to your ticket page</a></p>`
+    : '';
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Ticket not available</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem 1rem; display: flex; justify-content: center; }
+  main { max-width: 28rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  a { display: inline-block; min-height: 44px; line-height: 44px; }
+</style>
+</head>
+<body>
+<main>
+<h1>This ticket isn&rsquo;t available to download</h1>
+<p>It may not have been issued yet, or it may no longer be valid. Your ticket page says which, and the front desk can find you by name on the night.</p>
+${back}
+</main>
+</body>
+</html>`;
+  return new NextResponse(html, {
+    status: 404,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
       'cache-control': 'private, no-store',
       'x-robots-tag': 'noindex, nofollow',
     },

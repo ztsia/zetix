@@ -31,8 +31,14 @@ import { isWallVisibility, type PublicWallVisibility } from './wall-visibility';
  * would still admit every guest.
  */
 
-/** The three states of §13.2's table that describe a real ticket. */
-export type TicketState = 'ISSUED' | 'ADMITTED' | 'CANCELLED';
+/**
+ * The states of §13.2's table that describe a real ticket.
+ *
+ * `ON_HOLD` is a seat on the waitlist or awaiting review (spec/v3.md §32.3).
+ * Its token still exists — moving a confirmed party to the waitlist keeps it —
+ * but the door refuses it, so the page must not tell its holder to present it.
+ */
+export type TicketState = 'ISSUED' | 'ADMITTED' | 'CANCELLED' | 'ON_HOLD';
 
 /**
  * Everything the V2 portal needs to decide which of §13.3's sections to draw,
@@ -131,6 +137,27 @@ export type TicketStatus = {
   showIsOver: boolean;
   /** The earliest live scan, when there is one. Drives the checked-in badge. */
   admittedAt: Date | null;
+  /**
+   * A ticket template is pinned to this seat: the PDF exists to be downloaded
+   * (spec/v3.md §32.3). A token can exist before that — minted by an import,
+   * or re-minted by "Void and re-issue QR" — and a download button then opened
+   * a page of raw JSON.
+   */
+  ticketIssued: boolean;
+  /**
+   * The show's calendar day, in the concert's zone, is behind us
+   * (spec/v3.md §32.3). Unlike {@link showIsOver} it needs no `ends_at`, so a
+   * show with no end time stops saying "Doors are open" the next morning. False
+   * when the concert has no zone or the show no start: nothing is guessed.
+   */
+  showDayPassed: boolean;
+  /**
+   * Seats in this holder's party, cancelled ones excluded. A count and nothing
+   * else: no other guest is named on this page (spec/v3.md §32.4).
+   */
+  partySize: number;
+  /** The holder's name is a placeholder ("Guest of …"), not one they gave. */
+  placeholderName: boolean;
   portal: PortalContext;
 };
 
@@ -181,6 +208,10 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
     timezone: string | null;
     admitted_at: string | null;
     show_is_over: boolean | null;
+    ticket_issued: boolean;
+    show_day_passed: boolean | null;
+    party_size: number;
+    name_source: string;
     unlock_mode: unknown;
     portal_enabled: unknown;
     booklet_enabled: unknown;
@@ -208,6 +239,18 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
       c.timezone,
       c.practical_info_md,
       ci.scanned_at   as admitted_at,
+      a.ticket_template_id is not null as ticket_issued,
+      a.name_source,
+      (select count(*)::int
+         from attendees m
+        where m.registration_id = a.registration_id
+          and m.deleted_at is null
+          and m.status <> 'CANCELLED') as party_size,
+
+      -- The show's own day, in the concert's zone, has ended. Null when either
+      -- is unknown, and read as false: nothing is inferred from a missing zone.
+      (now() at time zone c.timezone)::date > (s.starts_at at time zone c.timezone)::date
+        as show_day_passed,
 
       -- The post-show phase, off the clock (decision 40). Evaluated here rather
       -- than in TypeScript so that this page and the auto-completion sweep can
@@ -258,8 +301,18 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
      * terminal message. "No longer valid, see the front desk" sends them to a
      * human who can see the whole picture; a checked-in badge on a cancelled
      * ticket would send them nowhere.
+     *
+     * Admitted outranks on hold: a guest already in the hall is in it, and
+     * the page should say so. Only a seat not yet through is told to wait.
      */
-    state: row.status === 'CANCELLED' ? 'CANCELLED' : row.admitted_at ? 'ADMITTED' : 'ISSUED',
+    state:
+      row.status === 'CANCELLED'
+        ? 'CANCELLED'
+        : row.admitted_at
+          ? 'ADMITTED'
+          : row.status === 'CONFIRMED'
+            ? 'ISSUED'
+            : 'ON_HOLD',
     attendeeName: row.full_name,
     ticketCode: row.ticket_code,
     qrToken: token,
@@ -276,6 +329,10 @@ export async function ticketStatus(token: string): Promise<TicketStatus | null> 
     concertId: Number(row.concert_id),
     showIsOver: row.show_is_over === true,
     admittedAt: row.admitted_at ? new Date(row.admitted_at) : null,
+    ticketIssued: row.ticket_issued === true,
+    showDayPassed: row.show_day_passed === true,
+    partySize: Math.max(Number(row.party_size) || 0, 1),
+    placeholderName: row.name_source === 'PLACEHOLDER',
     portal: {
       unlockMode: isUnlockMode(row.unlock_mode) ? row.unlock_mode : null,
       enabled: settingIsTrue(row.portal_enabled),

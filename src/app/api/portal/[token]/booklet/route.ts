@@ -38,6 +38,7 @@ export async function GET(
     mode: status.portal.unlockMode,
     admitted: status.state === 'ADMITTED',
     cancelled: status.state === 'CANCELLED',
+    onHold: status.state === 'ON_HOLD',
   });
   if (!unlocked || !status.portal.enabled || !status.portal.bookletEnabled) return notFound();
 

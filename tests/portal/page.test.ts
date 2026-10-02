@@ -102,8 +102,67 @@ beforeEach(async () => {
   ticketCode = rows[0].ticket_code;
 });
 
+/**
+ * Moves the show a few days ahead of the real clock. The fixture's date is a
+ * fixed 19 Sep 2026, which is already behind us, and a seat whose show day has
+ * passed no longer offers its QR (spec/v3.md §32.3).
+ */
+async function showIsAhead(): Promise<void> {
+  await sql`
+    update shows
+       set starts_at     = now() + interval '5 days',
+           doors_open_at = now() + interval '5 days' - interval '30 minutes'
+     where id = ${showId}
+  `;
+}
+
+describe('the page never tells a guest something untrue (spec/v3.md §32.3)', () => {
+  it('stops offering the QR once the show`s day has passed, even with no end time', async () => {
+    // The fixture show is 19 Sep 2026 with ends_at null: before §32.3 this
+    // page said "Present this QR at the door" and "Doors are open" for ever.
+    const html = await render(token);
+    expect(hasQr(html)).toBe(false);
+    expect(html).not.toContain('Present this QR at the door');
+    expect(html).not.toContain('Doors are open');
+    expect(html).toContain('This show took place on Sat 19 Sep 2026');
+  });
+
+  it('shows a waitlisted seat no QR, and says it is on hold', async () => {
+    await showIsAhead();
+    await withDirectAttendeeWrites(
+      (tx) => tx`update attendees set status = 'WAITLIST' where id = ${attendeeId}`,
+    );
+    const html = await render(token);
+    expect(hasQr(html)).toBe(false);
+    expect(html).toContain('Your seat is on hold');
+    expect(html).not.toContain('Download your ticket');
+    expect(html).not.toContain('Present this QR');
+  });
+
+  it('offers no download for a ticket that has not been issued', async () => {
+    await showIsAhead();
+    await withDirectAttendeeWrites(
+      (tx) => tx`
+        update attendees set ticket_template_id = null, ticket_template_version = null
+         where id = ${attendeeId}
+      `,
+    );
+    const html = await render(token);
+    expect(hasQr(html)).toBe(true);
+    expect(html).not.toContain('Download your ticket');
+    expect(html).toContain('on its way');
+  });
+
+  it('promises nothing about the emailed PDF on the not-found page', async () => {
+    const html = await render('A'.repeat(22));
+    expect(html).toContain(NOT_FOUND_COPY);
+    expect(html).not.toContain('it will get you in');
+  });
+});
+
 describe('a ticket that has not been used yet', () => {
   it('shows the holder their seat, the QR and where to be', async () => {
+    await showIsAhead();
     const html = await render(token);
     expect(html).toContain('Guest 1');
     expect(html).toContain('Gems of the Classics');
@@ -116,6 +175,7 @@ describe('a ticket that has not been used yet', () => {
 
   it('inlines the QR rather than asking the phone to fetch one', async () => {
     // Venue wifi at the worst possible moment (spec/surfaces.md §15.3).
+    await showIsAhead();
     const html = await render(token);
     expect(hasQr(html)).toBe(true);
     expect(html).toContain('viewBox="0 0 37 37"');

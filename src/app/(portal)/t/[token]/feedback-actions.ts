@@ -58,6 +58,7 @@ export async function submitFeedbackAction(
     mode: status.portal.unlockMode,
     admitted: status.state === 'ADMITTED',
     cancelled: status.state === 'CANCELLED',
+    onHold: status.state === 'ON_HOLD',
   });
   if (!unlocked || !status.portal.enabled || !status.portal.feedbackEnabled) return REFUSED;
 

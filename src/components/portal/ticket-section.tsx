@@ -31,13 +31,21 @@ export function TicketSection({
   admitted,
   admittedAt,
   downloadHref,
+  pastNote,
 }: {
   name: string;
   ticketCode: string | null;
-  qr: string;
+  /**
+   * The QR's markup, or null when the page must not offer it: the show's day
+   * has passed and this seat was never admitted (spec/v3.md §32.3).
+   */
+  qr: string | null;
   admitted: boolean;
   admittedAt: string | null;
-  downloadHref: string;
+  /** Null until a ticket has actually been issued: there is no PDF to give. */
+  downloadHref: string | null;
+  /** What to say instead of "Present this QR" once the show's day is over. */
+  pastNote?: string | null;
 }) {
   return (
     <Card>
@@ -48,7 +56,7 @@ export function TicketSection({
             ? admittedAt
               ? `Admitted ${admittedAt}`
               : 'Already admitted'
-            : 'Present this QR at the door'}
+            : (pastNote ?? 'Present this QR at the door')}
         </CardDescription>
         {admitted ? (
           <CardAction>
@@ -71,14 +79,17 @@ export function TicketSection({
          * shape-checked base62 token, and is checked to be an `<svg>` element
          * before it gets here (`src/lib/portal/qr.ts`).
          */}
-        <div
-          className="w-full max-w-64 rounded-xl bg-white p-3 [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
-          dangerouslySetInnerHTML={{ __html: qr }}
-        />
+        {qr ? (
+          <div
+            className="w-full max-w-64 rounded-xl bg-white p-3 [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: qr }}
+          />
+        ) : null}
         {ticketCode ? (
           <p className="font-mono text-lg tracking-[0.2em] tabular-nums">{ticketCode}</p>
         ) : null}
       </CardContent>
+      {downloadHref ? (
       <CardFooter>
         {/*
          * **The PDF is the ticket** (§13.1), so the portal always offers a route
@@ -109,6 +120,14 @@ export function TicketSection({
           Download your ticket
         </Button>
       </CardFooter>
+      ) : (
+        <CardFooter>
+          <p className="text-sm text-muted-foreground">
+            Your PDF ticket is on its way by email. This page will offer it as soon as it is
+            issued.
+          </p>
+        </CardFooter>
+      )}
     </Card>
   );
 }
@@ -131,10 +150,17 @@ export function TicketStub({
   name: string;
   admitted: boolean;
   admittedAt: string | null;
-  downloadHref: string;
+  downloadHref: string | null;
 }) {
   return (
-    <Item variant="muted" render={<a href={downloadHref} target="_blank" rel="noreferrer noopener" />}>
+    <Item
+      variant="muted"
+      render={
+        downloadHref ? (
+          <a href={downloadHref} target="_blank" rel="noreferrer noopener" />
+        ) : undefined
+      }
+    >
       <ItemMedia variant="icon">
         {admitted ? <CircleCheckIcon /> : <DownloadIcon />}
       </ItemMedia>
@@ -144,7 +170,7 @@ export function TicketStub({
           {admitted && admittedAt ? `Admitted ${admittedAt}` : 'Your ticket'}
         </ItemDescription>
       </ItemContent>
-      <DownloadIcon className="size-4 text-muted-foreground" />
+      {downloadHref ? <DownloadIcon className="size-4 text-muted-foreground" /> : null}
     </Item>
   );
 }

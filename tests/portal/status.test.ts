@@ -101,8 +101,9 @@ describe('a ticket that has been issued', () => {
     expect(serialised).not.toContain('segment');
     expect(serialised).not.toContain('Guest 2');
     expect(Object.keys(status!).sort()).toEqual([
-      'admittedAt', 'attendeeName', 'concertId', 'concertName', 'portal', 'qrToken',
-      'show', 'showIsOver', 'state', 'ticketCode', 'timeZone',
+      'admittedAt', 'attendeeName', 'concertId', 'concertName', 'partySize', 'placeholderName',
+      'portal', 'qrToken', 'show', 'showDayPassed', 'showIsOver', 'state', 'ticketCode',
+      'ticketIssued', 'timeZone',
     ]);
 
     /**
@@ -215,6 +216,57 @@ describe('a ticket that is no longer valid', () => {
     `;
     expect(door[0].status).toBe('CANCELLED');
     expect((await ticketStatus(token))!.state).toBe('CANCELLED');
+  });
+});
+
+describe('what the page must not say untruly (spec/v3.md §32.3)', () => {
+  it('reads a waitlisted seat as on hold, because the door will refuse it', async () => {
+    await withDirectAttendeeWrites(
+      (tx) => tx`update attendees set status = 'WAITLIST' where id = ${attendeeId}`,
+    );
+    expect((await ticketStatus(token))!.state).toBe('ON_HOLD');
+  });
+
+  it('reads a seat awaiting review as on hold too', async () => {
+    await withDirectAttendeeWrites(
+      (tx) => tx`update attendees set status = 'PENDING_REVIEW' where id = ${attendeeId}`,
+    );
+    expect((await ticketStatus(token))!.state).toBe('ON_HOLD');
+  });
+
+  it('knows whether a ticket has been issued, so download appears only then', async () => {
+    expect((await ticketStatus(token))!.ticketIssued).toBe(true);
+    await withDirectAttendeeWrites(
+      (tx) => tx`
+        update attendees set ticket_template_id = null, ticket_template_version = null
+         where id = ${attendeeId}
+      `,
+    );
+    expect((await ticketStatus(token))!.ticketIssued).toBe(false);
+  });
+
+  it('knows the show`s day has passed in the concert`s zone, with no end time', async () => {
+    // The fixture show is 19 Sep 2026 with no ends_at — the case that said
+    // "Doors are open" for ever.
+    await sql`update shows set starts_at = now() - interval '3 days', ends_at = null where id = ${showId}`;
+    const past = await ticketStatus(token);
+    expect(past!.showIsOver).toBe(false);
+    expect(past!.showDayPassed).toBe(true);
+
+    await sql`update shows set starts_at = now() + interval '3 days' where id = ${showId}`;
+    expect((await ticketStatus(token))!.showDayPassed).toBe(false);
+  });
+
+  it('never guesses a day without the concert`s zone', async () => {
+    await sql`update shows set starts_at = now() - interval '3 days' where id = ${showId}`;
+    await sql`update concerts set timezone = null where id = ${concertId}`;
+    expect((await ticketStatus(token))!.showDayPassed).toBe(false);
+  });
+
+  it('counts the party, and names nobody else in it', async () => {
+    const status = await ticketStatus(token);
+    expect(status!.partySize).toBe(2);
+    expect(JSON.stringify(status)).not.toContain('Guest 2');
   });
 });
 

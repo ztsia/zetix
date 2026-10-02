@@ -109,8 +109,10 @@ export function portalIsUnlocked(input: {
   mode: PortalUnlockMode | null;
   admitted: boolean;
   cancelled: boolean;
+  /** A seat on the waitlist or under review is not a guest yet (spec/v3.md §32.3). */
+  onHold?: boolean;
 }): boolean {
-  if (input.cancelled) return false;
+  if (input.cancelled || input.onHold) return false;
   switch (input.mode) {
     case 'OPEN_TO_ALL':
       return true;

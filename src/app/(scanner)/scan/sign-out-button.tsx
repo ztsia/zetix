@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { useTransition } from 'react';
-import { LogOut } from 'lucide-react';
-import { signOutOperator } from '@/lib/auth/actions';
-import { openCheckinStore } from '@/lib/checkin/store';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { useTransition } from "react";
+import { LogOut } from "lucide-react";
+import { signOutOperator } from "@/lib/auth/actions";
+import { openCheckinStore } from "@/lib/checkin/store";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 /**
  * Sign out from a scanner screen that is not a show (the picker, the phone

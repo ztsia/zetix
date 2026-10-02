@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Ticket, UserCheck } from 'lucide-react';
 import type { ManifestEntry } from '@/lib/checkin/manifest';
 import type { ManifestIndex } from '@/lib/checkin/manifest';
-import type { LocalCheckIn } from '@/lib/checkin/evaluate';
+import { admittedKeys, type LocalCheckIn } from '@/lib/checkin/evaluate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,8 +50,8 @@ export function AttendeeSheet({
   if (!entry) return null;
 
   const party = index.byRegistration.get(entry.registrationId) ?? [entry];
-  const admittedHashes = new Set(checkIns.filter((c) => !c.revertedAt).map((c) => c.qrTokenSha256));
-  const remaining = party.filter((m) => !admittedHashes.has(m.qrTokenSha256) && m.status !== 'CANCELLED');
+  const admittedSeats = admittedKeys(index, checkIns);
+  const remaining = party.filter((m) => !admittedSeats.has(index.keyOf(m)) && m.status !== 'CANCELLED');
 
   const admit = async (entries: ManifestEntry[], reason: string | null) => {
     setBusy(true);
@@ -88,7 +88,7 @@ export function AttendeeSheet({
             <Badge variant={entry.status === 'CANCELLED' ? 'destructive' : 'secondary'}>
               {entry.status === 'CANCELLED' ? 'Cancelled — refer to desk' : entry.status}
             </Badge>
-            {admittedHashes.has(entry.qrTokenSha256) && (
+            {admittedSeats.has(index.keyOf(entry)) && (
               <Badge variant="secondary">
                 <UserCheck className="size-3" />
                 Checked in
@@ -102,13 +102,13 @@ export function AttendeeSheet({
                 Party of {entry.partySize}
               </p>
               {party.map((member) => (
-                <Item key={member.qrTokenSha256} variant="muted" size="xs">
+                <Item key={index.keyOf(member)} variant="muted" size="xs">
                   <ItemContent>
                     <ItemTitle className="text-sm">{member.name}</ItemTitle>
                     <ItemDescription>
                       {member.status === 'CANCELLED'
                         ? 'Cancelled'
-                        : admittedHashes.has(member.qrTokenSha256)
+                        : admittedSeats.has(index.keyOf(member))
                           ? 'Admitted'
                           : 'Not yet in'}
                     </ItemDescription>

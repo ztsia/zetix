@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildManifestIndex, hashQrToken, type ManifestEntry } from '@/lib/checkin/manifest';
+import { buildManifestIndex, entryKey, normaliseEntries, hashQrToken, type ManifestEntry } from '@/lib/checkin/manifest';
 import { generateQrToken } from '@/lib/tickets/identifiers';
 import { closeDb, sql } from '../helpers/db';
 
@@ -47,8 +47,9 @@ describe('hashQrToken', () => {
 });
 
 describe('buildManifestIndex', () => {
-  const entries: ManifestEntry[] = [
+  const entries: ManifestEntry[] = normaliseEntries([
     {
+      attendeeId: 1,
       qrTokenSha256: 'a'.repeat(64),
       ticketCode: 'ORC-7K4Q',
       name: 'Alice Tan',
@@ -58,6 +59,7 @@ describe('buildManifestIndex', () => {
       partySize: 2,
     },
     {
+      attendeeId: 2,
       qrTokenSha256: 'b'.repeat(64),
       ticketCode: 'ORC-9M2X',
       name: 'Bob Tan',
@@ -66,7 +68,25 @@ describe('buildManifestIndex', () => {
       registrationId: 7,
       partySize: 2,
     },
-  ];
+  ]);
+
+  it('keys every seat by attendee id, never by digest', () => {
+    const index = buildManifestIndex([
+      ...entries,
+      ...normaliseEntries([{ attendeeId: 3, qrTokenSha256: null, name: 'No Ticket', registrationId: 8 }]),
+      ...normaliseEntries([{ attendeeId: 4, qrTokenSha256: null, name: 'No Ticket Either', registrationId: 8 }]),
+    ]);
+    expect([...index.byKey.keys()]).toEqual(['a1', 'a2', 'a3', 'a4']);
+    expect(index.byHash.size).toBe(2);
+  });
+
+  it('reads a roster saved by an older build, which had no attendee id', () => {
+    const [legacy] = normaliseEntries([
+      { qrTokenSha256: 'c'.repeat(64), name: 'Old Copy', registrationId: 9, partySize: 1 },
+    ]);
+    expect(legacy).toMatchObject({ attendeeId: null, hasTicket: true, checkedInAt: null });
+    expect(entryKey(legacy)).toBe(`h${'c'.repeat(64)}`);
+  });
 
   it('indexes by digest for the scan path', () => {
     const index = buildManifestIndex(entries);

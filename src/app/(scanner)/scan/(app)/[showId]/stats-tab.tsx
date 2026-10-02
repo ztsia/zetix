@@ -39,9 +39,7 @@ export function StatsTab({
   onRefresh: () => void;
 }) {
   const expected = index.entries.filter((e) => e.status !== 'CANCELLED').length;
-  const admitted = new Set(
-    checkIns.filter((c) => !c.revertedAt).map((c) => c.qrTokenSha256),
-  ).size;
+  const admitted = new Set(checkIns.filter((c) => !c.revertedAt).map((c) => c.key)).size;
   const remaining = Math.max(expected - admitted, 0);
   const percent = expected === 0 ? 0 : Math.round((admitted / expected) * 100);
 

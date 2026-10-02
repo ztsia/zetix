@@ -42,13 +42,32 @@ const operator = {
 const admin = { id: 'a1', email: 'admin@x', displayName: 'Committee', role: 'ADMIN' as const };
 
 const row = {
+  attendee_id: '31',
   qr_token_sha256: 'a'.repeat(64),
+  has_ticket: true,
   ticket_code: 'ORC-7K4Q',
   name: 'Alice Tan',
+  name_source: 'PROVIDED',
   player_name: 'Wei Ling',
   status: 'CONFIRMED',
   registration_id: 7,
   party_size: 4,
+  segment_name: 'Player guests',
+  checked_in_at: '2026-09-19T19:42:00+08:00',
+  checked_in_by: 'Bob',
+};
+
+/** A seat confirmed but not yet ticketed: no token, so no digest. */
+const unticketed = {
+  ...row,
+  attendee_id: '32',
+  qr_token_sha256: null,
+  has_ticket: false,
+  ticket_code: null,
+  name: 'Guest of Alice Tan',
+  name_source: 'PLACEHOLDER',
+  checked_in_at: null,
+  checked_in_by: null,
 };
 
 const get = (query = '?showId=1') =>
@@ -121,19 +140,33 @@ describe('how it reads the roster', () => {
     expect(rpc).toHaveBeenCalledWith('manifest_for_show', { p_show_id: 3 });
   });
 
-  it('returns §12.3`s seven fields, camel-cased for the client', async () => {
+  it('returns the roster fields of spec/v3.md §32.2, camel-cased for the client', async () => {
     const body = await (await get()).json();
     expect(body.attendees).toEqual([
       {
+        attendeeId: 31,
         qrTokenSha256: 'a'.repeat(64),
+        hasTicket: true,
         ticketCode: 'ORC-7K4Q',
         name: 'Alice Tan',
+        nameSource: 'PROVIDED',
         playerName: 'Wei Ling',
         status: 'CONFIRMED',
         registrationId: 7,
         partySize: 4,
+        segmentName: 'Player guests',
+        checkedInAt: '2026-09-19T11:42:00.000Z',
+        checkedInBy: 'Bob',
       },
     ]);
+  });
+
+  it('keeps a seat with no ticket addressable, by its attendee id', async () => {
+    // The P0 behind §32.2: a null digest was the only key such a seat had.
+    rpc.mockResolvedValue({ data: [row, unticketed], error: null });
+    const body = await (await get()).json();
+    expect(body.attendees.map((a: { attendeeId: number }) => a.attendeeId)).toEqual([31, 32]);
+    expect(body.attendees[1]).toMatchObject({ hasTicket: false, qrTokenSha256: null });
   });
 
   it('stamps fetchedAt on the server, not the phone', async () => {

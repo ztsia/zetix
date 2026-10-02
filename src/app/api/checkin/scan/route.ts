@@ -43,27 +43,49 @@ export const dynamic = 'force-dynamic';
  */
 const MAX_SCANS_PER_REQUEST = 500;
 
-const scanSchema = z.object({
-  /** The digest, never the token: the phone's queue must not hold usable tickets. */
-  qrTokenSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  /** When the *phone* read it. Preserved verbatim through a delayed sync. */
-  scannedAt: z.string().datetime(),
-  source: z.enum(['ONLINE', 'OFFLINE_SYNC', 'MANUAL']),
-  deviceId: z.string().min(1).max(120),
-  /** Why an usher admitted an amber or red result (spec/README.md §2.4). */
-  overrideReason: z.string().max(500).nullable().optional(),
-});
+const scanSchema = z
+  .object({
+    /**
+     * The seat, by attendee id (spec/v3.md §32.2). Present on every row a
+     * current phone queues; the only way to name a seat that has no ticket.
+     */
+    attendeeId: z.number().int().positive().nullable().optional(),
+    /** The digest, never the token: the phone's queue must not hold usable tickets. */
+    qrTokenSha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable()
+      .optional(),
+    /** When the *phone* read it. Preserved verbatim through a delayed sync. */
+    scannedAt: z.string().datetime(),
+    source: z.enum(['ONLINE', 'OFFLINE_SYNC', 'MANUAL']),
+    deviceId: z.string().min(1).max(120),
+    /** Why an usher admitted an amber or red result (spec/README.md §2.4). */
+    overrideReason: z.string().max(500).nullable().optional(),
+  })
+  .refine((scan) => scan.attendeeId != null || scan.qrTokenSha256 != null, {
+    message: 'A scan names a seat or a token',
+  });
 
+/**
+ * The batch is checked for shape only; each row is checked on its own below.
+ *
+ * **One bad row never refuses the batch** (spec/v3.md §32.2). Before, a single
+ * row the schema refused turned the whole drain into a 400, and the phone sent
+ * the same poisoned batch on every reconnect for the rest of the night.
+ */
 const bodySchema = z.object({
   showId: z.number().int().positive(),
-  scans: z.array(scanSchema).min(1).max(MAX_SCANS_PER_REQUEST),
+  scans: z.array(z.unknown()).min(1).max(MAX_SCANS_PER_REQUEST),
 });
 
 type ScanInput = z.infer<typeof scanSchema>;
 
+/** One per row sent, naming its position in the batch (`src/lib/checkin/queue.ts`). */
 type ScanReceipt = {
-  qrTokenSha256: string;
-  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND';
+  index: number;
+  qrTokenSha256?: string | null;
+  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND' | 'REFUSED';
   attendeeId?: number;
   /** The earliest surviving scan, when this attendee had already been through. */
   firstScan?: { at: string; operatorName: string | null } | null;
@@ -89,7 +111,9 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'Malformed scan batch' }, { status: 400 });
   }
-  const { showId, scans } = parsed.data;
+  const { showId, scans: rawScans } = parsed.data;
+  const rows = rawScans.map((raw) => scanSchema.safeParse(raw));
+  const scans = rows.flatMap((row) => (row.success ? [row.data] : []));
 
   // 404 rather than 403, for the same reason as the manifest: probing ids must
   // not distinguish "not yours" from "not there" (modules.md §5.2.1).
@@ -119,7 +143,7 @@ export async function POST(request: Request) {
   const receipts: ScanReceipt[] = [];
 
   /**
-   * One transaction for the whole drain.
+   * **Row by row, each in its own transaction** (spec/v3.md §32.2).
    *
    * Not for locking — there is deliberately none here. §12.3: duplicates across
    * two offline devices resolve only on sync, the server accepts both and flags
@@ -127,14 +151,26 @@ export async function POST(request: Request) {
    * attempted. A phone that admitted somebody has already admitted them; the
    * database's job is to record it, not to relitigate it.
    *
-   * The transaction is so a drain either lands or does not, leaving the queue
-   * with an unambiguous thing to retry.
+   * One transaction for the whole drain used to mean one bad row lost them all.
+   * Every row is idempotent on its own, and every row gets its own receipt, so
+   * the phone settles what landed and sets aside only what did not.
    */
-  await db.transaction(async (tx) => {
-    for (const scan of scans) {
-      receipts.push(await recordScan(tx, { scan, showId, operatorId: user.id }));
+  for (const [index, row] of rows.entries()) {
+    if (!row.success) {
+      receipts.push({ index, outcome: 'REFUSED' });
+      continue;
     }
-  });
+    try {
+      const receipt = await db.transaction((tx) =>
+        recordScan(tx, { scan: row.data, showId, operatorId: user.id }),
+      );
+      receipts.push({ index, ...receipt });
+    } catch {
+      // A fault on one row — a timestamp Postgres will not take, say — is that
+      // row's answer, not the batch's.
+      receipts.push({ index, outcome: 'REFUSED' });
+    }
+  }
 
   return NextResponse.json({ receipts }, { headers: { 'Cache-Control': 'no-store' } });
 }
@@ -144,7 +180,7 @@ type Tx = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
 async function recordScan(
   tx: Tx,
   { scan, showId, operatorId }: { scan: ScanInput; showId: number; operatorId: string },
-): Promise<ScanReceipt> {
+): Promise<Omit<ScanReceipt, 'index'>> {
   /**
    * Resolve the digest to an attendee **within this show**.
    *
@@ -154,17 +190,35 @@ async function recordScan(
    * If a future concert makes that untrue, the fix is a generated column and a
    * schema PR against `main` (modules.md §4), not a raw token on the phone.
    */
-  const found = await tx.execute<{ id: number; status: string }>(sql`
-    select id, status
-    from attendees
-    where show_id = ${showId}
-      and deleted_at is null
-      and qr_token is not null
-      and encode(sha256(convert_to(qr_token, 'UTF8')), 'hex') = ${scan.qrTokenSha256}
-    limit 1
-  `);
+  const found =
+    scan.attendeeId != null
+      ? /**
+         * By seat, the way every current phone sends it. The id came from this
+         * show's manifest, and the `show_id` predicate re-verifies it: an id
+         * from another show finds nothing here, exactly as a token would.
+         */
+        await tx.execute<{ id: number; status: string }>(sql`
+          select id, status
+          from attendees
+          where id = ${scan.attendeeId}
+            and show_id = ${showId}
+            and deleted_at is null
+          limit 1
+        `)
+      : await tx.execute<{ id: number; status: string }>(sql`
+          select id, status
+          from attendees
+          where show_id = ${showId}
+            and deleted_at is null
+            and qr_token is not null
+            and encode(sha256(convert_to(qr_token, 'UTF8')), 'hex') = ${scan.qrTokenSha256}
+          limit 1
+        `);
 
   const attendee = found[0];
+  if (!attendee && !scan.qrTokenSha256) {
+    return { outcome: 'NOT_FOUND' };
+  }
   if (!attendee) {
     /**
      * Not in this show. Before calling it invalid, ask whether it is simply the

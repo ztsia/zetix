@@ -36,7 +36,8 @@ export type FeedbackTone = 'admitted' | 'duplicate' | 'error';
 
 /** One scan this device has already recorded, from its own queue and history. */
 export type LocalCheckIn = {
-  qrTokenSha256: string;
+  /** The seat, by `entryKey()` (spec/v3.md §32.2) — never the token's digest. */
+  key: string;
   /** When the phone read it — preserved through an offline sync (§12.3). */
   scannedAt: string;
   source: 'ONLINE' | 'OFFLINE_SYNC' | 'MANUAL';
@@ -116,6 +117,7 @@ export function evaluateScan({ hash, index, checkIns }: EvaluateInput): ScanResu
 
   const live = checkIns.filter((c) => !c.revertedAt);
   const party = partyContext(entry, index, live);
+  const key = index.keyOf(entry);
 
   /**
    * Cancelled is checked before duplicate, and the order is the whole point of
@@ -127,9 +129,7 @@ export function evaluateScan({ hash, index, checkIns }: EvaluateInput): ScanResu
     return { outcome: 'CANCELLED', tone: TONES.CANCELLED, entry, party, canAdmitAnyway: true };
   }
 
-  const prior = live
-    .filter((c) => c.qrTokenSha256 === hash)
-    .sort((a, b) => a.scannedAt.localeCompare(b.scannedAt))[0];
+  const prior = firstCheckIn(entry, key, live);
 
   if (prior) {
     return {
@@ -137,7 +137,7 @@ export function evaluateScan({ hash, index, checkIns }: EvaluateInput): ScanResu
       tone: TONES.ALREADY_CHECKED_IN,
       entry,
       party,
-      firstScan: { at: prior.scannedAt, operatorName: prior.operatorName ?? null },
+      firstScan: prior,
       canAdmitAnyway: true,
     };
   }
@@ -153,12 +153,45 @@ export function evaluateScan({ hash, index, checkIns }: EvaluateInput): ScanResu
 }
 
 /**
+ * The earliest admission of one seat, from this phone or from the server.
+ *
+ * The manifest carries the server's first live check-in as of the download
+ * (§12.3, spec/v3.md §32.2), so a guest another phone admitted reads as
+ * "already checked in" here too, once this phone has refreshed — not only the
+ * guests this phone scanned itself.
+ */
+export function firstCheckIn(
+  entry: ManifestEntry,
+  key: string,
+  live: readonly LocalCheckIn[],
+): { at: string; operatorName?: string | null } | null {
+  const local = live
+    .filter((c) => c.key === key)
+    .sort((a, b) => a.scannedAt.localeCompare(b.scannedAt))[0];
+  const server = entry.checkedInAt
+    ? { at: entry.checkedInAt, operatorName: entry.checkedInBy }
+    : null;
+  if (local && (!server || local.scannedAt < server.at)) {
+    return { at: local.scannedAt, operatorName: local.operatorName ?? null };
+  }
+  return server;
+}
+
+/** The keys of every seat that is in, on this phone's evidence or the server's. */
+export function admittedKeys(index: ManifestIndex, live: readonly LocalCheckIn[]): Set<string> {
+  const keys = new Set(live.filter((c) => !c.revertedAt).map((c) => c.key));
+  for (const entry of index.entries) {
+    if (entry.checkedInAt) keys.add(index.keyOf(entry));
+  }
+  return keys;
+}
+
+/**
  * How much of this party is already through.
  *
- * `partySize` comes from the manifest and already excludes cancelled seats
- * (`drizzle/0003_manifest_rls.sql`), because a cancelled seat is not one of the
- * remaining. Counting is by distinct token so a party member scanned twice does
- * not consume two of the four.
+ * `partySize` comes from the manifest and already excludes cancelled seats,
+ * because a cancelled seat is not one of the remaining. Counting is by distinct
+ * seat so a party member scanned twice does not consume two of the four.
  */
 function partyContext(
   entry: ManifestEntry,
@@ -166,10 +199,10 @@ function partyContext(
   live: readonly LocalCheckIn[],
 ): PartyContext {
   const members = index.byRegistration.get(entry.registrationId) ?? [entry];
-  const memberHashes = new Set(members.map((m) => m.qrTokenSha256));
-  const admitted = new Set(
-    live.filter((c) => memberHashes.has(c.qrTokenSha256)).map((c) => c.qrTokenSha256),
-  ).size;
+  const inKeys = admittedKeys(index, live);
+  const admitted = members.filter(
+    (m) => m.status !== 'CANCELLED' && inKeys.has(index.keyOf(m)),
+  ).length;
 
   return {
     size: entry.partySize,

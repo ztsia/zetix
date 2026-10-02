@@ -119,7 +119,7 @@ export function searchManifest(
     const entryCode = normaliseTicketCode(entry.ticketCode);
     if (entryCode === code) {
       hits.push({ entry, matchedOn: 'ticketCode' });
-      seen.add(entry.qrTokenSha256);
+      seen.add(index.keyOf(entry));
     } else if (code.length >= MIN_PARTIAL_CODE_LENGTH && entryCode.includes(code)) {
       // Held back rather than pushed, so a name query that happens to look like
       // part of a code cannot bury the person the usher was actually typing.
@@ -129,10 +129,10 @@ export function searchManifest(
 
   if (name.length > 0) {
     for (const entry of index.entries) {
-      if (seen.has(entry.qrTokenSha256)) continue;
+      if (seen.has(index.keyOf(entry))) continue;
       if (normaliseName(entry.name).includes(name)) {
         hits.push({ entry, matchedOn: 'name' });
-        seen.add(entry.qrTokenSha256);
+        seen.add(index.keyOf(entry));
       }
     }
   }
@@ -146,9 +146,9 @@ export function searchManifest(
    * — and there the name is what was meant.
    */
   for (const hit of partial) {
-    if (!seen.has(hit.entry.qrTokenSha256)) {
+    if (!seen.has(index.keyOf(hit.entry))) {
       hits.push(hit);
-      seen.add(hit.entry.qrTokenSha256);
+      seen.add(index.keyOf(hit.entry));
     }
   }
 

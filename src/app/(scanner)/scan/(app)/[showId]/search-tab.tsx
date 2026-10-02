@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import type { ManifestEntry, ManifestIndex } from '@/lib/checkin/manifest';
 import { searchManifest } from '@/lib/checkin/search';
-import type { LocalCheckIn } from '@/lib/checkin/evaluate';
+import { admittedKeys, type LocalCheckIn } from '@/lib/checkin/evaluate';
 import {
   InputGroup,
   InputGroupAddon,
@@ -41,10 +41,7 @@ export function SearchTab({
 }) {
   const [query, setQuery] = useState('');
   const hits = useMemo(() => searchManifest(index, query), [index, query]);
-  const admitted = useMemo(
-    () => new Set(checkIns.filter((c) => !c.revertedAt).map((c) => c.qrTokenSha256)),
-    [checkIns],
-  );
+  const admitted = useMemo(() => admittedKeys(index, checkIns), [index, checkIns]);
 
   return (
     <div className="flex h-full flex-col gap-3 p-4">
@@ -102,7 +99,7 @@ export function SearchTab({
         ) : (
           <ul className="flex flex-col gap-2">
             {hits.map((hit) => (
-              <li key={hit.entry.qrTokenSha256}>
+              <li key={index.keyOf(hit.entry)}>
                 <Item
                   variant="outline"
                   // 64px of target: this is tapped one-handed, at speed, by
@@ -120,7 +117,7 @@ export function SearchTab({
                   <ItemActions>
                     {hit.entry.status === 'CANCELLED' ? (
                       <Badge variant="destructive">Cancelled</Badge>
-                    ) : admitted.has(hit.entry.qrTokenSha256) ? (
+                    ) : admitted.has(index.keyOf(hit.entry)) ? (
                       <Badge variant="secondary">In</Badge>
                     ) : null}
                   </ItemActions>

@@ -103,7 +103,7 @@ export function ScannerShell({
   const [sheetOpen, setSheetOpen] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const localCheckIns = toLocalCheckIns(state.scans);
+  const localCheckIns = toLocalCheckIns(state.scans, index);
 
   /**
    * **"Start scanning" is what unlocks audio, and that is the whole reason it

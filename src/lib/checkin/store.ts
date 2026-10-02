@@ -1,4 +1,4 @@
-import type { ManifestEntry } from './manifest';
+import { entryKey, type ManifestEntry, type ManifestIndex } from './manifest';
 import type { LocalCheckIn } from './evaluate';
 
 /**
@@ -40,13 +40,27 @@ export type QueuedScan = {
   /** Local id, assigned by the store. */
   id?: number;
   showId: number;
-  qrTokenSha256: string;
+  /**
+   * The seat, by attendee id (spec/v3.md §32.2). Absent on a row queued by a
+   * build before 0205, which knew only the digest.
+   */
+  attendeeId?: number | null;
+  /** Null for a seat with no ticket, admitted from Search. */
+  qrTokenSha256: string | null;
   scannedAt: string;
   source: 'ONLINE' | 'OFFLINE_SYNC' | 'MANUAL';
   deviceId: string;
   overrideReason?: string | null;
   /** Set once a receipt comes back; kept, not deleted, so the tab can show history. */
   syncedAt?: string | null;
+  /**
+   * Set when the server refused the row, or it could never be sent (§32.2).
+   * A refused row is set aside and **never re-sent**: one bad row must not ride
+   * along in every later batch and block the rest of the night's admissions.
+   */
+  refusedAt?: string | null;
+  /** What the operator reads under "couldn't sync — tap for details". */
+  refusedReason?: string | null;
 };
 
 export type CheckinStore = {
@@ -58,6 +72,8 @@ export type CheckinStore = {
   /** Everything this device has scanned for the show, synced or not. */
   allScans(showId: number): Promise<QueuedScan[]>;
   markSynced(ids: number[], at: string): Promise<void>;
+  /** Set rows aside as refused, each with its reason. */
+  markRefused(rows: { id: number; reason: string }[], at: string): Promise<void>;
 };
 
 export async function openCheckinStore(): Promise<CheckinStore> {
@@ -147,26 +163,36 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
     },
 
     async markSynced(ids, at) {
-      await Promise.all(
-        ids.map(
-          (id) =>
-            new Promise<void>((resolve, reject) => {
-              const tx = db.transaction(QUEUE, 'readwrite');
-              const store = tx.objectStore(QUEUE);
-              const get = store.get(id);
-              get.onsuccess = () => {
-                const row = get.result as QueuedScan | undefined;
-                if (!row) return resolve();
-                const put = store.put({ ...row, syncedAt: at });
-                put.onsuccess = () => resolve();
-                put.onerror = () => reject(put.error);
-              };
-              get.onerror = () => reject(get.error);
-            }),
-        ),
+      await patch(ids.map((id) => ({ id, change: { syncedAt: at } })));
+    },
+
+    async markRefused(rows, at) {
+      await patch(
+        rows.map(({ id, reason }) => ({ id, change: { refusedAt: at, refusedReason: reason } })),
       );
     },
   };
+
+  function patch(changes: { id: number; change: Partial<QueuedScan> }[]): Promise<void[]> {
+    return Promise.all(
+      changes.map(
+        ({ id, change }) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(QUEUE, 'readwrite');
+            const store = tx.objectStore(QUEUE);
+            const get = store.get(id);
+            get.onsuccess = () => {
+              const row = get.result as QueuedScan | undefined;
+              if (!row) return resolve();
+              const put = store.put({ ...row, ...change });
+              put.onsuccess = () => resolve();
+              put.onerror = () => reject(put.error);
+            };
+            get.onerror = () => reject(get.error);
+          }),
+      ),
+    );
+  }
 }
 
 /**
@@ -203,14 +229,38 @@ function memoryStore(): CheckinStore {
         if (row.id !== undefined && ids.includes(row.id)) row.syncedAt = at;
       }
     },
+    async markRefused(rows, at) {
+      for (const { id, reason } of rows) {
+        const row = queue.find((r) => r.id === id);
+        if (row) Object.assign(row, { refusedAt: at, refusedReason: reason });
+      }
+    },
   };
 }
 
-/** Queued scans as the evaluator wants them (spec/checkin.md §12.1). */
-export function toLocalCheckIns(scans: readonly QueuedScan[]): LocalCheckIn[] {
-  return scans.map((s) => ({
-    qrTokenSha256: s.qrTokenSha256,
-    scannedAt: s.scannedAt,
-    source: s.source,
-  }));
+/**
+ * Queued scans as the evaluator wants them (spec/checkin.md §12.1), keyed by
+ * seat.
+ *
+ * A refused row still counts here: the person was let in, and this phone saw
+ * it. What the server made of it is a separate question, answered on the
+ * "couldn't sync" list rather than by pretending the admission did not happen.
+ *
+ * A row queued before 0205 carries only a digest, so its seat is found through
+ * the manifest; one that matches nothing keeps a key of its own and simply
+ * joins no seat.
+ */
+export function toLocalCheckIns(
+  scans: readonly QueuedScan[],
+  index?: Pick<ManifestIndex, 'byHash' | 'keyOf'>,
+): LocalCheckIn[] {
+  return scans.map((s) => {
+    let key: string;
+    if (s.attendeeId != null) key = entryKey({ attendeeId: s.attendeeId, qrTokenSha256: null });
+    else {
+      const entry = s.qrTokenSha256 ? index?.byHash.get(s.qrTokenSha256) : undefined;
+      key = entry && index ? index.keyOf(entry) : `q${s.id ?? s.scannedAt}`;
+    }
+    return { key, scannedAt: s.scannedAt, source: s.source };
+  });
 }

@@ -11,12 +11,18 @@ import { parseTicketCode } from '@/lib/tickets/identifiers';
 
 function entry(over: Partial<ManifestEntry> & Pick<ManifestEntry, 'qrTokenSha256'>): ManifestEntry {
   return {
+    attendeeId: null,
+    hasTicket: true,
     ticketCode: 'ORC-7K4Q',
     name: 'Alice Tan',
+    nameSource: 'PROVIDED',
     playerName: null,
     status: 'CONFIRMED',
     registrationId: 1,
     partySize: 1,
+    segmentName: null,
+    checkedInAt: null,
+    checkedInBy: null,
     ...over,
   };
 }

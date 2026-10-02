@@ -103,7 +103,6 @@ export default async function ResponsesPage({
         sorting={[{ id: sort, desc }]}
         search={search}
         basePath={basePath}
-        timeZone={zone}
       />
     </FormCard>
   );

@@ -199,6 +199,7 @@ export function CommandHost({
           onDone={active.onDone}
           onClosed={() => setActive(null)}
           renderOptions={current.options ? (params, set) => <Options kind={current.options!} params={params} set={set} data={data} /> : undefined}
+          awaiting={current.options === 'segment' ? awaitingSegment : undefined}
         />
       )}
     </HostContext.Provider>
@@ -206,6 +207,13 @@ export function CommandHost({
 }
 
 type AnyParams = Record<string, unknown>;
+
+/** Move has nothing to preview until a destination is chosen. */
+function awaitingSegment(params: unknown): string | null {
+  return (params as AnyParams | null)?.segmentId === undefined
+    ? 'Choose a segment to see what moving these parties would do.'
+    : null;
+}
 
 function OverrideSwitch({ params, set }: { params: AnyParams; set: (next: unknown) => void }) {
   const id = React.useId();

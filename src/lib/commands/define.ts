@@ -104,6 +104,14 @@ export type CommandDefinition<F, P> = {
    * so the runner can report them as not found.
    */
   order?: (tx: Tx, ctx: CommandContext<P>, ids: number[]) => Promise<number[]>;
+  /**
+   * The target ids that unticked rows rule out, when a table's rows are not the
+   * command's targets one for one (spec/v3.md §32.1). The import grid lists
+   * seats and commits parties: unticking any seat of a party must exclude the
+   * party, whose target id is one row of it. Without this, excluded ids are
+   * compared with the targets as they are.
+   */
+  excludes?: (tx: Tx, ctx: CommandContext<P>, excludedIds: number[]) => Promise<number[]>;
 
   /**
    * The rows behind `ids` **that belong to this concert**, with a skip reason

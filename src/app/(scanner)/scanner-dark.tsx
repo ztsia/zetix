@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useLayoutEffect } from "react";
+import { useLayoutEffect } from 'react';
 
 /**
  * Puts the scanner's dark mode on `<html>` (spec/v3.md §32.2).
@@ -14,12 +14,12 @@ import { useLayoutEffect } from "react";
 export function ScannerDark() {
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const hadDark = root.classList.contains("dark");
+    const hadDark = root.classList.contains('dark');
     const scheme = root.style.colorScheme;
-    root.classList.add("dark");
-    root.style.colorScheme = "dark";
+    root.classList.add('dark');
+    root.style.colorScheme = 'dark';
     return () => {
-      if (!hadDark) root.classList.remove("dark");
+      if (!hadDark) root.classList.remove('dark');
       root.style.colorScheme = scheme;
     };
   }, []);

@@ -62,6 +62,29 @@ function viewClause(view: StagingView) {
   }
 }
 
+/**
+ * The grid's WHERE for one batch, view and search — shared by the listing and
+ * by the commit command's `match`, so "Select all N matching" commits the
+ * parties those N rows belong to and no others (spec/v3.md §32.1).
+ */
+export function stagedRowWhere(
+  batchId: number,
+  view: StagingView,
+  search: string,
+  namesOnly = false,
+) {
+  const term = search.trim();
+  return sql`
+    r.batch_id = ${batchId} and r.deleted_at is null and ${viewClause(view)}
+    ${
+      term
+        ? sql`and (r.normalized ->> 'contactName' ilike ${'%' + term + '%'}
+                or r.normalized ->> 'attendeeName' ilike ${'%' + term + '%'}
+                ${namesOnly ? sql`` : sql`or r.normalized ->> 'contactEmail' ilike ${'%' + term + '%'}`})`
+        : sql``
+    }`;
+}
+
 export async function batchSummary(concertId: number, batchId: number): Promise<BatchSummary | null> {
   const [row] = await getDb().execute<{
     id: string;
@@ -133,16 +156,7 @@ export async function listStagedRows(
     namesOnly?: boolean;
   },
 ): Promise<{ rows: StagedRow[]; total: number }> {
-  const search = options.search.trim();
-  const where = sql`
-    r.batch_id = ${batchId} and r.deleted_at is null and ${viewClause(options.view)}
-    ${
-      search
-        ? sql`and (r.normalized ->> 'contactName' ilike ${'%' + search + '%'}
-                or r.normalized ->> 'attendeeName' ilike ${'%' + search + '%'}
-                ${options.namesOnly ? sql`` : sql`or r.normalized ->> 'contactEmail' ilike ${'%' + search + '%'}`})`
-        : sql``
-    }`;
+  const where = stagedRowWhere(batchId, options.view, options.search, options.namesOnly);
   const db = getDb();
   const [{ total }] = await db.execute<{ total: number }>(sql`
     select count(*)::int as total from import_rows r where ${where}

@@ -24,7 +24,8 @@ export async function listActivity(
     search: string;
     runId: number | null;
     pageIndex: number;
-    pageSize: number;
+    /** Null for every matching row: the whole-set export (spec/v3.md §32.1). */
+    pageSize: number | null;
     /**
      * The viewer's search: action and record id only. `reason` is free text
      * that can hold an address, and matching it unmasked would let a viewer
@@ -69,7 +70,11 @@ export async function listActivity(
            : sql``
        }
      order by l.created_at desc, l.id desc
-     limit ${options.pageSize} offset ${options.pageIndex * options.pageSize}
+     ${
+       options.pageSize === null
+         ? sql``
+         : sql`limit ${options.pageSize} offset ${options.pageIndex * options.pageSize}`
+     }
   `);
 
   return {

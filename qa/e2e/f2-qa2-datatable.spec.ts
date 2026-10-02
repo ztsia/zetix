@@ -5,7 +5,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import path from 'node:path';
-import fs from 'node:fs';
 import ExcelJS from 'exceljs';
 
 const SHOTS = path.resolve('qa-artifacts/F2-app-shell-auth/screens');
@@ -73,58 +72,14 @@ test('FLOW-10 admin drives the DataTable end to end', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(page.locator('table thead th', { hasText: 'Season' })).toHaveCount(0);
   await shot(page, 'FLOW-10-step-5-column-hidden');
-  await page.getByRole('button', { name: /View|Columns/i }).click();
-  await page.getByRole('menuitemcheckbox', { name: /Season/i }).click();
-  await page.keyboard.press('Escape');
 
-  // AC-40 — selection follows the row, not the index, across a re-sort.
-  const search = page.getByPlaceholder('Search concerts\u2026');
-  await page.getByRole('button', { name: 'Name' }).click();
-  await page.getByRole('menuitem', { name: /^Asc/ }).click();
-  await search.fill('Concert 05');
-  await expect(bodyRows(page)).toHaveCount(1);
-  await bodyRows(page).first().locator('input[type=checkbox], [role=checkbox]').first().click();
-  await expect(page.getByText(/^1 of \d+ rows? selected$/)).toBeVisible();
-  await search.fill('');
-  await page.getByRole('button', { name: 'Name' }).click();
-  await page.getByRole('menuitem', { name: /^Desc/ }).click();
-  await search.fill('Concert 05');
-  const selected = page.locator('table tbody tr[data-state=selected]');
-  await expect(selected).toHaveCount(1);
-  expect(await selected.innerText()).toContain('Concert 05');
-  await shot(page, 'FLOW-10-step-6-selection-survives-resort');
-  await search.fill('');
-
-  // AC-37 — CSV export follows the selection, not the whole dataset.
-  const download = await Promise.all([
-    page.waitForEvent('download'),
-    (async () => {
-      await page.getByRole('button', { name: /Export/i }).click();
-      await page.getByRole('menuitem', { name: /CSV/i }).click();
-    })(),
-  ]).then(([d]) => d);
-  const csv = fs.readFileSync((await download.path())!, 'utf8');
-  const lines = csv.trim().split('\r\n');
-  expect(lines.length).toBe(2);
-  expect(lines[1]).toContain('Concert 05');
-  await shot(page, 'FLOW-10-step-7-export');
-
-  // AC-38 — a name that begins with `=` must be neutralised in the file.
-  await search.fill('Concert 05');
-  await bodyRows(page).first().locator('input[type=checkbox], [role=checkbox]').first().click();
-  await search.fill('HYPERLINK');
-  await expect(bodyRows(page)).toHaveCount(1);
-  const d2 = await Promise.all([
-    page.waitForEvent('download'),
-    (async () => {
-      await page.getByRole('button', { name: /Export/i }).click();
-      await page.getByRole('menuitem', { name: /CSV/i }).click();
-    })(),
-  ]).then(([d]) => d);
-  const csv2 = fs.readFileSync((await d2.path())!, 'utf8');
-  const dataLine = csv2.trim().split('\r\n')[1];
-  expect(dataLine).toMatch(/^"'=HYPERLINK/);
-  await shot(page, 'FLOW-10-step-8-formula-escaped');
+  // AC-36..38 used to tick concerts here and export them. spec/v3.md §32.1
+  // removed both from this table — a handful of rows with nothing to act on —
+  // so the selection, whole-set export and formula escaping are now covered on
+  // the Audience table (qa/e2e/y-whole-set-export.spec.ts) and in
+  // tests/audience/export.test.ts and tests/export/csv.test.ts.
+  await expect(page.getByRole('button', { name: /Export/i })).toHaveCount(0);
+  await expect(bodyRows(page).first().locator('input[type=checkbox], [role=checkbox]')).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------- FLOW-11

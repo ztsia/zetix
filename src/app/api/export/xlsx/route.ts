@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSessionUser } from '@/lib/auth/session';
-import { exportFilename, type ExportColumn } from '@/lib/export';
+import { XLSX_CELL_LIMIT, exportFilename, type ExportColumn } from '@/lib/export';
 import { toXlsx } from '@/lib/export/xlsx';
 
 /**
@@ -21,7 +21,6 @@ import { toXlsx } from '@/lib/export/xlsx';
  */
 export const runtime = 'nodejs';
 
-const CELL_LIMIT = 200_000;
 
 const cellSchema = z.union([
   z.string(),
@@ -63,7 +62,7 @@ export async function POST(request: Request) {
 
   // A runaway export would build the whole workbook in memory inside a function
   // with a hard time limit. Refusing is better than a 504 with no explanation.
-  if (rows.length * headers.length > CELL_LIMIT) {
+  if (rows.length * headers.length > XLSX_CELL_LIMIT) {
     return NextResponse.json(
       { error: 'That export is too large. Narrow the filters and try again.' },
       { status: 413 },

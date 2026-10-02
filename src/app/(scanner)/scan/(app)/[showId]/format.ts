@@ -14,16 +14,16 @@
 export function formatDoorTime(iso: string, timeZone: string | null): string {
   try {
     return new Date(iso).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
+      hour: '2-digit',
+      minute: '2-digit',
       ...(timeZone ? { timeZone } : {}),
     });
   } catch {
     // An unknown zone makes Intl throw a RangeError. A wrong-looking time is
     // still better than a screen that fails to render at a door.
     return new Date(iso).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
+      hour: '2-digit',
+      minute: '2-digit',
     });
   }
 }

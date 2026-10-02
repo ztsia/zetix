@@ -8,10 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import {
   DataTable,
   DataTableColumnHeader,
-  selectionColumn,
   type DataTableColumn,
 } from '@/components/data-table';
-import type { ExportColumn } from '@/lib/export';
 import { ConcertRowActions } from './concert-row-actions';
 import { AdminOnly } from '@/components/auth/role';
 
@@ -34,10 +32,6 @@ const STATUS_VARIANT: Record<ConcertRow['status'], 'default' | 'secondary' | 'ou
 };
 
 const columns: DataTableColumn<ConcertRow>[] = [
-  // Selection earns its place here rather than waiting for a wave-2 module:
-  // ticking rows narrows the export to those concerts, and it means the
-  // selection path is exercised by a real screen instead of shipping untried.
-  selectionColumn<ConcertRow>(),
   {
     accessorKey: 'name',
     meta: { label: 'Name' },
@@ -102,17 +96,6 @@ const columns: DataTableColumn<ConcertRow>[] = [
   },
 ];
 
-const exportColumns: ExportColumn<ConcertRow>[] = [
-  { header: 'Name', value: (row) => row.name, width: 32 },
-  { header: 'Slug', value: (row) => row.slug },
-  { header: 'Season', value: (row) => row.season },
-  { header: 'Status', value: (row) => row.status },
-  { header: 'Starts on', value: (row) => row.startsOn },
-  { header: 'Ends on', value: (row) => row.endsOn },
-  { header: 'Timezone', value: (row) => row.timezone },
-  { header: 'Shows', value: (row) => row.shows },
-];
-
 /**
  * The concert list — and the first real consumer of the shared `DataTable`.
  *
@@ -122,7 +105,6 @@ const exportColumns: ExportColumn<ConcertRow>[] = [
  */
 export function ConcertsTable({
   concerts,
-  timeZone,
   rowCount,
   pageIndex,
   pageSize,
@@ -130,7 +112,6 @@ export function ConcertsTable({
   search,
 }: {
   concerts: ConcertRow[];
-  timeZone: string;
   rowCount: number;
   pageIndex: number;
   pageSize: number;
@@ -170,11 +151,11 @@ export function ConcertsTable({
       data={concerts}
       getRowId={(row) => String(row.id)}
       searchPlaceholder="Search concerts…"
-      enableSelection
       server={{ rowCount, pageIndex, pageSize, sorting, search, onChange: apply }}
       isLoading={isPending}
       onRowClick={(row) => router.push(`/admin/concerts/${row.id}/home`)}
-      export={{ filename: 'concerts', columns: exportColumns, timeZone, sheetName: 'Concerts' }}
+      // No export and no selection: a handful of rows with nothing to act on
+      // (spec/v3.md §32.1).
       emptyTitle="No concerts yet"
       emptyDescription="Create one to start adding shows, segments and players."
     />

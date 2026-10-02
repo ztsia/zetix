@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
-import { useState, useTransition } from "react";
-import Link from "next/link";
-import { ArrowLeftRight, CircleUser, LogOut, Smartphone } from "lucide-react";
-import { signOutOperator } from "@/lib/auth/actions";
-import { Button } from "@/components/ui/button";
+import { useState, useTransition } from 'react';
+import Link from 'next/link';
+import { ArrowLeftRight, CircleUser, LogOut, Smartphone } from 'lucide-react';
+import { signOutOperator } from '@/lib/auth/actions';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +13,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,8 +24,8 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Spinner } from "@/components/ui/spinner";
+} from '@/components/ui/alert-dialog';
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * The scanner's account menu, on every screen (spec/v3.md §32.2).
@@ -80,9 +80,7 @@ export function AccountMenu({
         <DropdownMenuContent align="end" className="min-w-56">
           <DropdownMenuGroup>
             <DropdownMenuLabel>
-              <span className="text-muted-foreground block text-xs">
-                Signed in as
-              </span>
+              <span className="text-muted-foreground block text-xs">Signed in as</span>
               <span className="text-foreground block truncate text-sm font-medium">
                 {operatorName}
               </span>
@@ -91,18 +89,12 @@ export function AccountMenu({
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             {canSwitchShows && (
-              <DropdownMenuItem
-                className="min-h-11"
-                render={<Link href="/scan" />}
-              >
+              <DropdownMenuItem className="min-h-11" render={<Link href="/scan" />}>
                 <ArrowLeftRight />
                 Switch show
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              className="min-h-11"
-              render={<Link href="/scan/diagnostics" />}
-            >
+            <DropdownMenuItem className="min-h-11" render={<Link href="/scan/diagnostics" />}>
               <Smartphone />
               Check this phone
             </DropdownMenuItem>
@@ -127,19 +119,15 @@ export function AccountMenu({
               <LogOut />
             </AlertDialogMedia>
             <AlertDialogTitle>
-              {unsynced} admission{unsynced === 1 ? " hasn't" : "s haven't"}{" "}
-              synced
+              {unsynced} admission{unsynced === 1 ? " hasn't" : "s haven't"} synced
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They stay on this phone under your name and send the next time you
-              sign in here. Nobody else can send them for you. The roster is
-              removed from the phone.
+              They stay on this phone under your name and send the next time you sign in here.
+              Nobody else can send them for you. The roster is removed from the phone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="h-11">
-              Stay signed in
-            </AlertDialogCancel>
+            <AlertDialogCancel className="h-11">Stay signed in</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               className="h-11"

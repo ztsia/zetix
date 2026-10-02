@@ -8,6 +8,16 @@
  * column returns a *value*, so the same row can render richly on screen and
  * flatly in a file without either one compromising for the other.
  */
+/**
+ * The most cells one XLSX export may hold. `/api/export/xlsx` refuses beyond
+ * it, and the export menu says so before the request rather than after.
+ *
+ * A request-size bound on a server-side spreadsheet writer, not an operational
+ * value: nothing here comes from `context.md`. CSV, built in the browser, has
+ * no such bound.
+ */
+export const XLSX_CELL_LIMIT = 200_000;
+
 export type ExportValue = string | number | boolean | Date | null | undefined;
 
 export type ExportColumn<T> = {

@@ -74,7 +74,9 @@ export function StagingGrid({
   const players = summary.audienceMode === 'PLAYER_INVITED' && roster.length > 0;
 
   const { selection, count, clear, tableProps } = useTableSelection({
-    filter: { batchId: summary.id },
+    // The tab and search too: "Select all N matching" commits the parties those
+    // N rows belong to, not every ready party in the batch (spec/v3.md §32.1).
+    filter: { batchId: summary.id, view, search: state.search || undefined },
     filterKey: filterKeyOf(state),
     total: page.total,
     pageIds: page.rows.map((row) => String(row.id)),

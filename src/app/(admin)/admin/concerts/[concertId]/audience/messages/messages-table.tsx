@@ -29,6 +29,7 @@ import {
 import { PURPOSE_LABEL, PURPOSES, type Purpose } from '@/lib/delivery/purposes';
 import { useRunCommand } from '../command-host';
 import { MessageActions } from './message-actions';
+import { exportMessagesAction } from './export-actions';
 
 /**
  * The Messages view's table (spec/v3.md §24.4). A tab per status with its
@@ -210,6 +211,29 @@ export function MessagesTable({
         searchPlaceholder={canEdit ? 'Search subject, name, address or id…' : 'Search subject, name or id…'}
         emptyTitle="No messages here"
         emptyDescription="Messages appear once tickets, reminders or any other email is queued for this concert."
+        export={{
+          filename: filter.status ? `messages-${filter.status.toLowerCase()}` : 'messages',
+          sheetName: 'Messages',
+          timeZone,
+          load: () =>
+            exportMessagesAction({
+              concertId,
+              selection: selection ?? { filter, excludedIds: [] },
+            }),
+          columns: [
+            { header: 'To', value: (r: MessageRow) => r.toEmail, width: 30 },
+            { header: 'Name', value: (r: MessageRow) => r.addressee, width: 24 },
+            { header: 'Purpose', value: (r: MessageRow) => PURPOSE_LABEL[r.purpose] },
+            { header: 'Subject', value: (r: MessageRow) => r.subject, width: 40 },
+            { header: 'Status', value: (r: MessageRow) => r.status },
+            { header: 'Attempts', value: (r: MessageRow) => r.attempts },
+            { header: 'Bounce code', value: (r: MessageRow) => r.bounceCode },
+            { header: 'Bounce detail', value: (r: MessageRow) => r.bounceDetail, width: 40 },
+            { header: 'Last error', value: (r: MessageRow) => r.lastError, width: 40 },
+            { header: 'Sent', value: (r: MessageRow) => (r.sentAt ? new Date(r.sentAt) : null) },
+            { header: 'Updated', value: (r: MessageRow) => new Date(r.updatedAt) },
+          ],
+        }}
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
             <NativeSelect

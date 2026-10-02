@@ -1,12 +1,12 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { CircleAlert, CloudOff } from "lucide-react";
-import type { QueuedScan } from "@/lib/checkin/store";
-import type { ManifestIndex } from "@/lib/checkin/manifest";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { useState } from 'react';
+import { CircleAlert, CloudOff } from 'lucide-react';
+import type { QueuedScan } from '@/lib/checkin/store';
+import type { ManifestIndex } from '@/lib/checkin/manifest';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import {
   Drawer,
   DrawerContent,
@@ -14,15 +14,9 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-} from "@/components/ui/drawer";
-import {
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
-} from "@/components/ui/item";
-import { formatDoorTime } from "./format";
+} from '@/components/ui/drawer';
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/components/ui/item';
+import { formatDoorTime } from './format';
 
 /**
  * Where this phone's admissions are (spec/v3.md §32.2).
@@ -67,7 +61,7 @@ export function SyncStatus({
       ) : !online ? (
         <Badge variant="destructive" className="shrink-0 gap-1">
           <CloudOff className="size-3" />
-          {pending > 0 ? `Offline · ${pending} waiting` : "Offline"}
+          {pending > 0 ? `Offline · ${pending} waiting` : 'Offline'}
         </Badge>
       ) : syncing && pending > 0 ? (
         <Badge variant="secondary" className="shrink-0 gap-1">
@@ -85,28 +79,25 @@ export function SyncStatus({
           <DrawerHeader>
             <DrawerTitle>Couldn&rsquo;t sync</DrawerTitle>
             <DrawerDescription>
-              These people were let in, but the server would not record them.
-              Tell the desk who they were. This phone will not send them again.
+              These people were let in, but the server would not record them. Tell the desk who they
+              were. This phone will not send them again.
             </DrawerDescription>
           </DrawerHeader>
           <div className="max-h-[50svh] overflow-y-auto px-4">
             <ItemGroup className="gap-2">
               {refused.map((scan) => {
                 const entry =
-                  (scan.attendeeId != null &&
-                    index.byKey.get(`a${scan.attendeeId}`)) ||
-                  (scan.qrTokenSha256
-                    ? index.byHash.get(scan.qrTokenSha256)
-                    : undefined);
+                  (scan.attendeeId != null && index.byKey.get(`a${scan.attendeeId}`)) ||
+                  (scan.qrTokenSha256 ? index.byHash.get(scan.qrTokenSha256) : undefined);
                 return (
                   <Item key={scan.id} variant="outline">
                     <ItemContent>
                       <ItemTitle className="text-base">
-                        {entry?.name ?? "A seat this phone no longer has"}
+                        {entry?.name ?? 'A seat this phone no longer has'}
                       </ItemTitle>
                       <ItemDescription className="line-clamp-none">
                         {formatDoorTime(scan.scannedAt, timeZone)}
-                        {entry?.ticketCode ? ` · ${entry.ticketCode}` : ""}
+                        {entry?.ticketCode ? ` · ${entry.ticketCode}` : ''}
                         <br />
                         {scan.refusedReason}
                       </ItemDescription>

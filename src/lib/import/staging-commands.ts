@@ -10,6 +10,7 @@ import { reviewAtIntake } from '@/lib/intake/review';
 import { mintUpdateToken } from '@/lib/intake/update-link';
 import { recomputeStatus } from '@/lib/registrations/mutations';
 import type { RowIssue, StagedFields } from './staging';
+import { STAGING_VIEWS, stagedRowWhere } from './staging-queries';
 
 /**
  * The staging grid's commands (spec/v3.md §23.2, §25.7).
@@ -30,7 +31,18 @@ import type { RowIssue, StagedFields } from './staging';
 // Commit staged rows
 // ---------------------------------------------------------------------------
 
-const commitFilter = z.object({ batchId: idSchema }).strict();
+/**
+ * The grid's own filter (spec/v3.md §32.1): the batch, and the tab and search
+ * the admin was looking at when they chose "Select all N matching". Without the
+ * last two, that selection committed every ready party in the batch.
+ */
+const commitFilter = z
+  .object({
+    batchId: idSchema,
+    view: z.enum(STAGING_VIEWS).optional(),
+    search: z.string().max(200).optional(),
+  })
+  .strict();
 
 type PartyRows = {
   batchId: number;
@@ -164,8 +176,40 @@ const commitRows = defineCommand({
          where r.batch_id = ${filter.batchId} and s.concert_id = ${ctx.concertId}
            and r.status = 'STAGED' and r.deleted_at is null and b.status = 'STAGED'
          group by r.party_key
+      ),
+      -- The parties the grid's rows belong to, under the tab and search the
+      -- admin selected from. A party is in when any of its rows is.
+      shown as (
+        select distinct r.party_key from import_rows r
+         where ${stagedRowWhere(filter.batchId, filter.view ?? 'all', filter.search ?? '')}
       )
-      select head as id from parties where not blocked order by first_at, first_row
+      select head as id from parties
+       where not blocked
+         and exists (select 1 from shown where shown.party_key is not distinct from parties.party_key)
+       order by first_at, first_row
+    `);
+    return rows.map((row) => Number(row.id));
+  },
+  /**
+   * Unticking any seat of a party excludes the party (spec/v3.md §32.1). The
+   * grid lists seats and this commits parties, each by its first staged row —
+   * so an unticked seat names the head of its party here.
+   */
+  async excludes(tx, ctx, excludedIds) {
+    const rows = await tx.execute<{ id: string }>(sql`
+      select min(o.id) as id
+        from import_rows o
+        join import_batches b on b.id = o.batch_id
+        join shows s on s.id = b.show_id
+       where s.concert_id = ${ctx.concertId}
+         and o.status = 'STAGED' and o.deleted_at is null
+         and exists (
+           select 1 from import_rows x
+            where x.id = any(${`{${excludedIds.join(',')}}`}::bigint[])
+              and x.batch_id = o.batch_id
+              and x.party_key is not distinct from o.party_key
+         )
+       group by o.batch_id, o.party_key
     `);
     return rows.map((row) => Number(row.id));
   },

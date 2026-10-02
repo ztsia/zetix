@@ -98,14 +98,6 @@ export default async function ConcertsPage({
 
   const data: ConcertRow[] = rows.map((row) => ({ ...row, shows: Number(row.shows) }));
 
-  /**
-   * Export timestamps render in the concert's zone (`CLAUDE.md`). This list spans
-   * concerts that may sit in different zones, so it falls back to the first
-   * concert that declares one — and this table's own columns are calendar dates
-   * and counts, none of which is zone-dependent.
-   */
-  const timeZone = data.find((row) => row.timezone)?.timezone ?? 'UTC';
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -121,7 +113,6 @@ export default async function ConcertsPage({
       </div>
       <ConcertsTable
         concerts={data}
-        timeZone={timeZone}
         rowCount={Number(tally?.total ?? 0)}
         pageIndex={pageIndex}
         pageSize={pageSize}

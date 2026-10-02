@@ -170,6 +170,30 @@ export async function listMessages(
   return { rows: rows.map(toRow), total, counts };
 }
 
+/**
+ * Every message a selection covers, in the list's order, for export
+ * (spec/v3.md §32.1). The bounced and failed lists are what an admin wants
+ * out. The listing's own WHERE, so the file holds what the tab showed.
+ */
+export async function exportMessages(
+  executor: Executor,
+  concertId: number,
+  selection: { ids: number[] } | { filter: MessageFilter; excludedIds: number[] },
+): Promise<MessageRow[]> {
+  const where =
+    'filter' in selection
+      ? sql`${messageWhere(concertId, selection.filter, true)}
+            and not (o.id = any(${idArray(selection.excludedIds)}))`
+      : sql`${messageWhere(concertId, {}, true)} and o.id = any(${idArray(selection.ids)})`;
+  const rows = await executor.execute<RawMessage>(sql`
+    select ${MESSAGE_COLUMNS}
+      ${FROM_MESSAGES}
+     where ${where}
+     order by o.updated_at desc, o.id desc
+  `);
+  return rows.map(toRow);
+}
+
 export async function matchMessageIds(executor: Executor, concertId: number, filter: MessageFilter): Promise<number[]> {
   const rows = await executor.execute<{ id: string }>(sql`
     select o.id ${FROM_MESSAGES}

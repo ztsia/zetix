@@ -33,6 +33,7 @@ const HEADLINE: Record<ScanResult['outcome'], string> = {
   ALREADY_CHECKED_IN: 'Already checked in',
   WRONG_SHOW: 'Wrong show',
   CANCELLED: 'Cancelled',
+  ON_HOLD: 'Not confirmed',
   NOT_FOUND: 'Invalid ticket',
 };
 
@@ -44,6 +45,7 @@ function Icon({ outcome }: { outcome: ScanResult['outcome'] }) {
     case 'ALREADY_CHECKED_IN':
       return <TriangleAlert className={className} aria-hidden />;
     case 'CANCELLED':
+    case 'ON_HOLD':
       return <CircleSlash className={className} aria-hidden />;
     default:
       return <CircleAlert className={className} aria-hidden />;
@@ -104,6 +106,11 @@ export function ResultOverlay({
       {result.outcome === 'CANCELLED' && (
         // §7.9: never "not found". The person and their seat were both real.
         <p className="text-lg font-semibold">Refer to desk</p>
+      )}
+
+      {result.outcome === 'ON_HOLD' && (
+        // spec/v3.md §32.3: their own page says the seat is on hold.
+        <p className="text-lg font-semibold">On the waitlist or awaiting review — refer to desk</p>
       )}
 
       {result.outcome === 'WRONG_SHOW' && result.wrongShowName && (

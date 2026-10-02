@@ -20,6 +20,8 @@ export type ScanOutcome =
   | 'ADMITTED'
   | 'ALREADY_CHECKED_IN'
   | 'CANCELLED'
+  /** On the waitlist or awaiting review: not a confirmed seat (spec/v3.md §32.3). */
+  | 'ON_HOLD'
   | 'WRONG_SHOW'
   | 'NOT_FOUND';
 
@@ -85,6 +87,7 @@ const TONES: Record<ScanOutcome, FeedbackTone> = {
   ADMITTED: 'admitted',
   ALREADY_CHECKED_IN: 'duplicate',
   CANCELLED: 'error',
+  ON_HOLD: 'error',
   WRONG_SHOW: 'error',
   NOT_FOUND: 'error',
 };
@@ -127,6 +130,16 @@ export function evaluateScan({ hash, index, checkIns }: EvaluateInput): ScanResu
    */
   if (entry.status === 'CANCELLED') {
     return { outcome: 'CANCELLED', tone: TONES.CANCELLED, entry, party, canAdmitAnyway: true };
+  }
+
+  /**
+   * A seat on the waitlist or under review is not admitted by its code
+   * (spec/v3.md §32.3): the guest's own page tells them so, and the door must
+   * agree with it. Like every red, it is never a hard block — the desk may know
+   * better, and "Admit anyway" stays.
+   */
+  if (entry.status === 'WAITLIST' || entry.status === 'PENDING_REVIEW') {
+    return { outcome: 'ON_HOLD', tone: TONES.ON_HOLD, entry, party, canAdmitAnyway: true };
   }
 
   const prior = firstCheckIn(entry, key, live);

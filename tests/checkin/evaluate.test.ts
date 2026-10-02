@@ -235,3 +235,22 @@ describe('every seat is keyed by attendee, ticketed or not (spec/v3.md §32.2)',
     expect(result.firstScan).toEqual({ at: '2026-09-19T11:42:00.000Z', operatorName: 'Bob' });
   });
 });
+
+describe('a seat that is not confirmed (spec/v3.md §32.3)', () => {
+  const held = buildManifestIndex([
+    entry({ attendeeId: 21, qrTokenSha256: HASH.alice, status: 'WAITLIST', partySize: 1 }),
+    entry({ attendeeId: 22, qrTokenSha256: HASH.bob, status: 'PENDING_REVIEW', partySize: 1, registrationId: 2 }),
+  ]);
+
+  it('is red for a waitlisted seat, agreeing with the guest`s own page', () => {
+    const result = evaluateScan({ hash: HASH.alice, index: held, checkIns: none });
+    expect(result.outcome).toBe('ON_HOLD');
+    expect(result.tone).toBe('error');
+  });
+
+  it('is red for a seat awaiting review, and never a hard block', () => {
+    const result = evaluateScan({ hash: HASH.bob, index: held, checkIns: none });
+    expect(result.outcome).toBe('ON_HOLD');
+    expect(result.canAdmitAnyway).toBe(true);
+  });
+});

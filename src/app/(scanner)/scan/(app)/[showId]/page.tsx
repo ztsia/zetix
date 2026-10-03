@@ -127,7 +127,8 @@ export default async function ScannerShowPage({
       canSwitchShows={canSwitchShows}
       manifestExpiresAt={expiresAt}
       scanDebounceMs={debounceMs ?? 0}
-      walkIns={walkInsEnabled === true ? { maxHeadcount: walkInMax ?? null } : null}
+      // Offered only with a cap set: the server refuses walk-ins without one.
+      walkIns={walkInsEnabled === true && walkInMax != null ? { maxHeadcount: walkInMax } : null}
     />
   );
 }

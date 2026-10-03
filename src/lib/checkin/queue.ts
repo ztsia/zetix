@@ -41,12 +41,21 @@ export function ownScans(scans: readonly QueuedScan[], operatorId: string): Queu
 export function othersWaiting(
   scans: readonly QueuedScan[],
   operatorId: string,
+  walkIns: readonly QueuedWalkIn[] = [],
 ): { operatorName: string; count: number }[] {
   const counts = new Map<string, number>();
+  const add = (name: string | null | undefined) => {
+    const key = name || 'another operator';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  };
   for (const scan of pendingScans(scans)) {
     if (!scan.operatorId || scan.operatorId === operatorId) continue;
-    const name = scan.operatorName || 'another operator';
-    counts.set(name, (counts.get(name) ?? 0) + 1);
+    add(scan.operatorName);
+  }
+  // A walk-in is an admission too: one entry, whatever its headcount.
+  for (const w of walkIns) {
+    if (w.syncedAt || w.refusedAt || w.operatorId === operatorId) continue;
+    add(w.operatorName);
   }
   return [...counts].map(([operatorName, count]) => ({ operatorName, count }));
 }

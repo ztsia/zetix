@@ -147,27 +147,37 @@ export async function revertWalkIn({
   actorId: string;
   reason?: string | null;
 }): Promise<void> {
-  const db = getDb();
-  const updated = await db.execute<{ headcount: number; admitted_at: string }>(sql`
-    update walk_ins w
-       set reverted_at = now(), reverted_by = ${actorId}
-      from shows s
-     where w.id = ${walkInId} and w.show_id = ${showId}
-       and s.id = w.show_id and s.concert_id = ${concertId}
-       and w.reverted_at is null
-    returning w.headcount, to_json(w.admitted_at) #>> '{}' as admitted_at
-  `);
-  if (updated.length === 0) {
-    throw new WalkInRevertError('That walk-in is not in this show’s log, or was already reverted.');
-  }
-  await writeAuditLog({
-    action: 'checkin.walk_in_reverted',
-    entityType: 'walk_ins',
-    entityId: walkInId,
-    concertId,
-    before: { showId, headcount: updated[0]!.headcount, admittedAt: updated[0]!.admitted_at, revertedAt: null },
-    after: { revertedBy: actorId },
-    reason: reason ?? null,
-    actorId,
+  // One transaction, so the revert and its audit row land together or not at all.
+  await getDb().transaction(async (tx) => {
+    const updated = await tx.execute<{ headcount: number; admitted_at: string }>(sql`
+      update walk_ins w
+         set reverted_at = now(), reverted_by = ${actorId}
+        from shows s
+       where w.id = ${walkInId} and w.show_id = ${showId}
+         and s.id = w.show_id and s.concert_id = ${concertId}
+         and w.reverted_at is null
+      returning w.headcount, to_json(w.admitted_at) #>> '{}' as admitted_at
+    `);
+    if (updated.length === 0) {
+      throw new WalkInRevertError('That walk-in is not in this show’s log, or was already reverted.');
+    }
+    await writeAuditLog(
+      {
+        action: 'checkin.walk_in_reverted',
+        entityType: 'walk_ins',
+        entityId: walkInId,
+        concertId,
+        before: {
+          showId,
+          headcount: updated[0]!.headcount,
+          admittedAt: updated[0]!.admitted_at,
+          revertedAt: null,
+        },
+        after: { revertedBy: actorId },
+        reason: reason ?? null,
+        actorId,
+      },
+      tx,
+    );
   });
 }

@@ -106,6 +106,31 @@ describe('POST /api/checkin/walk-ins', () => {
     expect(body.receipts[0].reason).toContain('10');
   });
 
+  it('refuses every walk-in while no largest group is set, rather than allowing any size', async () => {
+    // QA found an unset cap meant no cap: 2147483647 people were recorded and
+    // the stats endpoint then answered 500.
+    await sql`delete from system_settings where key = 'checkin.walk_in_max_headcount'`;
+    const body = await (await post({ showId, walkIns: [walkIn({ headcount: 2 })] })).json();
+    expect(body.receipts[0].outcome).toBe('REFUSED');
+    expect(body.receipts[0].reason).toContain('largest');
+    expect(await count()).toBe(0);
+  });
+
+  it('refuses a headcount past the column`s own range as unreadable', async () => {
+    const body = await (await post({ showId, walkIns: [walkIn({ headcount: 2 ** 31 })] })).json();
+    expect(body.receipts[0].outcome).toBe('REFUSED');
+  });
+
+  it('keeps the stats endpoint answering however large the walk-in total', async () => {
+    await sql`
+      insert into walk_ins (client_id, show_id, headcount, operator_id, admitted_at)
+      values (gen_random_uuid(), ${showId}, 2000000000, ${operator.id}, now()),
+             (gen_random_uuid(), ${showId}, 2000000000, ${operator.id}, now())`;
+    const response = await GET(new Request(`http://localhost/api/checkin/stats?showId=${showId}`));
+    expect(response.status).toBe(200);
+    expect((await response.json()).walkIns).toBe(4_000_000_000);
+  });
+
   it('refuses a segment that belongs to another show', async () => {
     const body = await (await post({ showId, walkIns: [walkIn({ segmentId })] })).json();
     expect(body.receipts[0].outcome).toBe('REFUSED');

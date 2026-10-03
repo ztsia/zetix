@@ -50,7 +50,12 @@ export function SyncStatus({
 
   return (
     <>
-      {refusedCount > 0 ? (
+      {/*
+       * Two signals, shown side by side: refused rows need the desk, and the
+       * connection state says whether the rest are moving. A refused row used
+       * to replace "Offline · 3 waiting" for the rest of the night.
+       */}
+      {refusedCount > 0 && (
         <Button
           variant="destructive"
           size="sm"
@@ -61,7 +66,8 @@ export function SyncStatus({
           <CircleAlert />
           {refusedCount} couldn&rsquo;t sync
         </Button>
-      ) : !online ? (
+      )}
+      {!online ? (
         <Badge variant="destructive" className="shrink-0 gap-1">
           <CloudOff className="size-3" />
           {pending > 0 ? `Offline · ${pending} waiting` : 'Offline'}

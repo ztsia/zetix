@@ -638,7 +638,7 @@ export function useScanner({
     syncing,
     signedOut,
     refused: refusedScans(ownScans(scans, operatorId)),
-    othersWaiting: othersWaiting(scans, operatorId),
+    othersWaiting: othersWaiting(scans, operatorId, walkIns),
     walkIns: walkIns.filter((w) => w.operatorId === operatorId),
     serverStats,
   };

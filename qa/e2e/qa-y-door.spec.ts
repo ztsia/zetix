@@ -179,6 +179,11 @@ test('FLOW-7 no match offers Record as walk-in; one event row; Stats counts it',
   await expect(page.getByText('In the hall')).toBeVisible();
   await expect(page.locator('body')).toContainText(String(inHall));
   await expect(page.getByText(/as of \d\d:\d\d/i).first()).toBeVisible();
+  await page.waitForTimeout(1500); // let the admission flash clear
+  const asOf = (await page.getByText(/as of \d\d:\d\d/i).first().innerText()).match(/\d\d:\d\d/)![0];
+  const fmt = (tz: string) => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz });
+  test.info().annotations.push({ type: 'as-of', description: `${asOf}; KL now ${fmt('Asia/Kuala_Lumpur')}; LA now ${fmt('America/Los_Angeles')}` });
+  expect(asOf.slice(0, 2)).toBe(fmt('Asia/Kuala_Lumpur').slice(0, 2));
   await shot(page, 'FLOW-7', 4, 'stats');
   test.info().annotations.push({ type: 'inHall', description: String(inHall) });
 });

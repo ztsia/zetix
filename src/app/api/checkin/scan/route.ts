@@ -165,10 +165,15 @@ export async function POST(request: Request) {
         recordScan(tx, { scan: row.data, showId, operatorId: user.id }),
       );
       receipts.push({ index, ...receipt });
-    } catch {
-      // A fault on one row — a timestamp Postgres will not take, say — is that
-      // row's answer, not the batch's.
-      receipts.push({ index, outcome: 'REFUSED' });
+    } catch (error) {
+      /**
+       * A value Postgres will not take (SQLSTATE class 22 — a timestamp out of
+       * range, say) is that row's final answer: refused, set aside, never
+       * re-sent. Anything else — a dropped connection, a timeout — says nothing
+       * about the row, so it gets no receipt and stays queued for the next
+       * drain rather than being refused for good.
+       */
+      if (isDataException(error)) receipts.push({ index, outcome: 'REFUSED' });
     }
   }
 
@@ -308,4 +313,11 @@ async function recordScan(
         ? { at: new Date(stats.first_at).toISOString(), operatorName: stats.first_operator }
         : null,
   };
+}
+
+/** Postgres's "data exception" class: the value itself was refused. */
+function isDataException(error: unknown): boolean {
+  const code =
+    (error as { code?: unknown })?.code ?? (error as { cause?: { code?: unknown } })?.cause?.code;
+  return typeof code === 'string' && code.startsWith('22');
 }

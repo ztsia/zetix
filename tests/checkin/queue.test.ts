@@ -10,7 +10,7 @@ import {
   refusedScans,
   settleReceipts,
 } from '@/lib/checkin/queue';
-import type { QueuedScan } from '@/lib/checkin/store';
+import type { QueuedScan, QueuedWalkIn } from '@/lib/checkin/store';
 
 /**
  * The offline queue's decisions (spec/checkin.md §12.3).
@@ -197,5 +197,24 @@ describe('queued admissions belong to whoever made them (spec/v3.md §32.2)', ()
   it('never re-attributes another operator`s unsynced rows; it names them instead', () => {
     expect(othersWaiting(rows, 'sam')).toEqual([{ operatorName: 'Wei Ling', count: 2 }]);
     expect(othersWaiting(rows, 'wei')).toEqual([{ operatorName: 'Sam', count: 1 }]);
+  });
+});
+
+describe('walk-ins left by somebody else are named too (QA, spec/v3.md §32.2)', () => {
+  it('counts another operator`s unsynced walk-in beside their scans', () => {
+    const walkIn = (over: Partial<QueuedWalkIn>): QueuedWalkIn => ({
+      clientId: crypto.randomUUID(),
+      showId: 1,
+      headcount: 2,
+      label: null,
+      admittedAt: '2026-09-19T11:00:00.000Z',
+      deviceId: 'usher-1',
+      operatorId: 'wei',
+      operatorName: 'Wei Ling',
+      ...over,
+    });
+    expect(
+      othersWaiting([], 'sam', [walkIn({}), walkIn({ syncedAt: '2026-09-19T11:01:00.000Z' }), walkIn({ operatorId: 'sam', operatorName: 'Sam' })]),
+    ).toEqual([{ operatorName: 'Wei Ling', count: 1 }]);
   });
 });

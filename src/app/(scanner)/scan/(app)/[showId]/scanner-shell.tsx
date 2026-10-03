@@ -153,6 +153,8 @@ export function ScannerShell({
   const stats = state.serverStats;
   const pendingWalkIns = state.walkIns.filter((w) => !w.syncedAt && !w.refusedAt);
   const refusedWalkIns = state.walkIns.filter((w) => !w.syncedAt && w.refusedAt);
+  /** Everything of this operator's not yet on the server: scans and walk-ins alike. */
+  const unsynced = state.summary.pending + pendingWalkIns.length;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const localCheckIns = toLocalCheckIns(state.scans, index);
@@ -248,7 +250,7 @@ export function ScannerShell({
         <SyncStatus
           online={state.online}
           syncing={state.syncing}
-          pending={state.summary.pending + pendingWalkIns.length}
+          pending={unsynced}
           refused={state.refused}
           refusedWalkIns={refusedWalkIns}
           index={index}
@@ -269,7 +271,7 @@ export function ScannerShell({
         <AccountMenu
           operatorName={operatorName}
           canSwitchShows={canSwitchShows}
-          unsynced={state.summary.pending}
+          unsynced={unsynced}
           onPrepareSignOut={prepareSignOut}
         />
       </header>
@@ -283,9 +285,7 @@ export function ScannerShell({
               <LogIn />
               <AlertTitle>
                 Signed out
-                {state.summary.pending > 0
-                  ? ` — sign in again to send ${state.summary.pending} queued`
-                  : ''}
+                {unsynced > 0 ? ` — sign in again to send ${unsynced} queued` : ''}
               </AlertTitle>
               <AlertDescription>
                 <p>Scanning still works. Admissions wait on this phone until you sign in.</p>

@@ -121,7 +121,7 @@ export async function getCheckinStats(showId: number): Promise<CheckinStats> {
         where a.show_id = ${showId}
           and a.deleted_at is null
           and a.status = 'CONFIRMED') as confirmed,
-      (select coalesce(sum(w.headcount), 0)::int
+      (select coalesce(sum(w.headcount), 0)::bigint
          from walk_ins w
         where w.show_id = ${showId}
           and w.reverted_at is null) as walk_ins,
@@ -172,7 +172,7 @@ export async function getDoorStats(showId: number, operatorId: string): Promise<
           where c.show_id = ${showId}
             and c.operator_id = ${operatorId}
             and c.reverted_at is null) as admitted,
-        (select coalesce(sum(w.headcount), 0)::int
+        (select coalesce(sum(w.headcount), 0)::bigint
            from walk_ins w
           where w.show_id = ${showId}
             and w.operator_id = ${operatorId}
@@ -209,14 +209,16 @@ export async function getArrivalBuckets(
     with events as (
       -- One row per attendee, at their *first* live scan: a party admitted in
       -- one tap and a ticket scanned twice on two phones are both one arrival.
-      select min(c.scanned_at) as at, 1 as ticketed, 0 as walk_ins
+      -- Sums of headcount are bigint: an int sum overflows long before the
+      -- column does, and the stats endpoint would answer 500 until reverted.
+      select min(c.scanned_at) as at, 1 as ticketed, 0::bigint as walk_ins
         from check_ins c
        where c.show_id = ${showId}
          and c.reverted_at is null
        group by c.attendee_id
       union all
       -- Walk-ins by headcount, at the phone's time of the tap.
-      select w.admitted_at, 0, w.headcount
+      select w.admitted_at, 0, w.headcount::bigint
         from walk_ins w
        where w.show_id = ${showId}
          and w.reverted_at is null
@@ -231,7 +233,7 @@ export async function getArrivalBuckets(
         'YYYY-MM-DD"T"HH24:MI:SS"Z"'
       ) as bucket_start,
       sum(ticketed)::int as count,
-      sum(walk_ins)::int as walk_ins
+      sum(walk_ins)::bigint as walk_ins
     from events
     group by 1
     order by 1
@@ -259,20 +261,20 @@ export async function getOperatorCounts(showId: number): Promise<OperatorCount[]
     walk_ins: number;
   }>(sql`
     with per as (
-      select c.operator_id, count(distinct c.attendee_id)::int as count, 0 as walk_ins
+      select c.operator_id, count(distinct c.attendee_id)::int as count, 0::bigint as walk_ins
         from check_ins c
        where c.show_id = ${showId}
          and c.reverted_at is null
        group by c.operator_id
       union all
-      select w.operator_id, 0, sum(w.headcount)::int
+      select w.operator_id, 0, sum(w.headcount)::bigint
         from walk_ins w
        where w.show_id = ${showId}
          and w.reverted_at is null
        group by w.operator_id
     )
     select per.operator_id, u.display_name as operator_name,
-           sum(per.count)::int as count, sum(per.walk_ins)::int as walk_ins
+           sum(per.count)::int as count, sum(per.walk_ins)::bigint as walk_ins
       from per
       left join app_users u on u.id = per.operator_id
      group by per.operator_id, u.display_name

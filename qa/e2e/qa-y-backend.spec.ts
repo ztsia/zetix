@@ -193,8 +193,8 @@ test('walk-ins: validation, idempotency, cross-show replay, segment of another s
   expect(fab[0]).toEqual({ r: 0, a: 0 });
 });
 
-test('walk-ins: with checkin.walk_in_max_headcount unset, the server applies no cap at all', async () => {
-  test.fail(true, 'QA finding: an unset cap is no cap; this test is expected to fail until fixed');
+test('walk-ins: with checkin.walk_in_max_headcount unset, the server refuses rather than applying no cap', async () => {
+  // QA finding 3, fixed: an unset cap used to mean no cap.
   await sql`delete from system_settings where key = 'checkin.walk_in_max_headcount'`;
   const big = walkIn({ headcount: 2147483647, label: 'uncapped' });
   const res = await ctxs.wei.request.post('/api/checkin/walk-ins', { data: { showId: SHOW, walkIns: [big] } });

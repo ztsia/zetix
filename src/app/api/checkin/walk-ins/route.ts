@@ -33,7 +33,8 @@ const MAX_PER_REQUEST = 500;
 
 const walkInSchema = z.object({
   clientId: z.string().uuid(),
-  headcount: z.number().int().positive(),
+  // The column's own bound; the operational cap is the setting, checked below.
+  headcount: z.number().int().positive().max(2_147_483_647),
   label: z.string().trim().max(200).nullable().optional(),
   segmentId: z.number().int().positive().nullable().optional(),
   admittedAt: z.string().datetime(),
@@ -94,7 +95,21 @@ export async function POST(request: Request) {
       receipts.push({ index, clientId: w.clientId, outcome: 'REFUSED', reason: 'Walk-ins are turned off for this concert.' });
       continue;
     }
-    if (typeof max === 'number' && w.headcount > max) {
+    /**
+     * **No cap set means no walk-ins**, never no limit (spec/v3.md §32.5): the
+     * setting is seeded, so a null here is a misconfiguration to surface, and
+     * an uncapped headcount is how 2147483647 people walked in during QA.
+     */
+    if (typeof max !== 'number') {
+      receipts.push({
+        index,
+        clientId: w.clientId,
+        outcome: 'REFUSED',
+        reason: 'No largest walk-in group is set for this concert. Ask the desk to set one.',
+      });
+      continue;
+    }
+    if (w.headcount > max) {
       receipts.push({
         index,
         clientId: w.clientId,

@@ -32,6 +32,11 @@ function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((x) => x !== ''));
 }
 
+async function tick(box: ReturnType<Page['getByRole']>, on = true) {
+  await box.click();
+  await expect(box).toHaveAttribute('aria-checked', on ? 'true' : 'false');
+}
+
 async function exportCsv(page: Page): Promise<{ label: string; rows: string[][] }> {
   await page.getByRole('button', { name: 'Export' }).first().click();
   const label = (await page.getByRole('menu').innerText()).split('\n')[0];
@@ -44,16 +49,17 @@ test('FLOW-1 audience: Select all N matching → every count agrees → export h
   test.setTimeout(120_000);
   await adminLogin(page);
   await page.goto('/admin/concerts/1/audience');
+  await page.waitForLoadState('networkidle');
   const total = await sql`select count(*)::int n from party_pipeline where concert_id = 1`.catch(async () =>
     sql`select count(*)::int n from registrations r join shows s on s.id=r.show_id where s.concert_id = 1 and r.deleted_at is null`);
   const N = total[0].n as number;
   await expect(page.getByText(`${N} rows`)).toBeVisible();
   await shot(page, 'FLOW-1', 1, 'audience-paged');
 
-  await page.getByRole('checkbox', { name: 'Select all rows on this page' }).check();
+  await tick(page.getByRole('checkbox', { name: 'Select all rows on this page' }));
   await page.getByRole('button', { name: `Select all ${N} that match these filters` }).click();
   await expect(page.getByRole('status').filter({ hasText: 'are selected' })).toContainText(`All ${N}`);
-  const actions = await page.getByRole('button', { name: /^Actions/ }).innerText();
+  const actions = await page.getByRole('button', { name: /selected$/ }).first().innerText();
   const footer = await page.locator('main').innerText();
   test.info().annotations.push({ type: 'actions-label', description: actions });
   await shot(page, 'FLOW-1', 2, 'select-all-matching');
@@ -68,10 +74,10 @@ test('FLOW-1 audience: Select all N matching → every count agrees → export h
 
   // untick two on page 1
   const rowBoxes = page.getByRole('checkbox', { name: 'Select row' });
-  await rowBoxes.nth(0).uncheck();
-  await rowBoxes.nth(1).uncheck();
+  await tick(rowBoxes.nth(0), false);
+  await tick(rowBoxes.nth(1), false);
   await expect(page.getByRole('status').filter({ hasText: 'except' })).toContainText('except 2');
-  const actions2 = await page.getByRole('button', { name: /^Actions/ }).innerText();
+  const actions2 = await page.getByRole('button', { name: /selected$/ }).first().innerText();
   const less = await exportCsv(page);
   await shot(page, 'FLOW-1', 4, 'except-two');
   test.info().annotations.push({ type: 'export-except', description: `${less.label} → ${less.rows.length}; actions=${actions2}` });
@@ -83,12 +89,13 @@ test('FLOW-1 audience: Select all N matching → every count agrees → export h
 test('FLOW-2 audience: ticked rows across two pages export exactly those', async ({ page }) => {
   await adminLogin(page);
   await page.goto('/admin/concerts/1/audience');
+  await page.waitForLoadState('networkidle');
   const boxes = page.getByRole('checkbox', { name: 'Select row' });
-  await boxes.nth(0).check();
-  await boxes.nth(1).check();
+  await tick(boxes.nth(0));
+  await tick(boxes.nth(1));
   await page.getByRole('button', { name: 'Next page' }).click();
   await expect(page.getByText('Page 2 of')).toBeVisible();
-  await boxes.nth(0).check();
+  await tick(boxes.nth(0));
   await shot(page, 'FLOW-2', 1, 'ticked-two-pages');
   const out = await exportCsv(page);
   await shot(page, 'FLOW-2', 2, 'export-ticked');
@@ -100,7 +107,9 @@ test('FLOW-2 audience: ticked rows across two pages export exactly those', async
 test('FLOW-1b filtered and seats-grain exports cover the whole filter, not the page', async ({ page }) => {
   await adminLogin(page);
   await page.goto('/admin/concerts/1/audience?q=Bulk');
+  await page.waitForLoadState('networkidle');
   await page.goto('/admin/concerts/1/audience');
+  await page.waitForLoadState('networkidle');
   await page.getByRole('searchbox').or(page.getByPlaceholder(/search/i)).first().fill('Bulk Party');
   await expect(page.getByText('60 rows')).toBeVisible({ timeout: 15_000 });
   const f = await exportCsv(page);
@@ -109,6 +118,7 @@ test('FLOW-1b filtered and seats-grain exports cover the whole filter, not the p
   expect(f.rows.length).toBe(60);
 
   await page.goto('/admin/concerts/1/audience?grain=seats');
+  await page.waitForLoadState('networkidle');
   const seats = await sql`select count(*)::int n from attendees a join shows s on s.id=a.show_id where s.concert_id=1 and a.deleted_at is null`;
   const footer = await page.locator('main').innerText();
   const m = footer.match(/(\d+) rows/);
@@ -122,14 +132,15 @@ test('FLOW-1b filtered and seats-grain exports cover the whole filter, not the p
 test('FLOW-4 messages: bounced tab exports; a ticked message from a filtered tab exports', async ({ page }) => {
   await adminLogin(page);
   await page.goto('/admin/concerts/1/audience/messages');
+  await page.waitForLoadState('networkidle');
   await page.getByRole('tab', { name: /Bounced/ }).click();
-  await expect(page.getByText('1 row')).toBeVisible();
+  await expect(page.getByText('1 row', { exact: true })).toBeVisible({ timeout: 15_000 });
   const b = await exportCsv(page);
   await shot(page, 'FLOW-4', 1, 'messages-bounced-export');
   expect(b.rows.length).toBe(1);
   await page.keyboard.press('Escape');
   await page.getByRole('tab', { name: /Failed/ }).click();
-  await page.getByRole('checkbox', { name: 'Select row' }).first().check();
+  await tick(page.getByRole('checkbox', { name: 'Select row' }).first());
   const t = await exportCsv(page);
   test.info().annotations.push({ type: 'messages', description: `bounced=${b.rows.length} ${b.label}; failed ticked=${t.rows.length} ${t.label}` });
   expect(t.label).toContain('the 1 ticked');
@@ -137,22 +148,31 @@ test('FLOW-4 messages: bounced tab exports; a ticked message from a filtered tab
 });
 
 test('FLOW-4b export inventory: activity has one, concerts list and form responses table do not', async ({ page }) => {
+  await sql`delete from audit_log where action = 'qa.y_probe'`;
+  await sql`insert into audit_log (actor_id, action, entity_type, entity_id, concert_id, created_at)
+            select '11111111-1111-4111-8111-111111111111', 'qa.y_probe', 'registrations', g, 1, now() - (g || ' seconds')::interval
+            from generate_series(1, 120) g`;
   await adminLogin(page);
   await page.goto('/admin/concerts/1/activity');
+  await page.waitForLoadState('networkidle');
   await expect(page.getByRole('button', { name: 'Export' })).toHaveCount(1);
   await shot(page, 'FLOW-4b', 1, 'activity-export');
   const a = await exportCsv(page);
   const dbAudit = await sql`select count(*)::int n from audit_log where concert_id = 1`;
   test.info().annotations.push({ type: 'activity', description: `${a.label} → ${a.rows.length}; audit rows concert 1=${dbAudit[0].n}` });
+  expect(a.rows.length).toBe(dbAudit[0].n);
+  expect(dbAudit[0].n).toBeGreaterThan(100);
   await page.keyboard.press('Escape');
 
   await page.goto('/admin/concerts');
+  await page.waitForLoadState('networkidle');
   await expect(page.getByRole('heading', { name: 'Concerts' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toHaveCount(0);
   await expect(page.getByRole('checkbox')).toHaveCount(0);
   await shot(page, 'FLOW-4b', 2, 'concerts-no-export');
 
   await page.goto('/admin/concerts/3/forms/1/responses');
+  await page.waitForLoadState('networkidle');
   await page.waitForLoadState('networkidle');
   const buttons = await page.getByRole('button').allInnerTexts();
   test.info().annotations.push({ type: 'responses-buttons', description: buttons.join(' | ') });
@@ -173,10 +193,13 @@ test('FLOW-3 viewer: no export control on audience, messages, door; door revert 
 
 test('FLOW-17 Door screen: in the hall, walk-ins log, export includes walk-ins, revert is audited; FLOW-18 times in concert zone', async ({ page }) => {
   test.setTimeout(120_000);
+  await sql`delete from walk_ins where label = 'QA door walk-in'`;
+  await sql`delete from audit_log where action = 'checkin.walk_in_reverted'`;
   await sql`insert into walk_ins (client_id, show_id, headcount, label, operator_id, device_id, admitted_at)
             values (gen_random_uuid(), 4, 2, 'QA door walk-in', '22222222-2222-4222-8222-222222222222', 'qa', '2026-11-20 11:05:00+00')`;
   await adminLogin(page);
   await page.goto('/admin/concerts/3/checkin?show=4');
+  await page.waitForLoadState('networkidle');
   const db = await sql`select
       (select coalesce(sum(headcount),0)::int from walk_ins where show_id=4 and reverted_at is null) w,
       (select count(distinct attendee_id)::int from check_ins where show_id=4 and reverted_at is null) t`;
@@ -202,7 +225,10 @@ test('FLOW-17 Door screen: in the hall, walk-ins log, export includes walk-ins, 
   await expect
     .poll(() => sql`select count(*)::int n from audit_log where action = 'checkin.walk_in_reverted'`.then((r) => r[0].n), { timeout: 15_000 })
     .toBeGreaterThan(0);
+  await expect.poll(() => sql`select reverted_by from walk_ins where label = 'QA door walk-in'`.then((r) => r[0].reverted_by), { timeout: 15_000 }).not.toBeNull();
   const [w] = await sql`select reverted_at, reverted_by from walk_ins where label = 'QA door walk-in'`;
+  const [audit] = await sql`select actor_id, entity_id, concert_id from audit_log where action = 'checkin.walk_in_reverted'`;
+  test.info().annotations.push({ type: 'audit', description: JSON.stringify(audit) });
   expect(w.reverted_by).toBe('11111111-1111-4111-8111-111111111111');
   await page.reload();
   const main2 = await page.locator('main').innerText();

@@ -15,7 +15,7 @@ function record(key: string, value: unknown) {
   writeFileSync(EVIDENCE, JSON.stringify(cur, null, 2));
 }
 
-const THEMES = ['Default', 'Amber', 'Amethyst', 'Caffeine', 'Claude', 'Graphite', 'Supabase', 'Vercel'];
+const THEMES = ['Default', 'Amber', 'Amethyst', 'Caffeine', 'Emerald', 'Graphite', 'Mono', 'Terracotta'];
 
 /** sRGB of a CSS colour via canvas, then hue, and WCAG contrast against another. */
 async function colourFacts(page: Page) {
@@ -150,7 +150,7 @@ test('FLOW-8 theme switch, every theme in both modes, persistence, fonts, scope'
       if (theme === 'Default') expect(probe.theme).toBeNull();
       else expect(probe.theme).toBe(theme.toLowerCase());
       expect(probe.dark).toBe(mode === 'dark');
-      if (['Amber', 'Graphite', 'Supabase'].includes(theme)) await shot(page, `FLOW-8-step-5-${theme.toLowerCase()}-${mode}`, false);
+      if (['Amber', 'Graphite', 'Emerald'].includes(theme)) await shot(page, `FLOW-8-step-5-${theme.toLowerCase()}-${mode}`, false);
     }
   }
   record('sweep', sweep);
@@ -292,7 +292,7 @@ test('FLOW-9 a viewer can change the theme; FLOW-9b system mode follows the OS',
   const { ctx, page } = await newPage(browser, 'viewer', { colorScheme: 'light' });
   await page.goto('/admin/concerts/1/home', { waitUntil: 'networkidle' });
   await openAppearance(page);
-  await page.getByRole('menuitemradio', { name: 'Vercel' }).click();
+  await page.getByRole('menuitemradio', { name: 'Mono' }).click();
   await expect.poll(async () => (await themeProbe(page)).theme).toBe('vercel');
   await shot(page, 'FLOW-9-step-1-viewer-vercel', false);
   await page.keyboard.press('Escape');

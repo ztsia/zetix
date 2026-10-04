@@ -31,7 +31,7 @@ console.log('default', JSON.stringify(await probe()));
 
 // Choose a theme through the switcher itself.
 await page.getByRole('button', { name: /Appearance/ }).click();
-await page.getByRole('menuitemradio', { name: 'Supabase' }).click();
+await page.getByRole('menuitemradio', { name: 'Emerald' }).click();
 await page.getByRole('menuitemradio', { name: 'Dark' }).click();
 await page.waitForTimeout(300);
 await page.screenshot({ path: `${out}/switcher.png` });

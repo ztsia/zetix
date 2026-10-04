@@ -100,8 +100,9 @@ export interface MailTransport {
 }
 
 /** The `From` header. Gmail rewrites it to the authenticated mailbox otherwise. */
-function fromHeader(user: string, displayName: string): string {
-  return `"${displayName.replace(/"/g, '')}" <${user}>`;
+/** With no display name, the bare address: still a valid `From`, and still delivered. */
+function fromHeader(user: string, displayName: string | null): string {
+  return displayName ? `"${displayName.replace(/"/g, '')}" <${user}>` : user;
 }
 
 function toNodemailerMessage(message: OutgoingMessage, from: string) {
@@ -164,7 +165,8 @@ export type SmtpConfig = {
   secure: boolean;
   user: string;
   pass: string;
-  fromName: string;
+  /** `email.from_name`; null sends from the address alone. */
+  fromName: string | null;
 };
 
 /**
@@ -220,7 +222,7 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
  * sends `=?UTF-8?Q?...?=`. `streamTransport` runs the same MailComposer the SMTP
  * transport does and hands back the finished bytes.
  */
-export function createStreamTransport(fromName: string, user: string): MailTransport {
+export function createStreamTransport(fromName: string | null, user: string): MailTransport {
   const transporter = nodemailer.createTransport({ streamTransport: true, buffer: true });
   return wrap(transporter, fromHeader(user, fromName), user);
 }

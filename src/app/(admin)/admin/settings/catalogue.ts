@@ -164,6 +164,15 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         level: 'system',
       },
       {
+        key: 'email.from_name',
+        label: 'Sender name',
+        kind: 'text',
+        description:
+          'The name every message is sent under, beside the mailbox address: the organisation’s, never seeded. Blank sends from the address alone.',
+        operational: false,
+        level: 'system',
+      },
+      {
         key: 'email.max_per_dispatch',
         min: 1,
         label: 'Messages per dispatch',

@@ -142,7 +142,7 @@ export async function sendReply(input: {
    * `QUEUED` for the next tick, rather than claimed and stranded in `SENDING`.
    */
   try {
-    const transport = input.transport ?? createConfiguredTransport();
+    const transport = input.transport ?? (await createConfiguredTransport());
     const result = await dispatchBatch({ transport, onlyIds: [outboxId] });
     if (result.sent === 1) return { outboxId, sent: true, note: null };
     if (result.dailyCapReached) {

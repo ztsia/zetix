@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { resolveSetting } from '@/db/settings';
 import { env } from '@/lib/env';
 import { connectImap, type ImapConfig } from '@/lib/mail/imap';
 import type { MailInbox } from '@/lib/mail/inbox';
@@ -24,9 +25,6 @@ export const GMAIL_HOST = 'smtp.gmail.com';
  */
 export const GMAIL_PORT = 465;
 
-/** The display name on every message. */
-export const FROM_NAME = 'Lakeside Community Orchestra';
-
 export class MailNotConfiguredError extends Error {
   constructor(missing: string) {
     super(
@@ -48,7 +46,12 @@ export function normalizeAppPassword(raw: string): string {
   return raw.replace(/\s+/g, '');
 }
 
-export function resolveSmtpConfig(): SmtpConfig {
+/**
+ * Where mail goes and as whom. `fromName` is passed in rather than read here:
+ * it is the `email.from_name` setting, and this half stays synchronous so a
+ * missing credential is refused before anything touches the database.
+ */
+export function resolveSmtpConfig(fromName: string | null = null): SmtpConfig {
   const e = env();
 
   const user = e.GMAIL_USER;
@@ -72,11 +75,23 @@ export function resolveSmtpConfig(): SmtpConfig {
   const pass = e.GMAIL_APP_PASSWORD ? normalizeAppPassword(e.GMAIL_APP_PASSWORD) : '';
   if (!pass && !isOverridden) throw new MailNotConfiguredError('GMAIL_APP_PASSWORD');
 
-  return { host, port, secure, user, pass, fromName: FROM_NAME };
+  return { host, port, secure, user, pass, fromName };
 }
 
-export function createConfiguredTransport(): MailTransport {
-  return createSmtpTransport(resolveSmtpConfig());
+/**
+ * The transport every send path uses, signed with `email.from_name`.
+ *
+ * **The display name is the organisation's, so it is a setting, not a
+ * constant** (spec/v3.md §31): an install for another orchestra must not send
+ * as the first one. Blank or unset sends from the address alone, which still
+ * delivers, so its absence is not an error. The credential is checked first:
+ * an environment with no mailbox fails here before it reads anything.
+ */
+export async function createConfiguredTransport(): Promise<MailTransport> {
+  const config = resolveSmtpConfig();
+  const name = await resolveSetting<unknown>('email.from_name');
+  const fromName = typeof name === 'string' && name.trim() ? name.trim() : null;
+  return createSmtpTransport({ ...config, fromName });
 }
 
 /** Gmail's IMAP, implicit TLS (spec/v3.md §26.3). */

@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
-import { revertCheckInAction } from './actions';
+import { revertCheckInAction, revertWalkInAction } from './actions';
 
 /**
  * Undo one scan (spec/checkin.md §12.4).
@@ -37,11 +37,15 @@ export function RevertScanButton({
   showId,
   concertId,
   attendeeName,
+  kind = 'scan',
 }: {
+  /** The `check_ins` id, or the `walk_ins` id when `kind` is `walk-in`. */
   checkInId: number;
   showId: number;
   concertId: number;
   attendeeName: string;
+  /** A walk-in reverts the same way, through its own action (spec/v3.md §32.2). */
+  kind?: 'scan' | 'walk-in';
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
@@ -52,12 +56,20 @@ export function RevertScanButton({
   function revert() {
     setError(null);
     startTransition(async () => {
-      const result = await revertCheckInAction({
-        checkInId,
-        showId,
-        concertId,
-        reason: reason.trim() || null,
-      });
+      const result =
+        kind === 'walk-in'
+          ? await revertWalkInAction({
+              walkInId: checkInId,
+              showId,
+              concertId,
+              reason: reason.trim() || null,
+            })
+          : await revertCheckInAction({
+              checkInId,
+              showId,
+              concertId,
+              reason: reason.trim() || null,
+            });
       if (result.error) {
         setError(result.error);
         return;
@@ -73,7 +85,7 @@ export function RevertScanButton({
       <Button
         variant="ghost"
         size="icon"
-        aria-label={`Revert the scan for ${attendeeName}`}
+        aria-label={kind === 'walk-in' ? `Revert the walk-in ${attendeeName}` : `Revert the scan for ${attendeeName}`}
         onClick={() => setOpen(true)}
       >
         <RotateCcw />
@@ -88,10 +100,13 @@ export function RevertScanButton({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revert the scan for {attendeeName}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {kind === 'walk-in' ? `Revert the walk-in ${attendeeName}?` : `Revert the scan for ${attendeeName}?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The row stays in the log, marked as reverted — nothing is deleted. They drop out of
-              the checked-in count, and their ticket scans clean again at the door.
+              {kind === 'walk-in'
+                ? 'The row stays in the log, marked as reverted — nothing is deleted. They drop out of the count in the hall.'
+                : 'The row stays in the log, marked as reverted — nothing is deleted. They drop out of the checked-in count, and their ticket scans clean again at the door.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -125,7 +140,7 @@ export function RevertScanButton({
               disabled={isPending}
             >
               {isPending && <Spinner />}
-              Revert scan
+              {kind === 'walk-in' ? 'Revert walk-in' : 'Revert scan'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

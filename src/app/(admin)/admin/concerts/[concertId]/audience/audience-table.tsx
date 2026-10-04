@@ -18,6 +18,7 @@ import {
   type UrlTableState,
 } from '@/components/data-table';
 import { useCanEdit } from '@/components/auth/role';
+import { exportPartiesAction, exportSeatsAction } from './export-actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -125,6 +126,9 @@ export function AudienceTable({
     total: page.total,
     pageIds: page.rows.map((row) => String(row.id)),
   });
+
+  /** With nothing ticked, an export covers the whole filter (spec/v3.md §32.1). */
+  const exportSelection = selection ?? { filter, excludedIds: [] };
 
   const format = React.useMemo(() => formatter(timeZone), [timeZone]);
   const recordHref = (registrationId: number) =>
@@ -514,6 +518,8 @@ export function AudienceTable({
             filename: 'audience-parties',
             timeZone,
             sheetName: 'Parties',
+            load: () =>
+              exportPartiesAction({ concertId, selection: exportSelection, sorting: state.sorting }),
             columns: [
               { header: 'Contact', value: (r: PartyRow) => r.contactName },
               { header: 'Email', value: (r: PartyRow) => r.contactEmail },
@@ -550,6 +556,8 @@ export function AudienceTable({
             filename: 'audience-seats',
             timeZone,
             sheetName: 'Seats',
+            load: () =>
+              exportSeatsAction({ concertId, selection: exportSelection, sorting: state.sorting }),
             columns: [
               { header: 'Guest', value: (r: SeatRow) => r.fullName },
               { header: 'Party', value: (r: SeatRow) => r.contactName },

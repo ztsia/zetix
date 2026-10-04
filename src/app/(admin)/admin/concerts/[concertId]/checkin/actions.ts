@@ -6,6 +6,7 @@ import { dbErrorMessage } from '@/db/errors';
 import { requireRole } from '@/lib/auth/guards';
 import { canAccessShow } from '@/lib/auth/show-access';
 import { RevertError, revertCheckIn } from '@/lib/checkin/revert';
+import { WalkInRevertError, revertWalkIn } from '@/lib/checkin/walk-ins';
 import type { FormState } from '../../form-state';
 
 /**
@@ -60,6 +61,48 @@ export async function revertCheckInAction(input: {
     return { error: null, message: 'Reverted. The ticket can be admitted again.' };
   } catch (error) {
     if (error instanceof RevertError) return { error: error.message };
+    return { error: dbErrorMessage(error) };
+  }
+}
+
+const walkInSchema = z.object({
+  walkInId: z.number().int().positive(),
+  showId: z.number().int().positive(),
+  concertId: z.number().int().positive(),
+  reason: z.string().trim().max(500).nullable().catch(null),
+});
+
+/**
+ * Reverting a walk-in (spec/v3.md §32.2): admin-only and audited, like a scan.
+ * An usher can undo their own entry on the phone before it syncs; once it is
+ * on the server it is the desk's to correct.
+ */
+export async function revertWalkInAction(input: {
+  walkInId: number;
+  showId: number;
+  concertId: number;
+  reason?: string | null;
+}): Promise<FormState> {
+  const admin = await requireRole('ADMIN');
+
+  const parsed = walkInSchema.safeParse({ ...input, reason: input.reason ?? null });
+  if (!parsed.success) return { error: 'Malformed request.' };
+  if (!(await canAccessShow(admin, parsed.data.showId))) {
+    return { error: 'That show is not available.' };
+  }
+
+  try {
+    await revertWalkIn({
+      walkInId: parsed.data.walkInId,
+      showId: parsed.data.showId,
+      concertId: parsed.data.concertId,
+      actorId: admin.id,
+      reason: parsed.data.reason,
+    });
+    revalidatePath(`/admin/concerts/${parsed.data.concertId}/checkin`);
+    return { error: null, message: 'Reverted. They no longer count in the hall.' };
+  } catch (error) {
+    if (error instanceof WalkInRevertError) return { error: error.message };
     return { error: dbErrorMessage(error) };
   }
 }

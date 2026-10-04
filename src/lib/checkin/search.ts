@@ -119,7 +119,7 @@ export function searchManifest(
     const entryCode = normaliseTicketCode(entry.ticketCode);
     if (entryCode === code) {
       hits.push({ entry, matchedOn: 'ticketCode' });
-      seen.add(entry.qrTokenSha256);
+      seen.add(index.keyOf(entry));
     } else if (code.length >= MIN_PARTIAL_CODE_LENGTH && entryCode.includes(code)) {
       // Held back rather than pushed, so a name query that happens to look like
       // part of a code cannot bury the person the usher was actually typing.
@@ -129,10 +129,10 @@ export function searchManifest(
 
   if (name.length > 0) {
     for (const entry of index.entries) {
-      if (seen.has(entry.qrTokenSha256)) continue;
+      if (seen.has(index.keyOf(entry))) continue;
       if (normaliseName(entry.name).includes(name)) {
         hits.push({ entry, matchedOn: 'name' });
-        seen.add(entry.qrTokenSha256);
+        seen.add(index.keyOf(entry));
       }
     }
   }
@@ -146,11 +146,175 @@ export function searchManifest(
    * — and there the name is what was meant.
    */
   for (const hit of partial) {
-    if (!seen.has(hit.entry.qrTokenSha256)) {
+    if (!seen.has(index.keyOf(hit.entry))) {
       hits.push(hit);
-      seen.add(hit.entry.qrTokenSha256);
+      seen.add(index.keyOf(hit.entry));
     }
   }
 
   return hits.slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Parties (spec/v3.md §32.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shortest name query that searches at all. One letter matches a third of any
+ * roster; the list it produced was a wall the usher had to read past while a
+ * queue built. A property of names, not an operational value.
+ */
+export const MIN_NAME_QUERY_LENGTH = 2;
+
+/** How a party stands at the door, carried by shape as well as colour. */
+export type PartyState = 'NOT_IN' | 'PARTLY_IN' | 'ALL_IN' | 'CANCELLED' | 'NO_TICKET';
+
+export type PartyHit = {
+  registrationId: number;
+  /** Every member of the party on this phone's roster, cancelled ones too. */
+  members: readonly ManifestEntry[];
+  /** The member whose name or code matched. */
+  matched: ManifestEntry;
+  matchedOn: SearchHit['matchedOn'];
+  /** Where the query sits in `matched.name`, for the highlight; null when it cannot be placed. */
+  highlight: { start: number; end: number } | null;
+  /** A name to call the party by: never a placeholder when anyone has a real one. */
+  label: string;
+  /** Live seats (cancelled excluded), and how many of them are in. */
+  size: number;
+  admitted: number;
+  state: PartyState;
+};
+
+export type PartySearch = {
+  parties: PartyHit[];
+  /** Parties that matched before the list was cut short. */
+  total: number;
+  /** The query is too short to search on names yet. */
+  tooShort: boolean;
+};
+
+/**
+ * Search the roster and answer with **parties, not rows** (spec/v3.md §32.2).
+ *
+ * A party of four used to come back as four unrelated rows, and the usher had
+ * to open each to learn they were one booking. Now each party is one result,
+ * whichever member matched, with how many of it are already in.
+ *
+ * `notInOnly` is the "Not in" filter, on by default: a party whose every seat
+ * is in is hidden. A cancelled or unticketed member counts as not in, so the
+ * door can still find them and say why.
+ *
+ * Ranking: exact code, then a name match at the start of a word, then
+ * anywhere in a name, then a partial code; a party with somebody still
+ * outside before one that is all in.
+ */
+export function searchParties(
+  index: ManifestIndex,
+  query: string,
+  options: { admittedKeys: ReadonlySet<string>; notInOnly: boolean; limit?: number },
+): PartySearch {
+  const raw = query.trim();
+  const limit = options.limit ?? 25;
+  if (raw.length === 0) return { parties: [], total: 0, tooShort: false };
+
+  const code = normaliseTicketCode(raw);
+  const name = normaliseName(raw);
+  const nameSearch = name.length >= MIN_NAME_QUERY_LENGTH;
+  const codeSearch = code.length >= MIN_PARTIAL_CODE_LENGTH;
+
+  // rank: 0 exact code, 1 word-start name, 2 name substring, 3 partial code
+  const best = new Map<number, { entry: ManifestEntry; rank: number; matchedOn: SearchHit['matchedOn'] }>();
+  const consider = (entry: ManifestEntry, rank: number, matchedOn: SearchHit['matchedOn']) => {
+    const current = best.get(entry.registrationId);
+    if (!current || rank < current.rank) best.set(entry.registrationId, { entry, rank, matchedOn });
+  };
+
+  for (const entry of index.entries) {
+    if (entry.ticketCode) {
+      const entryCode = normaliseTicketCode(entry.ticketCode);
+      if (entryCode === code) consider(entry, 0, 'ticketCode');
+      else if (codeSearch && entryCode.includes(code)) consider(entry, 3, 'ticketCodePartial');
+    }
+    if (nameSearch) {
+      const entryName = normaliseName(entry.name);
+      const at = entryName.indexOf(name);
+      if (at === 0 || (at > 0 && entryName[at - 1] === ' ')) consider(entry, 1, 'name');
+      else if (at > 0) consider(entry, 2, 'name');
+    }
+  }
+
+  const hits: (PartyHit & { rank: number })[] = [];
+  for (const { entry, rank, matchedOn } of best.values()) {
+    const members = index.byRegistration.get(entry.registrationId) ?? [entry];
+    const hit = partyHit(index, members, entry, matchedOn, raw, options.admittedKeys);
+    if (options.notInOnly && hit.state === 'ALL_IN') continue;
+    hits.push({ ...hit, rank });
+  }
+
+  const outside = (h: PartyHit) => (h.state === 'ALL_IN' ? 1 : 0);
+  hits.sort(
+    (a, b) =>
+      a.rank - b.rank || outside(a) - outside(b) || a.label.localeCompare(b.label),
+  );
+
+  return {
+    parties: hits.slice(0, limit).map(withoutRank),
+    total: hits.length,
+    tooShort: !nameSearch && !codeSearch && hits.length === 0,
+  };
+}
+
+function withoutRank(hit: PartyHit & { rank: number }): PartyHit {
+  const { rank, ...rest } = hit;
+  void rank;
+  return rest;
+}
+
+function partyHit(
+  index: ManifestIndex,
+  members: readonly ManifestEntry[],
+  matched: ManifestEntry,
+  matchedOn: SearchHit['matchedOn'],
+  query: string,
+  admittedKeys: ReadonlySet<string>,
+): PartyHit {
+  const live = members.filter((m) => m.status !== 'CANCELLED');
+  const admitted = live.filter((m) => admittedKeys.has(index.keyOf(m))).length;
+  const named = members.find((m) => m.nameSource !== 'PLACEHOLDER');
+
+  let state: PartyState;
+  if (live.length === 0) state = 'CANCELLED';
+  else if (admitted === live.length) state = 'ALL_IN';
+  else if (admitted > 0) state = 'PARTLY_IN';
+  else if (live.every((m) => !m.hasTicket)) state = 'NO_TICKET';
+  else state = 'NOT_IN';
+
+  return {
+    registrationId: matched.registrationId,
+    members,
+    matched,
+    matchedOn,
+    highlight: matchedOn === 'name' ? highlightIn(matched.name, query) : null,
+    label: named?.name ?? matched.name,
+    size: live.length,
+    admitted,
+    state,
+  };
+}
+
+/**
+ * Where a query sits in a name, in the name's own characters. Placed only when
+ * folding left the length alone — a decomposed accent would shift it — because
+ * a highlight one letter off is worse than none.
+ */
+function highlightIn(original: string, query: string): { start: number; end: number } | null {
+  const folded = original
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (folded.length !== original.length) return null;
+  const needle = normaliseName(query);
+  const at = folded.indexOf(needle);
+  return at < 0 ? null : { start: at, end: at + needle.length };
 }

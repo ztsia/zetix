@@ -122,6 +122,40 @@ describe('staging', () => {
     expect(batch).toEqual({ status: 'COMMITTED', created_count: 3 });
   });
 
+  it('commits only the parties a searched tab shows, never every ready party (spec/v3.md §32.1)', async () => {
+    // "Select all N matching" in a tab with a search used to send { batchId }
+    // alone, and the command committed every ready party in the batch.
+    const { batchId } = await stage(publicSeg, [
+      line(2, { Timestamp: '', Name: 'Alice Tan', Email: 'alice@example.test', Guest: 'Alice Tan' }),
+      line(3, { Timestamp: '', Name: 'Alice Tan', Email: 'alice@example.test', Guest: 'Bob Tan' }),
+      line(4, { Timestamp: '', Name: 'Carl Ng', Email: 'carl@example.test', Guest: 'Carl Ng' }),
+      line(5, { Timestamp: '', Name: 'Dee Ong', Email: 'dee@example.test', Guest: 'Dee Ong' }),
+    ]);
+    // "Bob" matches only a non-head seat of Alice's party: the party is in.
+    const report = await run('intake.commit_rows', {
+      filter: { batchId, view: 'ready', search: 'bob' },
+      excludedIds: [],
+    });
+    expect(report.done).toBe(1);
+    expect((await partiesIn(publicSeg)).map((p) => p.contact_email)).toEqual(['alice@example.test']);
+  });
+
+  it('excludes a whole party when any one of its seats is unticked', async () => {
+    const { batchId } = await stage(publicSeg, [
+      line(2, { Timestamp: '', Name: 'Alice Tan', Email: 'alice@example.test', Guest: 'Alice Tan' }),
+      line(3, { Timestamp: '', Name: 'Alice Tan', Email: 'alice@example.test', Guest: 'Bob Tan' }),
+      line(4, { Timestamp: '', Name: 'Carl Ng', Email: 'carl@example.test', Guest: 'Carl Ng' }),
+    ]);
+    const rows = await staged(batchId);
+    const bobSeat = rows.find((r) => r.normalized.attendeeName === 'Bob Tan')!;
+    const report = await run('intake.commit_rows', {
+      filter: { batchId, view: 'ready' },
+      excludedIds: [bobSeat.id],
+    });
+    expect(report.done).toBe(1);
+    expect((await partiesIn(publicSeg)).map((p) => p.contact_email)).toEqual(['carl@example.test']);
+  });
+
   it('recognises a re-uploaded cumulative sheet by email and seat names, adding only what is new', async () => {
     const round1 = await stage(publicSeg, [
       line(2, { Timestamp: '', Name: 'Alice Tan', Email: 'alice@example.test', Guest: 'Alice Tan' }),

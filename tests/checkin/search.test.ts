@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildManifestIndex, type ManifestEntry } from '@/lib/checkin/manifest';
-import { normaliseTicketCode, searchManifest } from '@/lib/checkin/search';
+import { normaliseTicketCode, searchManifest, searchParties } from '@/lib/checkin/search';
 import { parseTicketCode } from '@/lib/tickets/identifiers';
 
 /**
@@ -11,12 +11,18 @@ import { parseTicketCode } from '@/lib/tickets/identifiers';
 
 function entry(over: Partial<ManifestEntry> & Pick<ManifestEntry, 'qrTokenSha256'>): ManifestEntry {
   return {
+    attendeeId: null,
+    hasTicket: true,
     ticketCode: 'ORC-7K4Q',
     name: 'Alice Tan',
+    nameSource: 'PROVIDED',
     playerName: null,
     status: 'CONFIRMED',
     registrationId: 1,
     partySize: 1,
+    segmentName: null,
+    checkedInAt: null,
+    checkedInBy: null,
     ...over,
   };
 }
@@ -171,5 +177,99 @@ describe('what search must not hide', () => {
   it('returns nothing for an empty query rather than the whole roster', () => {
     expect(searchManifest(INDEX, '')).toEqual([]);
     expect(searchManifest(INDEX, '   ')).toEqual([]);
+  });
+});
+
+describe('search finds a party, not a row (spec/v3.md §32.2)', () => {
+  const party = (
+    registrationId: number,
+    rows: Partial<ManifestEntry>[],
+  ): ManifestEntry[] =>
+    rows.map((r, i) =>
+      entry({
+        attendeeId: registrationId * 10 + i,
+        qrTokenSha256: r.hasTicket === false ? null : `${registrationId}${i}`.padEnd(64, 'a'),
+        registrationId,
+        partySize: rows.filter((x) => x.status !== 'CANCELLED').length,
+        ticketCode: r.hasTicket === false ? null : `ORC-${registrationId}${i}AA`,
+        ...r,
+      }),
+    );
+
+  const roster = buildManifestIndex([
+    ...party(1, [
+      { name: 'Nadia Hassan' },
+      { name: 'Guest of Nadia Hassan', nameSource: 'PLACEHOLDER' },
+    ]),
+    ...party(2, [
+      { name: 'Kenji Sato', hasTicket: false },
+      { name: 'Yui Sato', hasTicket: false },
+    ]),
+    ...party(3, [{ name: 'Haruto Sato' }]),
+    ...party(4, [{ name: 'Marcus Lee', status: 'CANCELLED' }]),
+    ...party(5, [{ name: 'Satoko Ishii' }]),
+  ]);
+  const none = new Set<string>();
+
+  it('returns one result for a party, whichever member matched', () => {
+    const result = searchParties(roster, 'nadia', { admittedKeys: none, notInOnly: true });
+    expect(result.parties).toHaveLength(1);
+    expect(result.parties[0]).toMatchObject({ registrationId: 1, size: 2, admitted: 0, label: 'Nadia Hassan' });
+  });
+
+  it('finds every seat with no ticket, which the old row search dropped', () => {
+    const result = searchParties(roster, 'sato', { admittedKeys: none, notInOnly: true });
+    expect(result.parties.map((p) => p.registrationId).sort()).toEqual([2, 3, 5]);
+    expect(result.parties.find((p) => p.registrationId === 2)?.state).toBe('NO_TICKET');
+  });
+
+  it('ranks a match at the start of a word before one inside it', () => {
+    const result = searchParties(roster, 'sato', { admittedKeys: none, notInOnly: true });
+    // "Satoko" starts with it; the Satos have it as a surname; all are word starts.
+    expect(result.parties.every((p) => p.highlight !== null)).toBe(true);
+    const ishii = searchParties(roster, 'atok', { admittedKeys: none, notInOnly: true });
+    expect(ishii.parties[0].label).toBe('Satoko Ishii');
+    expect(ishii.parties[0].highlight).toEqual({ start: 1, end: 5 });
+  });
+
+  it('hides a party that is all in under "Not in", and shows it under "All"', () => {
+    const inKeys = new Set([roster.keyOf(roster.entries[0]), roster.keyOf(roster.entries[1])]);
+    expect(searchParties(roster, 'nadia', { admittedKeys: inKeys, notInOnly: true }).parties).toEqual([]);
+    const all = searchParties(roster, 'nadia', { admittedKeys: inKeys, notInOnly: false });
+    expect(all.parties[0]).toMatchObject({ state: 'ALL_IN', admitted: 2 });
+  });
+
+  it('says "2 of 4 in" by counting only live seats', () => {
+    const half = new Set([roster.keyOf(roster.entries[0])]);
+    const result = searchParties(roster, 'nadia', { admittedKeys: half, notInOnly: true });
+    expect(result.parties[0]).toMatchObject({ state: 'PARTLY_IN', admitted: 1, size: 2 });
+  });
+
+  it('still finds a cancelled guest under "Not in", so the door can say why', () => {
+    const result = searchParties(roster, 'marcus', { admittedKeys: none, notInOnly: true });
+    expect(result.parties[0].state).toBe('CANCELLED');
+  });
+
+  it('never calls a party by a placeholder when a member has a real name', () => {
+    const result = searchParties(roster, 'guest of', { admittedKeys: none, notInOnly: true });
+    expect(result.parties[0].label).toBe('Nadia Hassan');
+  });
+
+  it('counts what was cut, so the screen can say "keep typing"', () => {
+    const result = searchParties(roster, 'sa', { admittedKeys: none, notInOnly: false, limit: 2 });
+    expect(result.parties).toHaveLength(2);
+    expect(result.total).toBeGreaterThan(2);
+  });
+
+  it('asks for a second letter rather than matching a third of the roster', () => {
+    const result = searchParties(roster, 's', { admittedKeys: none, notInOnly: false });
+    expect(result.parties).toEqual([]);
+    expect(result.tooShort).toBe(true);
+  });
+
+  it('finds a party by its full ticket code', () => {
+    const result = searchParties(roster, 'ORC-30AA', { admittedKeys: none, notInOnly: true });
+    expect(result.parties[0].registrationId).toBe(3);
+    expect(result.parties[0].matchedOn).toBe('ticketCode');
   });
 });

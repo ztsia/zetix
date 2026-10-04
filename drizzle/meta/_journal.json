@@ -92,6 +92,13 @@
       "when": 1790599834755,
       "tag": "0204_intake",
       "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1790962553221,
+      "tag": "0205_walk_ins_and_door_state",
+      "breakpoints": true
     }
   ]
 }

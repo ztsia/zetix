@@ -1,4 +1,4 @@
-import type { QueuedScan, StoredManifest } from './store';
+import type { QueuedScan, QueuedWalkIn, StoredManifest } from './store';
 
 /**
  * The decisions the offline queue makes, as pure functions
@@ -10,9 +10,59 @@ import type { QueuedScan, StoredManifest } from './store';
  * reach it without a browser.
  */
 
-/** Scans this device still owes the server. */
+/**
+ * Scans this device still owes the server.
+ *
+ * Refused rows are not owed: the server has given its answer, and re-sending
+ * one would only refuse it again — or, before §32.2, refuse the whole batch it
+ * travelled in.
+ */
 export function pendingScans(scans: readonly QueuedScan[]): QueuedScan[] {
-  return scans.filter((s) => !s.syncedAt);
+  return scans.filter((s) => !s.syncedAt && !s.refusedAt);
+}
+
+/**
+ * Who may send a queued row: the operator who made it (spec/v3.md §32.2).
+ *
+ * The server stamps `check_ins.operator_id` from the session, so a row sent by
+ * the next person to sign in on this phone would be recorded as theirs — and if
+ * they are not rostered on the show, refused outright. A row with no tag was
+ * queued before the tag existed, and is sent by whoever is signed in, which is
+ * what every build before this one did.
+ */
+export function ownScans(scans: readonly QueuedScan[], operatorId: string): QueuedScan[] {
+  return scans.filter((s) => !s.operatorId || s.operatorId === operatorId);
+}
+
+/**
+ * Unsynced admissions left on this phone by somebody else, by name, so the
+ * operator now signed in can be told whose scans are waiting.
+ */
+export function othersWaiting(
+  scans: readonly QueuedScan[],
+  operatorId: string,
+  walkIns: readonly QueuedWalkIn[] = [],
+): { operatorName: string; count: number }[] {
+  const counts = new Map<string, number>();
+  const add = (name: string | null | undefined) => {
+    const key = name || 'another operator';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  };
+  for (const scan of pendingScans(scans)) {
+    if (!scan.operatorId || scan.operatorId === operatorId) continue;
+    add(scan.operatorName);
+  }
+  // A walk-in is an admission too: one entry, whatever its headcount.
+  for (const w of walkIns) {
+    if (w.syncedAt || w.refusedAt || w.operatorId === operatorId) continue;
+    add(w.operatorName);
+  }
+  return [...counts].map(([operatorName, count]) => ({ operatorName, count }));
+}
+
+/** Scans the server refused, or that could never be sent: "couldn't sync". */
+export function refusedScans(scans: readonly QueuedScan[]): QueuedScan[] {
+  return scans.filter((s) => !s.syncedAt && Boolean(s.refusedAt));
 }
 
 /**
@@ -65,39 +115,107 @@ export function manifestStaleness(
   };
 }
 
+/**
+ * The server's answer for one row. `REFUSED` is a row it could not read.
+ *
+ * Each receipt names the position of the row it answers, in the batch as sent,
+ * so a receipt list that drifted out of step with the batch can never mark the
+ * wrong row synced.
+ */
 export type ScanReceipt = {
-  qrTokenSha256: string;
-  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND';
+  index: number;
+  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND' | 'REFUSED';
+  showName?: string | null;
 };
 
+/** The longest an override reason may be, matching the route's schema. */
+const MAX_REASON = 500;
+const HASH = /^[0-9a-f]{64}$/;
+
 /**
- * Which queued scans a batch of receipts settles.
+ * Split what is owed into what can be sent and what never could be.
  *
- * **Every outcome settles the scan, including the two that recorded nothing.**
- * A `NOT_FOUND` or `WRONG_SHOW` receipt is the server's final answer about that
- * token — retrying it on the next reconnect would put it back in the queue for
- * the rest of the night, and a queue that never drains is one that hides the
- * scans that genuinely have not synced yet.
- *
- * Matching is by `(qrTokenSha256, scannedAt)` rather than by digest alone,
- * because a ticket legitimately scanned twice has two queued rows and settling
- * both on one receipt would lose the second.
+ * A row with neither a seat nor a well-formed digest cannot name anybody, and
+ * the route would refuse it — before §32.2, by refusing the whole batch with a
+ * 400, every batch, for the rest of the night. Those rows were queued by an
+ * older build for a seat with no ticket. They are set aside here so the server
+ * never sees them, with a reason the operator can act on.
  */
-export function settledScanIds(
-  pending: readonly QueuedScan[],
-  receipts: readonly ScanReceipt[],
-  sentInOrder: readonly QueuedScan[],
-): number[] {
-  const settled: number[] = [];
-  receipts.forEach((receipt, index) => {
-    const sent = sentInOrder[index];
-    if (!sent || sent.qrTokenSha256 !== receipt.qrTokenSha256) return;
-    const match = pending.find(
-      (p) => p.id === sent.id && p.qrTokenSha256 === receipt.qrTokenSha256,
+export function prepareBatch(pending: readonly QueuedScan[]): {
+  send: QueuedScan[];
+  setAside: { id: number; reason: string }[];
+} {
+  const send: QueuedScan[] = [];
+  const setAside: { id: number; reason: string }[] = [];
+  for (const scan of pending) {
+    if (scan.id === undefined) continue;
+    const named =
+      (scan.attendeeId != null && Number.isInteger(scan.attendeeId) && scan.attendeeId > 0) ||
+      (typeof scan.qrTokenSha256 === 'string' && HASH.test(scan.qrTokenSha256));
+    if (!named || !scan.deviceId || Number.isNaN(Date.parse(scan.scannedAt))) {
+      setAside.push({
+        id: scan.id,
+        reason:
+          'This admission does not say which seat it was for, so it cannot be recorded. Tell the desk who it was.',
+      });
+      continue;
+    }
+    send.push(
+      scan.overrideReason && scan.overrideReason.length > MAX_REASON
+        ? { ...scan, overrideReason: scan.overrideReason.slice(0, MAX_REASON) }
+        : scan,
     );
-    if (match?.id !== undefined) settled.push(match.id);
+  }
+  return { send, setAside };
+}
+
+/**
+ * How one batch's receipts settle the rows that were sent.
+ *
+ * **Row by row.** A recorded row, or one the server already had, is synced. Any
+ * other answer is final for that row and sets it aside as refused, with the
+ * reason in words; the rest of the batch settles regardless. A row with no
+ * receipt naming it is left pending, to be tried again.
+ *
+ * `NOT_FOUND` and `WRONG_SHOW` are refusals for a queued admission: the person
+ * is in the hall and the server has no seat to record them against, which is
+ * exactly what the desk needs to hear about rather than have settle silently.
+ */
+export function settleReceipts(
+  sent: readonly QueuedScan[],
+  receipts: readonly ScanReceipt[],
+): { synced: number[]; refused: { id: number; reason: string }[] } {
+  const synced: number[] = [];
+  const refused: { id: number; reason: string }[] = [];
+  const byIndex = new Map(receipts.map((r) => [r.index, r]));
+  sent.forEach((scan, index) => {
+    const receipt = byIndex.get(index);
+    if (scan.id === undefined || !receipt) return;
+    switch (receipt.outcome) {
+      case 'RECORDED':
+      case 'ALREADY_SYNCED':
+        synced.push(scan.id);
+        break;
+      case 'WRONG_SHOW':
+        refused.push({
+          id: scan.id,
+          reason: receipt.showName
+            ? `The server says this ticket is for ${receipt.showName}.`
+            : 'The server says this ticket is for another show.',
+        });
+        break;
+      case 'NOT_FOUND':
+        refused.push({
+          id: scan.id,
+          reason:
+            'The server has no such seat any more. It may have been removed, or its QR voided, after this phone downloaded the roster.',
+        });
+        break;
+      default:
+        refused.push({ id: scan.id, reason: 'The server could not read this admission.' });
+    }
   });
-  return settled;
+  return { synced, refused };
 }
 
 /**
@@ -108,7 +226,48 @@ export function scanSummary(scans: readonly QueuedScan[]): {
   total: number;
   pending: number;
   synced: number;
+  refused: number;
 } {
   const pending = pendingScans(scans).length;
-  return { total: scans.length, pending, synced: scans.length - pending };
+  const refused = refusedScans(scans).length;
+  return { total: scans.length, pending, synced: scans.length - pending - refused, refused };
+}
+
+// ---------------------------------------------------------------------------
+// Walk-ins (spec/v3.md §32.2)
+// ---------------------------------------------------------------------------
+
+/** This operator's walk-ins the server has not had yet — synced and refused excluded. */
+export function pendingWalkIns(rows: readonly QueuedWalkIn[], operatorId: string): QueuedWalkIn[] {
+  return rows.filter((w) => !w.syncedAt && !w.refusedAt && w.operatorId === operatorId);
+}
+
+export type WalkInReceipt = {
+  index: number;
+  outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'REFUSED';
+  reason?: string;
+};
+
+/**
+ * How one batch's receipts settle the walk-ins sent, row by row — the same
+ * rule as scans: recorded or already there is synced; refused is set aside with
+ * the server's reason and never re-sent; no receipt leaves it pending.
+ */
+export function settleWalkIns(
+  sent: readonly QueuedWalkIn[],
+  receipts: readonly WalkInReceipt[],
+): { synced: string[]; refused: { clientId: string; reason: string }[] } {
+  const byIndex = new Map(receipts.map((r) => [r.index, r]));
+  const synced: string[] = [];
+  const refused: { clientId: string; reason: string }[] = [];
+  sent.forEach((walkIn, index) => {
+    const receipt = byIndex.get(index);
+    if (!receipt) return;
+    if (receipt.outcome === 'REFUSED') {
+      refused.push({ clientId: walkIn.clientId, reason: receipt.reason ?? 'The server could not record this walk-in.' });
+    } else {
+      synced.push(walkIn.clientId);
+    }
+  });
+  return { synced, refused };
 }

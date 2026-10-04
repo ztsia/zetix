@@ -81,6 +81,7 @@ export async function submitNoteAction(
     mode: status.portal.unlockMode,
     admitted: status.state === 'ADMITTED',
     cancelled: status.state === 'CANCELLED',
+    onHold: status.state === 'ON_HOLD',
   });
   if (!unlocked || !status.portal.enabled) return REFUSED;
 

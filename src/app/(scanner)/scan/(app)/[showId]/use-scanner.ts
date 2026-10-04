@@ -1,7 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildManifestIndex, hashQrToken, type ManifestEntry } from '@/lib/checkin/manifest';
+import {
+  buildManifestIndex,
+  hashQrToken,
+  normaliseEntries,
+  type ManifestEntry,
+} from '@/lib/checkin/manifest';
 import {
   applyServerOutcome,
   evaluateScan,
@@ -9,14 +14,29 @@ import {
   type ScanResult,
 } from '@/lib/checkin/evaluate';
 import { extractQrToken } from '@/lib/checkin/token';
-import { manifestStaleness, pendingScans, scanSummary, settledScanIds } from '@/lib/checkin/queue';
+import {
+  manifestStaleness,
+  othersWaiting,
+  ownScans,
+  pendingScans,
+  pendingWalkIns,
+  refusedScans,
+  prepareBatch,
+  scanSummary,
+  settleReceipts,
+  settleWalkIns,
+  type ScanReceipt,
+  type WalkInReceipt,
+} from '@/lib/checkin/queue';
 import {
   openCheckinStore,
   toLocalCheckIns,
   type CheckinStore,
   type QueuedScan,
+  type QueuedWalkIn,
   type StoredManifest,
 } from '@/lib/checkin/store';
+import type { DoorStats } from '@/lib/checkin/dashboard';
 import { createScanFeedback, type ScanFeedback } from '@/lib/checkin/feedback';
 
 /**
@@ -35,6 +55,9 @@ import { createScanFeedback, type ScanFeedback } from '@/lib/checkin/feedback';
 
 const DEVICE_KEY = 'zetix.scanner.device';
 
+/** spec/v3.md §32.2: an attendee with no ticket is admitted with this reason. */
+export const NO_TICKET_REASON = 'No ticket issued';
+
 export type ScannerState = {
   ready: boolean;
   durable: boolean;
@@ -44,26 +67,41 @@ export type ScannerState = {
   refreshing: boolean;
   result: ScanResult | null;
   scans: QueuedScan[];
-  summary: { total: number; pending: number; synced: number };
+  summary: { total: number; pending: number; synced: number; refused: number };
+  /** True while a drain is in flight, so the header can say "Syncing". */
+  syncing: boolean;
+  /**
+   * The server answered 401: the session expired or was revoked. Said out
+   * loud, with the count, rather than leaving a "queued" badge that never
+   * clears (spec/v3.md §32.2).
+   */
+  signedOut: boolean;
+  /** Rows the server refused, with their reasons: "couldn't sync". */
+  refused: QueuedScan[];
+  /** Unsynced admissions somebody else left on this phone, by name. */
+  othersWaiting: { operatorName: string; count: number }[];
+  /** This operator's walk-ins on this phone, synced or not. */
+  walkIns: QueuedWalkIn[];
+  /** The last figures the server gave, or null before the first. */
+  serverStats: DoorStats | null;
 };
 
 type ManifestResponse = { fetchedAt: string; attendees: ManifestEntry[] };
-type ReceiptResponse = {
-  receipts: {
-    qrTokenSha256: string;
-    outcome: 'RECORDED' | 'ALREADY_SYNCED' | 'WRONG_SHOW' | 'NOT_FOUND';
-    showName?: string | null;
-  }[];
-};
+type ReceiptResponse = { receipts: ScanReceipt[] };
 
 export function useScanner({
   showId,
   manifestExpiresAt,
   scanDebounceMs,
+  operatorId,
+  operatorName,
 }: {
   showId: number;
   manifestExpiresAt: string | null;
   scanDebounceMs: number;
+  /** The signed-in operator. Every queued row is tagged with them. */
+  operatorId: string;
+  operatorName: string;
 }) {
   const storeRef = useRef<CheckinStore | null>(null);
   const feedbackRef = useRef<ScanFeedback | null>(null);
@@ -76,12 +114,22 @@ export function useScanner({
   const [durable, setDurable] = useState(true);
   const [manifest, setManifest] = useState<StoredManifest | null>(null);
   const [scans, setScans] = useState<QueuedScan[]>([]);
+  const [walkIns, setWalkIns] = useState<QueuedWalkIn[]>([]);
+  /** The last figures from the server, kept so an offline Stats tab can show them, marked stale. */
+  const [serverStats, setServerStats] = useState<DoorStats | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [muted, setMutedState] = useState(false);
 
   const index = useMemo(() => buildManifestIndex(manifest?.attendees ?? []), [manifest]);
+  /** The latest index, for `drain`, which must not re-create on every refresh. */
+  const indexRef = useRef(index);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -89,11 +137,13 @@ export function useScanner({
       const response = await fetch(`/api/checkin/manifest?showId=${showId}`, {
         cache: 'no-store',
       });
+      if (response.status === 401) setSignedOut(true);
       if (!response.ok) return;
+      setSignedOut(false);
       const body = (await response.json()) as ManifestResponse;
       const next: StoredManifest = {
         showId,
-        attendees: body.attendees,
+        attendees: normaliseEntries(body.attendees),
         fetchedAt: body.fetchedAt,
         expiresAt: manifestExpiresAt,
       };
@@ -121,6 +171,7 @@ export function useScanner({
     if (!store || drainingRef.current) return;
 
     drainingRef.current = true;
+    setSyncing(true);
     try {
       /**
        * **Loop until the queue is actually empty, not until one batch is sent.**
@@ -129,23 +180,27 @@ export function useScanner({
        * edge one: "Admit remaining 3" enqueues four rows in a tight loop, and
        * the re-entry guard below turns the last three into no-ops. An earlier
        * version stopped after the first batch, which left three of the four
-       * stranded until the network next blipped — at a door, that is three
-       * people admitted and unrecorded, and the stats tab wrong for the rest of
-       * the night, which is exactly the failure the party control exists to
-       * prevent.
+       * stranded until the network next blipped.
+       *
+       * **And one bad row never blocks the rest** (spec/v3.md §32.2). Each
+       * receipt settles its own row; a row the server refuses is set aside as
+       * "couldn't sync" and never sent again. Before, one row the server could
+       * not read made every later batch a 400, for the rest of the night.
        */
-      for (;;) {
+      scans: for (;;) {
         const all = await store.allScans(showId);
-        const pending = pendingScans(all);
         setScans(all);
-        if (pending.length === 0) return;
+        const { send, setAside } = prepareBatch(pendingScans(ownScans(all, operatorId)));
+        if (setAside.length > 0) await store.markRefused(setAside, new Date().toISOString());
+        if (send.length === 0) break;
 
         const response = await fetch('/api/checkin/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             showId,
-            scans: pending.map((s) => ({
+            scans: send.map((s) => ({
+              attendeeId: s.attendeeId ?? attendeeIdFor(s.qrTokenSha256),
               qrTokenSha256: s.qrTokenSha256,
               scannedAt: s.scannedAt,
               source: s.source,
@@ -154,36 +209,123 @@ export function useScanner({
             })),
           }),
         });
+
+        if (response.status === 404) {
+          /**
+           * Not assigned to this show any more (§14.3). The server has already
+           * put these on the desk's rejected-sync list, so sending them again
+           * would only say it twice. Set aside, with the reason.
+           */
+          await store.markRefused(
+            send.flatMap((s) =>
+              s.id === undefined
+                ? []
+                : [
+                    {
+                      id: s.id,
+                      reason:
+                        'This account is no longer assigned to this show. The desk has been told about these admissions.',
+                    },
+                  ],
+            ),
+            new Date().toISOString(),
+          );
+          break;
+        }
+        // Signed out, or the server is struggling: keep everything and retry
+        // on the next reconnect. Neither is an answer about any one row.
+        if (response.status === 401) setSignedOut(true);
         if (!response.ok) return;
+        setSignedOut(false);
 
         const body = (await response.json()) as ReceiptResponse;
-        const settled = settledScanIds(pending, body.receipts, pending);
+        const { synced, refused } = settleReceipts(send, body.receipts ?? []);
+        const at = new Date().toISOString();
+        if (synced.length > 0) await store.markSynced(synced, at);
+        if (refused.length > 0) await store.markRefused(refused, at);
         // Nothing settled means another pass would send the same rows forever.
         // Stop and let the next reconnect try again.
-        if (settled.length === 0) return;
-        await store.markSynced(settled, new Date().toISOString());
+        if (synced.length + refused.length === 0) break scans;
       }
+
+      /**
+       * Walk-ins, in the same loop and under the same assignment check
+       * (spec/v3.md §32.2), settled row by row the same way.
+       */
+      for (;;) {
+        const rows = await store.allWalkIns(showId);
+        setWalkIns(rows);
+        const send = pendingWalkIns(rows, operatorId);
+        if (send.length === 0) break;
+
+        const response = await fetch('/api/checkin/walk-ins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            showId,
+            walkIns: send.map((w) => ({
+              clientId: w.clientId,
+              headcount: w.headcount,
+              label: w.label,
+              admittedAt: w.admittedAt,
+              deviceId: w.deviceId,
+            })),
+          }),
+        });
+        const at = new Date().toISOString();
+        if (response.status === 404) {
+          await store.updateWalkIns(
+            send.map((w) => ({
+              clientId: w.clientId,
+              change: {
+                refusedAt: at,
+                refusedReason:
+                  'This account is no longer assigned to this show. The desk has been told about these admissions.',
+              },
+            })),
+          );
+          break;
+        }
+        if (response.status === 401) setSignedOut(true);
+        if (!response.ok) return;
+
+        const body = (await response.json()) as { receipts: WalkInReceipt[] };
+        const { synced, refused } = settleWalkIns(send, body.receipts ?? []);
+        await store.updateWalkIns([
+          ...synced.map((clientId) => ({ clientId, change: { syncedAt: at } })),
+          ...refused.map(({ clientId, reason }) => ({
+            clientId,
+            change: { refusedAt: at, refusedReason: reason },
+          })),
+        ]);
+        if (synced.length + refused.length === 0) break;
+      }
+
     } catch {
       // Still offline. The queue keeps its rows and the next `online` retries.
     } finally {
       drainingRef.current = false;
-      const latest = await store.allScans(showId);
-      setScans(latest);
+      setSyncing(false);
+      setScans(await store.allScans(showId));
+      setWalkIns(await store.allWalkIns(showId));
     }
-  }, [showId]);
+  }, [showId, operatorId]);
+
+  /** A legacy row's seat, found through the manifest, so it can be sent by id. */
+  function attendeeIdFor(hash: string | null): number | null {
+    if (!hash) return null;
+    return indexRef.current.byHash.get(hash)?.attendeeId ?? null;
+  }
 
   const enqueue = useCallback(
-    async (
-      qrTokenSha256: string,
-      source: 'ONLINE' | 'MANUAL',
-      overrideReason: string | null,
-    ) => {
+    async (entry: ManifestEntry, source: 'ONLINE' | 'MANUAL', overrideReason: string | null) => {
       const store = storeRef.current;
       if (!store) return;
 
       await store.enqueue({
         showId,
-        qrTokenSha256,
+        attendeeId: entry.attendeeId,
+        qrTokenSha256: entry.qrTokenSha256,
         // The phone's clock, preserved verbatim through a delayed sync (§12.3).
         scannedAt: new Date().toISOString(),
         /**
@@ -201,11 +343,13 @@ export function useScanner({
         source: source === 'MANUAL' ? 'MANUAL' : navigator.onLine ? 'ONLINE' : 'OFFLINE_SYNC',
         deviceId: deviceIdRef.current,
         overrideReason,
+        operatorId,
+        operatorName,
       });
       setScans(await store.allScans(showId));
       if (navigator.onLine) void drain();
     },
-    [showId, drain],
+    [showId, drain, operatorId, operatorName],
   );
 
   /**
@@ -273,15 +417,15 @@ export function useScanner({
 
       const store = storeRef.current;
       const all = store ? await store.allScans(showId) : [];
-      const local = evaluateScan({ hash, index, checkIns: toLocalCheckIns(all) });
+      const local = evaluateScan({ hash, index, checkIns: toLocalCheckIns(all, index) });
 
       setResult(local);
       feedbackRef.current?.play(local.tone);
 
       // Only an admission becomes a row. A red the operator does not override
       // is not a check-in, and enqueuing it would put a phantom in the log.
-      if (local.outcome === 'ADMITTED' && hash) {
-        await enqueue(hash, 'ONLINE', null);
+      if (local.outcome === 'ADMITTED' && local.entry) {
+        await enqueue(local.entry, 'ONLINE', null);
         return local;
       }
 
@@ -311,11 +455,22 @@ export function useScanner({
     [index, showId, scanDebounceMs, enqueue, askServer],
   );
 
-  /** "Admit anyway" on an amber or red result, and "Admit remaining N". */
+  /**
+   * "Admit anyway" on an amber or red result, and the party sheet — each seat
+   * with its own reason, because one tap can admit a guest who is fine beside
+   * one who is already in (spec/v3.md §32.2).
+   *
+   * A seat with no ticket is admitted by its attendee id, and its reason always
+   * starts with the one §32.2 names.
+   */
   const admit = useCallback(
-    async (entries: readonly ManifestEntry[], overrideReason: string | null) => {
-      for (const entry of entries) {
-        await enqueue(entry.qrTokenSha256, 'MANUAL', overrideReason);
+    async (items: readonly { entry: ManifestEntry; reason: string | null }[]) => {
+      for (const { entry, reason } of items) {
+        await enqueue(
+          entry,
+          'MANUAL',
+          entry.hasTicket ? reason : reason ? `${NO_TICKET_REASON} · ${reason}` : NO_TICKET_REASON,
+        );
       }
     },
     [enqueue],
@@ -344,13 +499,17 @@ export function useScanner({
       setDurable(store.durable);
       setMutedState(feedbackRef.current.muted());
 
-      const [saved, existing] = await Promise.all([
+      const [saved, existing, walkInRows] = await Promise.all([
         store.loadManifest(showId),
         store.allScans(showId),
+        store.allWalkIns(showId),
       ]);
       if (cancelled) return;
-      setManifest(saved);
+      // A roster saved by an older build lacks the fields 0205 added.
+      setManifest(saved ? { ...saved, attendees: normaliseEntries(saved.attendees) } : null);
       setScans(existing);
+      setWalkIns(walkInRows);
+      setServerStats(loadStats(showId));
       setReady(true);
 
       if (navigator.onLine) void refresh();
@@ -393,6 +552,79 @@ export function useScanner({
 
   const dismissResult = useCallback(() => setResult(null), []);
 
+  /**
+   * Record a walk-in (spec/v3.md §32.2): stored on the phone first, then sent
+   * with the next drain. Feedback is the same flash and tone as an admission.
+   */
+  const recordWalkIn = useCallback(
+    async (headcount: number, label: string | null) => {
+      const store = storeRef.current;
+      if (!store) return;
+      await store.enqueueWalkIn({
+        clientId: crypto.randomUUID(),
+        showId,
+        headcount,
+        label,
+        admittedAt: new Date().toISOString(),
+        deviceId: deviceIdRef.current,
+        operatorId,
+        operatorName,
+      });
+      setWalkIns(await store.allWalkIns(showId));
+      feedbackRef.current?.play('admitted');
+      if (navigator.onLine) void drain();
+    },
+    [showId, operatorId, operatorName, drain],
+  );
+
+  /** Undo one of this operator's own walk-ins, only before it has synced. */
+  const undoWalkIn = useCallback(
+    async (clientId: string) => {
+      const store = storeRef.current;
+      if (!store) return false;
+      const done = await store.deleteUnsyncedWalkIn(clientId);
+      setWalkIns(await store.allWalkIns(showId));
+      return done;
+    },
+    [showId],
+  );
+
+  /**
+   * The house, from the server (spec/v3.md §32.2, decision 59). Kept, and
+   * remembered across a reload, so an offline Stats tab can show the last
+   * figures marked stale rather than nothing.
+   */
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/checkin/stats?showId=${showId}`, { cache: 'no-store' });
+      if (response.status === 401) setSignedOut(true);
+      if (!response.ok) return;
+      const body = (await response.json()) as DoorStats;
+      setServerStats(body);
+      saveStats(showId, body);
+    } catch {
+      // Offline: the last figures stand, and the tab says how old they are.
+    }
+  }, [showId]);
+
+  /**
+   * Make this phone safe to hand back (spec/v3.md §32.2, ref.md §4: "assume at
+   * least one usher phone will be left unlocked on a table").
+   *
+   * One last drain if there is signal, then every roster on the phone goes, and
+   * every row the server already holds. What is still unsynced stays, tagged
+   * with this operator, for them to send when they next sign in here. The
+   * server-side sign-out is the caller's next step.
+   */
+  const prepareSignOut = useCallback(async () => {
+    const store = storeRef.current;
+    if (!store) return;
+    if (navigator.onLine) await drain();
+    await store.wipeForSignOut();
+    saveStats(showId, null);
+    setManifest(null);
+  }, [drain, showId]);
+
   const state: ScannerState = {
     ready,
     durable,
@@ -402,7 +634,13 @@ export function useScanner({
     refreshing,
     result,
     scans,
-    summary: scanSummary(scans),
+    summary: scanSummary(ownScans(scans, operatorId)),
+    syncing,
+    signedOut,
+    refused: refusedScans(ownScans(scans, operatorId)),
+    othersWaiting: othersWaiting(scans, operatorId, walkIns),
+    walkIns: walkIns.filter((w) => w.operatorId === operatorId),
+    serverStats,
   };
 
   return {
@@ -413,6 +651,10 @@ export function useScanner({
     admit,
     refresh,
     drain,
+    prepareSignOut,
+    recordWalkIn,
+    undoWalkIn,
+    fetchStats,
     dismissResult,
     unlockAudio,
     setMuted,
@@ -436,5 +678,26 @@ function deviceId(): string {
     return created;
   } catch {
     return `dev-ephemeral-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+/** Where the last server figures are kept, per show: a convenience, never the record. */
+const statsKey = (showId: number) => `zetix.scanner.stats.${showId}`;
+
+function loadStats(showId: number): DoorStats | null {
+  try {
+    const raw = localStorage.getItem(statsKey(showId));
+    return raw ? (JSON.parse(raw) as DoorStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStats(showId: number, stats: DoorStats | null): void {
+  try {
+    if (stats) localStorage.setItem(statsKey(showId), JSON.stringify(stats));
+    else localStorage.removeItem(statsKey(showId));
+  } catch {
+    // Storage refused: the figures live for this tab only.
   }
 }

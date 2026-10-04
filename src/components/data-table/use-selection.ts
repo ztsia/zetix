@@ -92,6 +92,9 @@ export function useTableSelection<F>(options: {
     tableProps: {
       rowSelection,
       onRowSelectionChange,
+      // The one number the footer, the Actions button and the Export menu all
+      // show (spec/v3.md §32.1).
+      selectedCount: count,
       selectAllMatching: {
         // Once nothing matches any more — the run just emptied the filter —
         // "all 0 selected" would be a claim about nothing.

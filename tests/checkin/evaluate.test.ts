@@ -31,12 +31,18 @@ const HASH = {
 
 function entry(over: Partial<ManifestEntry> & Pick<ManifestEntry, 'qrTokenSha256'>): ManifestEntry {
   return {
+    attendeeId: null,
+    hasTicket: true,
     ticketCode: 'ORC-7K4Q',
     name: 'Alice Tan',
+    nameSource: 'PROVIDED',
     playerName: 'Wei Ling',
     status: 'CONFIRMED',
     registrationId: 1,
     partySize: 4,
+    segmentName: null,
+    checkedInAt: null,
+    checkedInBy: null,
     ...over,
   };
 }
@@ -92,7 +98,7 @@ describe('a ticket that should get in', () => {
 
   it('counts the rest of the party as they are admitted', () => {
     const checkIns: LocalCheckIn[] = [
-      { qrTokenSha256: HASH.bob, scannedAt: '2026-09-19T11:00:00.000Z', source: 'MANUAL' },
+      { key: `h${HASH.bob}`, scannedAt: '2026-09-19T11:00:00.000Z', source: 'MANUAL' },
     ];
     const result = evaluateScan({ hash: HASH.alice, index: INDEX, checkIns });
     expect(result.party).toEqual({ size: 4, admitted: 2, remaining: 2 });
@@ -102,7 +108,7 @@ describe('a ticket that should get in', () => {
 describe('a ticket that has already been through', () => {
   const checkIns: LocalCheckIn[] = [
     {
-      qrTokenSha256: HASH.alice,
+      key: `h${HASH.alice}`,
       scannedAt: '2026-09-19T11:04:00.000Z',
       source: 'ONLINE',
       operatorName: 'Sam',
@@ -130,8 +136,8 @@ describe('a ticket that has already been through', () => {
 
   it('reports the earliest scan when a token was read more than twice', () => {
     const twice: LocalCheckIn[] = [
-      { qrTokenSha256: HASH.alice, scannedAt: '2026-09-19T11:09:00.000Z', source: 'ONLINE' },
-      { qrTokenSha256: HASH.alice, scannedAt: '2026-09-19T11:04:00.000Z', source: 'ONLINE' },
+      { key: `h${HASH.alice}`, scannedAt: '2026-09-19T11:09:00.000Z', source: 'ONLINE' },
+      { key: `h${HASH.alice}`, scannedAt: '2026-09-19T11:04:00.000Z', source: 'ONLINE' },
     ];
     expect(evaluateScan({ hash: HASH.alice, index: INDEX, checkIns: twice }).firstScan?.at).toBe(
       '2026-09-19T11:04:00.000Z',
@@ -149,7 +155,7 @@ describe('a cancelled ticket', () => {
 
   it('outranks a duplicate, because it is the more useful thing to say', () => {
     const checkIns: LocalCheckIn[] = [
-      { qrTokenSha256: HASH.cancelled, scannedAt: '2026-09-19T11:00:00.000Z', source: 'ONLINE' },
+      { key: `h${HASH.cancelled}`, scannedAt: '2026-09-19T11:00:00.000Z', source: 'ONLINE' },
     ];
     expect(evaluateScan({ hash: HASH.cancelled, index: INDEX, checkIns }).outcome).toBe('CANCELLED');
   });
@@ -191,5 +197,60 @@ describe('the three feedback signatures', () => {
     const missing = evaluateScan({ hash: HASH.dan.replace('d', '9'), index: INDEX, checkIns: none });
     expect(cancelled.tone).toBe('error');
     expect(missing.tone).toBe('error');
+  });
+});
+
+describe('every seat is keyed by attendee, ticketed or not (spec/v3.md §32.2)', () => {
+  const party = buildManifestIndex([
+    entry({ attendeeId: 11, qrTokenSha256: HASH.alice, name: 'Nadia Hassan', registrationId: 9, partySize: 3 }),
+    entry({ attendeeId: 12, qrTokenSha256: null, hasTicket: false, ticketCode: null, name: 'Kenji Sato', registrationId: 9, partySize: 3 }),
+    entry({ attendeeId: 13, qrTokenSha256: null, hasTicket: false, ticketCode: null, name: 'Haruto Sato', registrationId: 9, partySize: 3 }),
+  ]);
+
+  it('keeps two seats with no ticket apart, rather than colliding on a null digest', () => {
+    expect(party.byKey.size).toBe(3);
+    expect(party.byHash.size).toBe(1);
+  });
+
+  it('counts a party member admitted with no ticket against the party, and only them', () => {
+    const checkIns: LocalCheckIn[] = [
+      { key: 'a12', scannedAt: '2026-09-19T11:00:00.000Z', source: 'MANUAL' },
+    ];
+    const result = evaluateScan({ hash: HASH.alice, index: party, checkIns });
+    expect(result.party).toEqual({ size: 3, admitted: 2, remaining: 1 });
+  });
+
+  it('reads as already in when another phone admitted the guest, from the manifest', () => {
+    // §12.3's check-in state: the duplicate check is no longer this phone only.
+    const synced = buildManifestIndex([
+      entry({
+        attendeeId: 11,
+        qrTokenSha256: HASH.alice,
+        checkedInAt: '2026-09-19T11:42:00.000Z',
+        checkedInBy: 'Bob',
+      }),
+    ]);
+    const result = evaluateScan({ hash: HASH.alice, index: synced, checkIns: none });
+    expect(result.outcome).toBe('ALREADY_CHECKED_IN');
+    expect(result.firstScan).toEqual({ at: '2026-09-19T11:42:00.000Z', operatorName: 'Bob' });
+  });
+});
+
+describe('a seat that is not confirmed (spec/v3.md §32.3)', () => {
+  const held = buildManifestIndex([
+    entry({ attendeeId: 21, qrTokenSha256: HASH.alice, status: 'WAITLIST', partySize: 1 }),
+    entry({ attendeeId: 22, qrTokenSha256: HASH.bob, status: 'PENDING_REVIEW', partySize: 1, registrationId: 2 }),
+  ]);
+
+  it('is red for a waitlisted seat, agreeing with the guest`s own page', () => {
+    const result = evaluateScan({ hash: HASH.alice, index: held, checkIns: none });
+    expect(result.outcome).toBe('ON_HOLD');
+    expect(result.tone).toBe('error');
+  });
+
+  it('is red for a seat awaiting review, and never a hard block', () => {
+    const result = evaluateScan({ hash: HASH.bob, index: held, checkIns: none });
+    expect(result.outcome).toBe('ON_HOLD');
+    expect(result.canAdmitAnyway).toBe(true);
   });
 });

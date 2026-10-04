@@ -7,7 +7,6 @@ import { shows } from '@/db/schema/shows';
 import { concerts } from '@/db/schema/concerts';
 import { operatorShowAssignments } from '@/db/schema/people';
 import { requireScannerUser } from '@/lib/auth/guards';
-import { signOutOperator } from '@/lib/auth/actions';
 import {
   Empty,
   EmptyDescription,
@@ -17,6 +16,7 @@ import {
 } from '@/components/ui/empty';
 import { Button } from '@/components/ui/button';
 import { Item, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
+import { ScannerSignOutButton } from '../sign-out-button';
 
 /**
  * The show picker (spec/checkin.md §12.1).
@@ -78,11 +78,7 @@ export default async function ScannerHomePage() {
             Signed in as {user.displayName ?? user.email}
           </p>
         </div>
-        <form action={signOutOperator}>
-          <Button type="submit" variant="outline" size="sm">
-            Sign out
-          </Button>
-        </form>
+        <ScannerSignOutButton className="h-10" />
       </header>
 
       {assigned.length === 0 ? (
@@ -133,6 +129,7 @@ export default async function ScannerHomePage() {
         variant="ghost"
         size="sm"
         className="text-muted-foreground mt-auto"
+        nativeButton={false}
         render={<Link href="/scan/diagnostics" />}
       >
         <ScanLine className="size-3.5" />

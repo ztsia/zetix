@@ -4,17 +4,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   BarChart3,
-  CloudOff,
+  ChevronDown,
+  LogIn,
   ScanLine,
   Search as SearchIcon,
   TriangleAlert,
+  UserPlus,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import type { ManifestEntry } from '@/lib/checkin/manifest';
 import { toLocalCheckIns } from '@/lib/checkin/store';
 import { FLASH_MS } from '@/lib/checkin/feedback';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -22,9 +23,13 @@ import { Spinner } from '@/components/ui/spinner';
 import { useScanner } from './use-scanner';
 import { Camera } from './camera';
 import { ResultOverlay } from './result-overlay';
-import { AttendeeSheet } from './attendee-sheet';
+import { PartySheet } from './party-sheet';
 import { SearchTab } from './search-tab';
 import { StatsTab } from './stats-tab';
+import { AccountMenu } from './account-menu';
+import { SyncStatus } from './sync-status';
+import { WalkInSheet } from './walk-in-sheet';
+import { formatDoorTime } from './format';
 
 /**
  * How long a green result stays up before clearing itself (ref.md §1.2, "~2s").
@@ -35,6 +40,13 @@ import { StatsTab } from './stats-tab';
  * the colour has gone.
  */
 const RESULT_AUTO_DISMISS_MS = 2000;
+
+/**
+ * How often the Stats tab re-reads the house while it is open and online.
+ * An interaction constant like the admin Door screen's `POLL_MS`, not a
+ * capacity or a limit (`CLAUDE.md`).
+ */
+const STATS_POLL_MS = 15_000;
 
 export type ShowSummary = {
   id: number;
@@ -72,17 +84,22 @@ export type ShowSummary = {
  */
 export function ScannerShell({
   show,
+  operatorId,
   operatorName,
   manifestExpiresAt,
   scanDebounceMs,
   canSwitchShows,
+  walkIns: walkInConfig,
 }: {
   show: ShowSummary;
+  operatorId: string;
   operatorName: string;
   manifestExpiresAt: string | null;
   scanDebounceMs: number;
   /** False for an operator rostered on exactly one show (§12.1). */
   canSwitchShows: boolean;
+  /** Null when the concert does not record walk-ins (spec/v3.md §32.5). */
+  walkIns: { maxHeadcount: number | null } | null;
 }) {
   const {
     state,
@@ -91,19 +108,56 @@ export function ScannerShell({
     submitScan,
     admit,
     refresh,
+    prepareSignOut,
+    recordWalkIn,
+    undoWalkIn,
+    fetchStats,
     dismissResult,
     unlockAudio,
     setMuted,
     playTone,
-  } = useScanner({ showId: show.id, manifestExpiresAt, scanDebounceMs });
+  } = useScanner({
+    showId: show.id,
+    manifestExpiresAt,
+    scanDebounceMs,
+    operatorId,
+    operatorName,
+  });
 
   const [started, setStarted] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [selected, setSelected] = useState<ManifestEntry | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /** Which bottom tab is showing, so Search can take focus when it opens. */
+  const [tab, setTab] = useState('scan');
+  /** Bumped after an admission from Search: the query clears for the next guest. */
+  const [searchReset, setSearchReset] = useState(0);
+  const [walkInOpen, setWalkInOpen] = useState(false);
+  const [walkInLabel, setWalkInLabel] = useState('');
+
+  /** The house, re-read while the Stats tab is open and there is signal. */
+  useEffect(() => {
+    if (tab !== 'stats' || !state.online) return;
+    void fetchStats();
+    const id = window.setInterval(() => void fetchStats(), STATS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [tab, state.online, fetchStats]);
+
+  const openWalkIn = (label: string) => {
+    setWalkInLabel(label);
+    setWalkInOpen(true);
+    // The capacity warning reads the latest figures, when there is signal.
+    if (state.online) void fetchStats();
+  };
+
+  const stats = state.serverStats;
+  const pendingWalkIns = state.walkIns.filter((w) => !w.syncedAt && !w.refusedAt);
+  const refusedWalkIns = state.walkIns.filter((w) => !w.syncedAt && w.refusedAt);
+  /** Everything of this operator's not yet on the server: scans and walk-ins alike. */
+  const unsynced = state.summary.pending + pendingWalkIns.length;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const localCheckIns = toLocalCheckIns(state.scans);
+  const localCheckIns = toLocalCheckIns(state.scans, index);
 
   /**
    * **"Start scanning" is what unlocks audio, and that is the whole reason it
@@ -177,10 +231,12 @@ export function ScannerShell({
           <Button
             variant="secondary"
             size="sm"
-            className="h-9 min-w-0 flex-1 justify-start"
-            render={<Link href="/scan" />}
+            className="h-9 min-w-0 flex-1 justify-between"
+            nativeButton={false}
+            render={<Link href="/scan" aria-label={`${show.name} — switch show`} />}
           >
             <span className="truncate font-semibold">{show.name}</span>
+            <ChevronDown className="opacity-70" />
           </Button>
         ) : (
           <div
@@ -191,22 +247,72 @@ export function ScannerShell({
           </div>
         )}
 
-        <ConnectionBadge online={state.online} pending={state.summary.pending} />
+        <SyncStatus
+          online={state.online}
+          syncing={state.syncing}
+          pending={unsynced}
+          refused={state.refused}
+          refusedWalkIns={refusedWalkIns}
+          index={index}
+          timeZone={show.timezone}
+        />
 
         <Button
           variant="ghost"
           size="icon"
-          className="size-9"
+          className="size-11"
           onClick={toggleMute}
           aria-label={muted ? 'Unmute scan sounds' : 'Mute scan sounds'}
           aria-pressed={muted}
         >
           {muted ? <VolumeX /> : <Volume2 />}
         </Button>
+
+        <AccountMenu
+          operatorName={operatorName}
+          canSwitchShows={canSwitchShows}
+          unsynced={unsynced}
+          onPrepareSignOut={prepareSignOut}
+        />
       </header>
 
-      {(state.warning || !state.durable) && (
-        <div className="shrink-0 px-3 pt-2">
+      {(state.warning || !state.durable || state.signedOut || state.othersWaiting.length > 0) && (
+        <div className="flex shrink-0 flex-col gap-2 px-3 pt-2">
+          {state.signedOut && (
+            // A session that expired mid-shift used to fail silently: a
+            // "queued" badge that never cleared (spec/v3.md §32.2).
+            <Alert variant="destructive">
+              <LogIn />
+              <AlertTitle>
+                Signed out
+                {unsynced > 0 ? ` — sign in again to send ${unsynced} queued` : ''}
+              </AlertTitle>
+              <AlertDescription>
+                <p>Scanning still works. Admissions wait on this phone until you sign in.</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-10"
+                  nativeButton={false}
+                  render={<a href={`/scan/login?next=${encodeURIComponent(`/scan/${show.id}`)}`} />}
+                >
+                  Sign in again
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {state.othersWaiting.map((other) => (
+            <Alert key={other.operatorName}>
+              <TriangleAlert />
+              <AlertTitle>
+                {other.count} admission{other.count === 1 ? '' : 's'} from {other.operatorName}{' '}
+                {other.count === 1 ? 'is' : 'are'} waiting
+              </AlertTitle>
+              <AlertDescription>
+                Only {other.operatorName} can send them. Ask them to sign in on this phone.
+              </AlertDescription>
+            </Alert>
+          ))}
           {state.warning && (
             <Alert>
               <TriangleAlert />
@@ -226,7 +332,11 @@ export function ScannerShell({
         </div>
       )}
 
-      <Tabs defaultValue="scan" className="flex min-h-0 flex-1 flex-col gap-0">
+      <Tabs
+        value={tab}
+        onValueChange={(next) => setTab(String(next))}
+        className="flex min-h-0 flex-1 flex-col gap-0"
+      >
         {/* Panels above, tab bar below: thumb-reachable, no hamburger. */}
         <div className="relative min-h-0 flex-1">
           <TabsContent
@@ -239,6 +349,20 @@ export function ScannerShell({
               <Camera active onDecode={handleDecode} />
             ) : (
               <StartPrompt onStart={start} />
+            )}
+
+            {walkInConfig && !state.result && (
+              // Bottom of the viewfinder, where the thumb is; under the result
+              // overlay, so it never competes with a scan's answer.
+              <Button
+                variant="secondary"
+                size="lg"
+                className="absolute right-4 bottom-4 z-10 h-14 px-5 text-base"
+                onClick={() => openWalkIn('')}
+              >
+                <UserPlus />
+                Walk-in
+              </Button>
             )}
 
             {state.result && (
@@ -254,7 +378,7 @@ export function ScannerShell({
                 }}
                 onAdmitAnyway={async () => {
                   if (state.result?.entry) {
-                    await admit([state.result.entry], 'Admitted at door over a warning');
+                    await admit([{ entry: state.result.entry, reason: 'Admitted at door over a warning' }]);
                     dismissResult();
                   }
                 }}
@@ -266,6 +390,9 @@ export function ScannerShell({
             <SearchTab
               index={index}
               checkIns={localCheckIns}
+              active={tab === 'search' && !sheetOpen && !walkInOpen}
+              resetSignal={searchReset}
+              onWalkIn={walkInConfig ? openWalkIn : undefined}
               onSelect={(entry) => {
                 setSelected(entry);
                 setSheetOpen(true);
@@ -275,12 +402,20 @@ export function ScannerShell({
 
           <TabsContent value="stats" className="absolute inset-0">
             <StatsTab
-              index={index}
-              checkIns={localCheckIns}
-              pending={state.summary.pending}
+              stats={stats}
               online={state.online}
+              timeZone={show.timezone}
+              unsyncedAdmissions={state.summary.pending}
+              unsyncedWalkIns={pendingWalkIns.reduce((n, w) => n + w.headcount, 0)}
+              refused={state.summary.refused + refusedWalkIns.length}
+              walkIns={state.walkIns}
+              rosterFetchedAt={state.manifest?.fetchedAt ?? null}
               refreshing={state.refreshing}
-              onRefresh={refresh}
+              onRefresh={() => {
+                void refresh();
+                void fetchStats();
+              }}
+              onUndoWalkIn={(clientId) => void undoWalkIn(clientId)}
             />
           </TabsContent>
         </div>
@@ -305,16 +440,39 @@ export function ScannerShell({
         </TabsList>
       </Tabs>
 
-      <AttendeeSheet
+      {walkInConfig && (
+        <WalkInSheet
+          open={walkInOpen}
+          onOpenChange={setWalkInOpen}
+          maxHeadcount={walkInConfig.maxHeadcount}
+          initialLabel={walkInLabel}
+          atCapacity={
+            stats?.capacity != null && stats.inHall >= stats.capacity
+              ? { asOf: formatDoorTime(stats.asOf, show.timezone) }
+              : null
+          }
+          onRecord={async (headcount, label) => {
+            await recordWalkIn(headcount, label);
+            setWalkInOpen(false);
+            showFlash('admitted');
+            if (tab === 'search') setSearchReset((n) => n + 1);
+          }}
+        />
+      )}
+
+      <PartySheet
         entry={selected}
         index={index}
         checkIns={localCheckIns}
+        timeZone={show.timezone}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        onAdmit={async (entries, reason) => {
-          await admit(entries, reason);
+        onAdmit={async (items) => {
+          await admit(items);
+          setSheetOpen(false);
           showFlash('admitted');
           playTone('admitted');
+          if (tab === 'search') setSearchReset((n) => n + 1);
         }}
       />
 
@@ -361,16 +519,6 @@ function BottomTab({
       {icon}
       {label}
     </TabsTrigger>
-  );
-}
-
-function ConnectionBadge({ online, pending }: { online: boolean; pending: number }) {
-  if (online && pending === 0) return null;
-  return (
-    <Badge variant={online ? 'secondary' : 'destructive'} className="shrink-0 gap-1">
-      {!online && <CloudOff className="size-3" />}
-      {pending > 0 ? `${pending} queued` : 'Offline'}
-    </Badge>
   );
 }
 

@@ -7,6 +7,7 @@ import {
   createSegment,
   createShow,
   seedAttendees,
+  setSystemSetting,
   withDirectAttendeeWrites,
 } from '../helpers/fixtures';
 
@@ -102,8 +103,67 @@ beforeEach(async () => {
   ticketCode = rows[0].ticket_code;
 });
 
+/**
+ * Moves the show a few days ahead of the real clock. The fixture's date is a
+ * fixed 19 Sep 2026, which is already behind us, and a seat whose show day has
+ * passed no longer offers its QR (spec/v3.md §32.3).
+ */
+async function showIsAhead(): Promise<void> {
+  await sql`
+    update shows
+       set starts_at     = now() + interval '5 days',
+           doors_open_at = now() + interval '5 days' - interval '30 minutes'
+     where id = ${showId}
+  `;
+}
+
+describe('the page never tells a guest something untrue (spec/v3.md §32.3)', () => {
+  it('stops offering the QR once the show`s day has passed, even with no end time', async () => {
+    // The fixture show is 19 Sep 2026 with ends_at null: before §32.3 this
+    // page said "Present this QR at the door" and "Doors are open" for ever.
+    const html = await render(token);
+    expect(hasQr(html)).toBe(false);
+    expect(html).not.toContain('Present this QR at the door');
+    expect(html).not.toContain('Doors are open');
+    expect(html).toContain('This show took place on Sat 19 Sep 2026');
+  });
+
+  it('shows a waitlisted seat no QR, and says it is on hold', async () => {
+    await showIsAhead();
+    await withDirectAttendeeWrites(
+      (tx) => tx`update attendees set status = 'WAITLIST' where id = ${attendeeId}`,
+    );
+    const html = await render(token);
+    expect(hasQr(html)).toBe(false);
+    expect(html).toContain('Your seat is on hold');
+    expect(html).not.toContain('Download your ticket');
+    expect(html).not.toContain('Present this QR');
+  });
+
+  it('offers no download for a ticket that has not been issued', async () => {
+    await showIsAhead();
+    await withDirectAttendeeWrites(
+      (tx) => tx`
+        update attendees set ticket_template_id = null, ticket_template_version = null
+         where id = ${attendeeId}
+      `,
+    );
+    const html = await render(token);
+    expect(hasQr(html)).toBe(true);
+    expect(html).not.toContain('Download your ticket');
+    expect(html).toContain('on its way');
+  });
+
+  it('promises nothing about the emailed PDF on the not-found page', async () => {
+    const html = await render('A'.repeat(22));
+    expect(html).toContain(NOT_FOUND_COPY);
+    expect(html).not.toContain('it will get you in');
+  });
+});
+
 describe('a ticket that has not been used yet', () => {
   it('shows the holder their seat, the QR and where to be', async () => {
+    await showIsAhead();
     const html = await render(token);
     expect(html).toContain('Guest 1');
     expect(html).toContain('Gems of the Classics');
@@ -116,6 +176,7 @@ describe('a ticket that has not been used yet', () => {
 
   it('inlines the QR rather than asking the phone to fetch one', async () => {
     // Venue wifi at the worst possible moment (spec/surfaces.md §15.3).
+    await showIsAhead();
     const html = await render(token);
     expect(hasQr(html)).toBe(true);
     expect(html).toContain('viewBox="0 0 37 37"');
@@ -126,7 +187,7 @@ describe('a ticket that has not been used yet', () => {
     // The concert is Asia/Singapore; doors are 11:00Z, which is 19:00 there.
     const html = await render(token);
     expect(html).toContain('Sat 19 Sep 2026');
-    expect(html).toContain('Doors open 19:00');
+    expect(html).toContain('Doors 19:00');
     expect(html).toContain('Starts 19:30');
     // The UTC clock time must not appear anywhere.
     expect(html).not.toContain('11:00');
@@ -298,5 +359,55 @@ describe('a token that resolves to nothing', () => {
   it('never reaches notFound(), which would blank the page on 3G', async () => {
     // The mock throws a distinct error if the page ever goes back to throwing.
     await expect(render('ZzZzZzZzZzZzZzZzZzZzZz')).resolves.toContain(NOT_FOUND_COPY);
+  });
+});
+
+describe('layout and access (spec/v3.md §32.3)', () => {
+  it('puts the date, doors time and venue above every other section', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    const facts = html.indexOf('Doors ');
+    const venue = html.indexOf('Victoria Concert Hall');
+    const ticket = html.indexOf('data-slot="card"');
+    expect(facts).toBeGreaterThan(-1);
+    expect(venue).toBeGreaterThan(-1);
+    expect(facts).toBeLessThan(ticket);
+    expect(venue).toBeLessThan(ticket);
+  });
+
+  it('gives the QR an accessible name and section titles a heading level', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toContain(`role="img" aria-label="QR code for ticket ${ticketCode}"`);
+    expect(html).toMatch(/data-slot="card-title"[^>]*role="heading" aria-level="2"/);
+  });
+
+  it('says a seat is one of N in the booking, naming nobody else', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toContain('one of 2 seats in your booking');
+    expect(html).toContain('check in the whole party');
+    expect(html).not.toContain('Guest 2');
+  });
+
+  it('offers the download as a real link, 48px tall', async () => {
+    await showIsAhead();
+    const html = await render(token);
+    expect(html).toMatch(/<a href="\/api\/portal\/[^"]+\/ticket\?download=1"[^>]*h-12/);
+  });
+
+  it('shows "Before you come" from the moment the ticket is issued, before admission', async () => {
+    await showIsAhead();
+    await setSystemSetting('portal.enabled', true);
+    await setSystemSetting('portal.unlock_mode', 'ON_ADMISSION');
+    await sql`update concerts set practical_info_md = 'Parking is behind the hall.' where id = ${concertId}`;
+    const html = await render(token);
+    expect(html).toContain('Before you come');
+    expect(html).toContain('Parking is behind the hall.');
+  });
+
+  it('gives the not-found page a heading', async () => {
+    const html = await render('C'.repeat(22));
+    expect(html).toMatch(/role="heading" aria-level="1"[^>]*>We could not find that ticket/);
   });
 });

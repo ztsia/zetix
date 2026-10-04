@@ -164,8 +164,82 @@ describe('who may write a scan', () => {
 
   it('rejects a malformed batch before touching the database', async () => {
     expect((await post({ showId: f.showId, scans: [] })).status).toBe(400);
-    expect((await post({ showId: f.showId, scans: [scan('nothex')] })).status).toBe(400);
     expect((await post({ scans: [scan(f.hashes[0])] })).status).toBe(400);
+  });
+});
+
+describe('one bad row never blocks the queue (spec/v3.md §32.2)', () => {
+  it('refuses the bad row by itself and records every good one beside it', async () => {
+    // Before §32.2 a single row the schema refused made the whole batch a 400,
+    // and the phone re-sent the same poisoned batch for the rest of the night.
+    const response = await post({
+      showId: f.showId,
+      scans: [
+        scan(f.hashes[0]),
+        scan('nothex'),
+        { ...scan(f.hashes[1]), qrTokenSha256: null }, // names no seat at all
+        scan(f.hashes[2], { scannedAt: '2026-09-19T11:05:00.000Z' }),
+      ],
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.receipts.map((r: { index: number; outcome: string }) => [r.index, r.outcome])).toEqual([
+      [0, 'RECORDED'],
+      [1, 'REFUSED'],
+      [2, 'REFUSED'],
+      [3, 'RECORDED'],
+    ]);
+    const [{ count }] = await sql<{ count: number }[]>`select count(*)::int from check_ins`;
+    expect(count).toBe(2);
+  });
+
+  it('admits a seat with no ticket by its attendee id, with the reason', async () => {
+    // Confirmed and not yet ticketed: a late approval, or a late import.
+    const [{ segment_id: segmentId }] = await sql<{ segment_id: number }[]>`
+      select segment_id from attendees where show_id = ${f.showId} limit 1
+    `;
+    const registrationId = await createRegistration({ showId: f.showId, segmentId });
+    await seedAttendees({ registrationId, showId: f.showId, segmentId, count: 1, allocationType: 'BASE' });
+    const [seat] = await sql<{ id: number }[]>`
+      select id from attendees where registration_id = ${registrationId}
+    `;
+
+    const body = await (
+      await post({
+        showId: f.showId,
+        scans: [
+          {
+            attendeeId: Number(seat.id),
+            qrTokenSha256: null,
+            scannedAt: '2026-09-19T11:04:00.000Z',
+            source: 'MANUAL',
+            deviceId: 'usher-phone-1',
+            overrideReason: 'No ticket issued',
+          },
+        ],
+      })
+    ).json();
+    expect(body.receipts[0]).toMatchObject({ index: 0, outcome: 'RECORDED' });
+    expect(Number(body.receipts[0].attendeeId)).toBe(Number(seat.id));
+    const [row] = await sql<{ override_reason: string }[]>`select override_reason from check_ins`;
+    expect(row.override_reason).toBe('No ticket issued');
+  });
+
+  it('will not record an attendee id from another show', async () => {
+    // The id is re-verified against the show the operator is assigned to, just
+    // as a token is: knowing an id is not a way into another show's log.
+    const [other] = await sql<{ id: number }[]>`
+      select id from attendees where show_id = ${f.otherShowId} limit 1
+    `;
+    const body = await (
+      await post({
+        showId: f.showId,
+        scans: [{ ...scan(f.hashes[4]), attendeeId: Number(other.id), qrTokenSha256: null }],
+      })
+    ).json();
+    expect(body.receipts[0].outcome).toBe('NOT_FOUND');
+    const [{ count }] = await sql<{ count: number }[]>`select count(*)::int from check_ins`;
+    expect(count).toBe(0);
   });
 });
 

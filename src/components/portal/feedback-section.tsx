@@ -80,7 +80,7 @@ export function FeedbackSection({
     return (
       <Card key={formId}>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
             <CircleCheckIcon className="size-4 text-muted-foreground" />
             Thank you
           </CardTitle>
@@ -89,7 +89,7 @@ export function FeedbackSection({
           </CardDescription>
         </CardHeader>
         <CardFooter>
-          <Button variant="outline" size="lg" onClick={() => setAnswered(false)}>
+          <Button variant="outline" size="lg" className="h-12" onClick={() => setAnswered(false)}>
             Change my answer
           </Button>
         </CardFooter>
@@ -100,7 +100,7 @@ export function FeedbackSection({
   return (
     <Card key={formId}>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
           <MessageSquareHeartIcon className="size-4 text-muted-foreground" />
           {title}
         </CardTitle>
@@ -140,7 +140,7 @@ export function FeedbackSection({
         ) : null}
       </CardContent>
       <CardFooter>
-        <Button size="lg" className="w-full" onClick={onSubmit} disabled={pending}>
+        <Button size="lg" className="h-12 w-full text-base" onClick={onSubmit} disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
           Send feedback
         </Button>

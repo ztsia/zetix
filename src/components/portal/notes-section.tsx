@@ -142,7 +142,7 @@ export function NotesSection({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
             <PencilLineIcon className="size-4 text-muted-foreground" />
             Your note
           </CardTitle>
@@ -162,7 +162,7 @@ export function NotesSection({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
             <CircleCheckIcon className="size-4 text-muted-foreground" />
             Your note has been sent
           </CardTitle>
@@ -173,7 +173,7 @@ export function NotesSection({
           {existing ? <NoteStatus note={existing} /> : null}
         </CardContent>
         <CardFooter>
-          <Button variant="outline" size="lg" onClick={() => setSaved(false)}>
+          <Button variant="outline" size="lg" className="h-12" onClick={() => setSaved(false)}>
             Edit my note
           </Button>
         </CardFooter>
@@ -184,7 +184,7 @@ export function NotesSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base">
           <PencilLineIcon className="size-4 text-muted-foreground" />
           Leave a note
         </CardTitle>
@@ -296,7 +296,7 @@ export function NotesSection({
       </CardContent>
 
       <CardFooter>
-        <Button size="lg" className="w-full" onClick={onSubmit} disabled={pending || over}>
+        <Button size="lg" className="h-12 w-full text-base" onClick={onSubmit} disabled={pending || over}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
           {existing ? 'Save my note' : 'Send my note'}
         </Button>

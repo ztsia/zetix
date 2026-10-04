@@ -48,7 +48,6 @@ const querySchema = z.object({
   showId: z.coerce.number().int().positive(),
 });
 
-/** One row of `manifest_for_show()`, as PostgREST returns it. */
 /**
  * One row of `manifest_for_show()`, as PostgREST actually returns it.
  *
@@ -59,13 +58,19 @@ const querySchema = z.object({
  * and silently fail. Coerced once here, at the boundary, rather than trusted.
  */
 type ManifestRow = {
-  qr_token_sha256: string;
+  attendee_id: number | string;
+  qr_token_sha256: string | null;
+  has_ticket: boolean;
   ticket_code: string | null;
   name: string;
+  name_source: string;
   player_name: string | null;
   status: string;
   registration_id: number | string;
   party_size: number | string;
+  segment_name: string | null;
+  checked_in_at: string | null;
+  checked_in_by: string | null;
 };
 
 export async function GET(request: Request) {
@@ -115,13 +120,21 @@ export async function GET(request: Request) {
        */
       fetchedAt: new Date().toISOString(),
       attendees: rows.map((row) => ({
+        attendeeId: Number(row.attendee_id),
         qrTokenSha256: row.qr_token_sha256,
+        hasTicket: row.has_ticket,
         ticketCode: row.ticket_code,
         name: row.name,
+        nameSource: row.name_source,
         playerName: row.player_name,
         status: row.status,
         registrationId: Number(row.registration_id),
         partySize: Number(row.party_size),
+        segmentName: row.segment_name,
+        // PostgREST sends `timestamptz` as an ISO string with an offset; one
+        // shape, UTC, is what the phone compares against its own clock.
+        checkedInAt: row.checked_in_at ? new Date(row.checked_in_at).toISOString() : null,
+        checkedInBy: row.checked_in_by,
       })),
     },
     { headers: { 'Cache-Control': 'no-store' } },

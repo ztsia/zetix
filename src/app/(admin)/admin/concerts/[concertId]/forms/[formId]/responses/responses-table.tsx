@@ -9,7 +9,6 @@ import {
   DataTableColumnHeader,
   type DataTableColumn,
 } from '@/components/data-table';
-import type { ExportColumn } from '@/lib/export';
 import type { ResponseTableRow } from './rows';
 
 /**
@@ -35,7 +34,6 @@ export function ResponsesTable({
   sorting,
   search,
   basePath,
-  timeZone,
 }: {
   rows: ResponseTableRow[];
   rowCount: number;
@@ -44,7 +42,6 @@ export function ResponsesTable({
   sorting: SortingState;
   search: string;
   basePath: string;
-  timeZone: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -107,14 +104,6 @@ export function ResponsesTable({
     },
   ];
 
-  const exportColumns: ExportColumn<ResponseTableRow>[] = [
-    { header: 'Response', value: (row) => row.id },
-    { header: 'Submitted', value: (row) => row.submittedAt, width: 20 },
-    { header: 'Identity', value: (row) => row.identityKey, width: 28 },
-    { header: 'Seats asked for', value: (row) => row.seats },
-    { header: 'Superseded', value: (row) => row.superseded },
-  ];
-
   function apply(next: {
     pageIndex: number;
     pageSize: number;
@@ -141,12 +130,9 @@ export function ResponsesTable({
       searchPlaceholder="Search every answer…"
       server={{ rowCount, pageIndex, pageSize, sorting, search, onChange: apply }}
       isLoading={isPending}
-      export={{
-        filename: 'form-responses',
-        columns: exportColumns,
-        timeZone,
-        sheetName: 'Responses',
-      }}
+      // No table export: the schema export above the table is this form's
+      // export (§8.5), and two exports of one set of rows is one too many
+      // (spec/v3.md §32.1).
       emptyTitle="No responses yet"
       emptyDescription="Answers appear here as they arrive."
     />

@@ -15,6 +15,7 @@ import {
   type ScanLogSort,
 } from '@/lib/checkin/dashboard';
 import { getRejectedSyncs } from '@/lib/checkin/rejected-sync';
+import { listWalkIns } from '@/lib/checkin/walk-ins';
 import { CheckinDashboard } from './checkin-dashboard';
 import { nearestShowId } from './dashboard-url';
 import { maskForRole } from '@/lib/auth/mask';
@@ -99,6 +100,7 @@ export default async function CheckinPage({
         rejectedSyncs={[]}
         defaultShowId={0}
         scanLog={{ rows: [], total: 0 }}
+        walkIns={[]}
         pageIndex={0}
         pageSize={25}
         sorting={[]}
@@ -125,7 +127,7 @@ export default async function CheckinPage({
   const search = (query.q ?? '').trim();
   const includeReverted = query.reverted === '1';
 
-  const [stats, arrivals, operatorCounts, rejectedSyncs, scanLog] = await Promise.all([
+  const [stats, arrivals, operatorCounts, rejectedSyncs, scanLog, walkIns] = await Promise.all([
     getCheckinStats(showId),
     getArrivalBuckets(showId),
     getOperatorCounts(showId),
@@ -139,6 +141,7 @@ export default async function CheckinPage({
       search,
       includeReverted,
     }),
+    listWalkIns(showId, { includeReverted: true }),
   ]);
 
   const sorting: SortingState = sort ? [{ id: sort, desc: descending }] : [];
@@ -161,6 +164,7 @@ export default async function CheckinPage({
       // default this page applies — otherwise a shared link reopens elsewhere.
       defaultShowId={nearestShowId(showOptions)}
       scanLog={maskForRole(user.role, scanLog)}
+      walkIns={maskForRole(user.role, walkIns)}
       pageIndex={pageIndex}
       pageSize={pageSize}
       sorting={sorting}

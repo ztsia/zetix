@@ -129,6 +129,12 @@ export type DataTableProps<TData extends RowData> = {
    */
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: (next: RowSelectionState) => void;
+  /**
+   * How many rows are selected across every page, from `useTableSelection`
+   * (spec/v3.md §32.1). The table only knows its own page, so without this
+   * the footer read "10 of 24 selected" while the Actions button said 24.
+   */
+  selectedCount?: number;
 
   /**
    * Gmail's "select all N that match", for a server-paged table.
@@ -157,7 +163,12 @@ export type DataTableProps<TData extends RowData> = {
     excluded?: number;
   };
 
-  export?: DataTableExport<TData>;
+  /**
+   * The table's export. A whole-set export loaded on the server may write rows
+   * of its own shape — the door's log is scans *and* walk-ins (spec/v3.md
+   * §32.2) — so a config with `load` need not share the table's row type.
+   */
+  export?: DataTableExport<NoInfer<TData>> | LoadedExport;
 
   isLoading?: boolean;
   emptyTitle?: string;
@@ -168,6 +179,10 @@ export type DataTableProps<TData extends RowData> = {
   initialPageSize?: number;
   className?: string;
 };
+
+/** A whole-set export whose loader returns rows of its own shape. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LoadedExport = DataTableExport<any> & { load: NonNullable<DataTableExport<any>['load']> };
 
 /**
  * How long the search box waits before asking the server.
@@ -198,6 +213,7 @@ export function DataTable<TData extends RowData>({
   onSelectionChange,
   rowSelection,
   onRowSelectionChange,
+  selectedCount,
   selectAllMatching,
   export: exportConfig,
   isLoading = false,
@@ -365,11 +381,16 @@ export function DataTable<TData extends RowData>({
             <DataTableExportMenu
               rows={exportRows}
               config={exportConfig}
-              // In server mode the table holds one page, so an unqualified
-              // "export" would quietly hand over far less than the operator
-              // filtered down to. Say which it is.
-              scopeNote={
-                server && selectedRows.length === 0 ? 'this page only' : undefined
+              // A whole-set export names what it will cover, in the same number
+              // the footer and the Actions button use (spec/v3.md §32.1).
+              scope={
+                exportConfig.load
+                  ? exportScope({
+                      selected: selectedCount ?? selectedRows.length,
+                      allMatching: selectAllMatching?.selected ?? false,
+                      total: exportConfig.count ?? server?.rowCount ?? filteredRows.length,
+                    })
+                  : undefined
               }
             />
           )}
@@ -465,9 +486,28 @@ export function DataTable<TData extends RowData>({
         table={table}
         selectable={enableSelection}
         totalCount={server?.rowCount}
+        selectedCount={selectedCount}
       />
     </div>
   );
+}
+
+/**
+ * What a whole-set export covers, in words: "all 240 matching", or "the 12
+ * ticked" (spec/v3.md §32.1).
+ */
+export function exportScope({
+  selected,
+  allMatching,
+  total,
+}: {
+  selected: number;
+  allMatching: boolean;
+  total: number;
+}): { count: number; label: string } {
+  if (allMatching) return { count: selected, label: `all ${selected} matching` };
+  if (selected > 0) return { count: selected, label: `the ${selected} ticked` };
+  return { count: total, label: `all ${total} matching` };
 }
 
 /**

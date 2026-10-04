@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
-import { CalendarDaysIcon, DoorOpenIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
+import { CalendarDaysIcon, ChevronRightIcon, ClockIcon, MapPinIcon, TriangleAlertIcon } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { BookletSection } from '@/components/portal/booklet-section';
 import { FeedbackClosed, FeedbackSection } from '@/components/portal/feedback-section';
 import { NotesSection } from '@/components/portal/notes-section';
@@ -142,6 +143,8 @@ export default async function TicketStatusPage({
   const { show, timeZone } = status;
   const cancelled = status.state === 'CANCELLED';
   const admitted = status.state === 'ADMITTED';
+  /** Waitlisted or under review: the door refuses it, so no QR (spec/v3.md §32.3). */
+  const onHold = status.state === 'ON_HOLD';
 
   /**
    * **Who, not when** (decision 39). `portal.enabled` is a separate question
@@ -152,6 +155,7 @@ export default async function TicketStatusPage({
     mode: status.portal.unlockMode,
     admitted,
     cancelled,
+    onHold,
   });
   const sectionsVisible = unlocked && status.portal.enabled;
 
@@ -169,7 +173,15 @@ export default async function TicketStatusPage({
   const doorsTime = formatTime(show.doorsOpenAt, timeZone);
   const mapUrl = venueMapUrl(show.venueName, show.venueAddress);
   const admittedAt = admitted ? formatDateTime(status.admittedAt, timeZone) : null;
-  const ticketHref = `/api/portal/${status.qrToken}/ticket`;
+  /** Only for a ticket that has been issued: before that there is no PDF (§32.3). */
+  const ticketHref = status.ticketIssued ? `/api/portal/${status.qrToken}/ticket` : null;
+  /**
+   * The show's day is over and this seat never came in. The page stops offering
+   * the QR and says when the show was, rather than "Present this QR at the
+   * door" for ever — `ends_at` is often null, so this is by calendar day in the
+   * concert's zone, not by an inferred end time (spec/v3.md §32.3).
+   */
+  const missedShow = status.showDayPassed && !admitted;
 
   /**
    * Looked up only when the section could actually be drawn. A concert with the
@@ -257,7 +269,10 @@ export default async function TicketStatusPage({
    * doors are open is worse than one telling them nothing.
    */
   const countdownTarget = show.doorsOpenAt ?? show.startsAt;
-  const countdown = cancelled || status.showIsOver ? null : countdownTo(countdownTarget, new Date());
+  const countdown =
+    cancelled || onHold || status.showIsOver || status.showDayPassed
+      ? null
+      : countdownTo(countdownTarget, new Date());
 
   /**
    * What each slot draws, or `null` for a section this show does not run.
@@ -285,10 +300,12 @@ export default async function TicketStatusPage({
         key="ticket"
         name={status.attendeeName}
         ticketCode={status.ticketCode}
-        qr={await qrSvg(status.qrToken)}
+        qr={missedShow ? null : await qrSvg(status.qrToken)}
         admitted={admitted}
         admittedAt={admittedAt}
         downloadHref={ticketHref}
+        pastNote={missedShow ? (showDate ? `This show took place on ${showDate}` : 'This show has ended') : null}
+        partySize={status.partySize}
       />
     ),
     booklet: booklet ? (
@@ -300,26 +317,117 @@ export default async function TicketStatusPage({
     ) : null,
     notes: notesNode(token, notes),
     wall: <WallSection key="wall" notes={wall} />,
+    /**
+     * From the moment the ticket is issued, not from admission (spec/v3.md
+     * §32.3): its title is "Before you come", and parking and latecomers are
+     * no use to someone already inside. Still behind `portal.enabled`, like
+     * every section; never for a seat cancelled or on hold.
+     */
     practical:
-      sectionsVisible && status.portal.practicalInfoMd ? (
+      status.portal.enabled &&
+      status.portal.practicalInfoMd &&
+      (sectionsVisible || (status.ticketIssued && !cancelled && !onHold)) ? (
         <PracticalSection key="practical" markdown={status.portal.practicalInfoMd} />
       ) : null,
     feedback: feedbackNode(token, feedback),
   };
 
+  /** "Sat 19 Sep 2026 · Doors 19:00 · Starts 19:30" — what a guest acts on, in one line. */
+  const when = [showDate, doorsTime ? `Doors ${doorsTime}` : null, showTime ? `Starts ${showTime}` : null]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 py-8">
-      <header className="space-y-1 text-center">
-        <p className="text-sm text-muted-foreground">{status.concertName}</p>
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">{show.name}</h1>
+      {/*
+       * The facts first, above every other section (spec/v3.md §32.3): when,
+       * and where. They used to sit at the bottom, below the ticket and — once
+       * unlocked — below a PDF viewer and a form.
+       */}
+      <header className="space-y-3 text-center">
+        <div className="space-y-1">
+          <p className="text-sm text-muted-foreground">{status.concertName}</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-balance">{show.name}</h1>
+        </div>
+        {when ? (
+          <p className="flex items-center justify-center gap-2 text-base text-foreground/80">
+            <CalendarDaysIcon className="size-4 shrink-0" aria-hidden />
+            {when}
+          </p>
+        ) : null}
+        {countdown && countdownTarget ? (
+          <Badge variant="secondary" className="text-sm">
+            {countdown.open ? (
+              <Countdown
+                targetIso={countdownTarget.toISOString()}
+                initialLabel={DOORS_OPEN}
+                openLabel={DOORS_OPEN}
+              />
+            ) : (
+              <>
+                {'Doors open '}
+                <Countdown
+                  targetIso={countdownTarget.toISOString()}
+                  initialLabel={`in ${countdown.label}`}
+                  openLabel={DOORS_OPEN}
+                />
+              </>
+            )}
+          </Badge>
+        ) : null}
       </header>
+
+      {show.venueName || show.venueAddress ? (
+        /**
+         * The whole row is the link when there is somewhere to point at, so
+         * the tap target is the full width of the card rather than a few words
+         * of address — this is read one-handed, outdoors, possibly in the rain.
+         */
+        <Item
+          variant="outline"
+          className="min-h-12"
+          render={
+            mapUrl ? <a href={mapUrl} target="_blank" rel="noreferrer noopener" /> : undefined
+          }
+        >
+          <ItemMedia variant="icon">
+            <MapPinIcon />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle className="text-base">{show.venueName ?? 'Venue'}</ItemTitle>
+            {show.venueAddress ? (
+              <ItemDescription className="whitespace-pre-line text-foreground/80">
+                {show.venueAddress}
+              </ItemDescription>
+            ) : null}
+            {doorsTime && !cancelled ? (
+              <ItemDescription>Free seating — sit anywhere you like.</ItemDescription>
+            ) : null}
+          </ItemContent>
+          {mapUrl ? (
+            <ItemActions>
+              <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+              <span className="sr-only">(opens Google Maps)</span>
+            </ItemActions>
+          ) : null}
+        </Item>
+      ) : null}
 
       {cancelled ? (
         <Alert variant="destructive">
           <TriangleAlertIcon />
           <AlertTitle>This ticket is no longer valid</AlertTitle>
           <AlertDescription>
-            Please see the front desk. They can look up your booking and help.
+            If you think this is a mistake, reply to your ticket email, or ask at the front desk
+            on the night.
+          </AlertDescription>
+        </Alert>
+      ) : onHold ? (
+        <Alert>
+          <ClockIcon />
+          <AlertTitle>Your seat is on hold</AlertTitle>
+          <AlertDescription>
+            This code won&rsquo;t admit you right now. We&rsquo;ll email you if that changes.
           </AlertDescription>
         </Alert>
       ) : (
@@ -330,80 +438,6 @@ export default async function TicketStatusPage({
          */
         sectionOrder(postShow).map((id) => sections[id])
       )}
-
-      {countdown && countdownTarget ? (
-        <p className="text-center text-sm text-muted-foreground" aria-live="off">
-          {countdown.open ? (
-            <Countdown
-              targetIso={countdownTarget.toISOString()}
-              initialLabel={DOORS_OPEN}
-              openLabel={DOORS_OPEN}
-            />
-          ) : (
-            <>
-              {'Doors open '}
-              <Countdown
-                targetIso={countdownTarget.toISOString()}
-                initialLabel={`in ${countdown.label}`}
-                openLabel={DOORS_OPEN}
-              />
-            </>
-          )}
-        </p>
-      ) : null}
-
-      <ItemGroup className="gap-2">
-        {showDate ? (
-          <Item variant="muted">
-            <ItemMedia variant="icon">
-              <CalendarDaysIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="text-base">{showDate}</ItemTitle>
-              {showTime ? <ItemDescription>Starts {showTime}</ItemDescription> : null}
-            </ItemContent>
-          </Item>
-        ) : null}
-
-        {doorsTime ? (
-          <Item variant="muted">
-            <ItemMedia variant="icon">
-              <DoorOpenIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="text-base">Doors open {doorsTime}</ItemTitle>
-              <ItemDescription>Free seating — sit anywhere you like.</ItemDescription>
-            </ItemContent>
-          </Item>
-        ) : null}
-
-        {show.venueName || show.venueAddress ? (
-          /**
-           * The whole row is the link when there is somewhere to point at, so
-           * the tap target is the full width of the card rather than a few
-           * words of address — this is read one-handed, outdoors, possibly in
-           * the rain.
-           */
-          <Item
-            variant="muted"
-            render={
-              mapUrl ? <a href={mapUrl} target="_blank" rel="noreferrer noopener" /> : undefined
-            }
-          >
-            <ItemMedia variant="icon">
-              <MapPinIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="text-base">{show.venueName ?? 'Venue'}</ItemTitle>
-              {show.venueAddress ? (
-                <ItemDescription className="whitespace-pre-line">
-                  {show.venueAddress}
-                </ItemDescription>
-              ) : null}
-            </ItemContent>
-          </Item>
-        ) : null}
-      </ItemGroup>
     </main>
   );
 }

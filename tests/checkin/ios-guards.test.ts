@@ -103,7 +103,7 @@ describe('the notch and the home indicator', () => {
       'utf8',
     );
     const sheet = await readFile(
-      'src/app/(scanner)/scan/(app)/[showId]/attendee-sheet.tsx',
+      'src/app/(scanner)/scan/(app)/[showId]/party-sheet.tsx',
       'utf8',
     );
     expect(shell).toMatch(/env\(safe-area-inset-bottom\)/);

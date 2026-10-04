@@ -38,7 +38,10 @@ export type PortalSectionId = (typeof PORTAL_SECTION_IDS)[number];
 /**
  * The order sections appear in, before and after the show is over.
  *
- * **Before** is §13.3's own numbering. **After** is §13.2's third row —
+ * **Before** is §13.3's own numbering, except that practical info ("Before you
+ * come") follows the ticket: spec/v3.md §32.3 shows it from the moment the
+ * ticket is issued, and parking and latecomers are read before the evening,
+ * not after the booklet. **After** is §13.2's third row —
  * *"Feedback first, then notes until `portal.notes_close_at`, booklet,
  * practical info. The ticket collapses to a stub."*
  *
@@ -54,7 +57,7 @@ export type PortalSectionId = (typeof PORTAL_SECTION_IDS)[number];
  * the same section and reading it before writing one inverts what §13.4 is for.
  */
 const ORDER: Record<'before' | 'after', readonly PortalSectionId[]> = {
-  before: ['ticket', 'booklet', 'notes', 'wall', 'practical'],
+  before: ['ticket', 'practical', 'booklet', 'notes', 'wall'],
   after: ['feedback', 'notes', 'wall', 'booklet', 'practical', 'ticket'],
 };
 
@@ -109,8 +112,10 @@ export function portalIsUnlocked(input: {
   mode: PortalUnlockMode | null;
   admitted: boolean;
   cancelled: boolean;
+  /** A seat on the waitlist or under review is not a guest yet (spec/v3.md §32.3). */
+  onHold?: boolean;
 }): boolean {
-  if (input.cancelled) return false;
+  if (input.cancelled || input.onHold) return false;
   switch (input.mode) {
     case 'OPEN_TO_ALL':
       return true;

@@ -37,8 +37,9 @@ notes and feedback). The 19 Sep concert ran on V1; its feedback went out on 20 S
 
 **Now: V3, in progress.** `P` (schema delta, `drizzle/0200`), `Q` (command runner, Trash, Activity),
 `R` (named roles), `S` (the Audience workspace and party record), `T` (send wizard, Messages), `U`
-(inbox and scheduler), `V` (intake) and `W` (the seven-area console, Home, Setup, themes) are done;
-**`X`, publication, is last.** The console is rebuilt around one record, the party,
+(inbox and scheduler), `V` (intake), `W` (the seven-area console, Home, Setup, themes) and `Y`
+(surface fixes, `v3.md` §32: whole-set table exports, the door's walk-ins and stats, the portal;
+`drizzle/0205`) are done. **Next is `X`, publication, last**, which runs locally. The console is rebuilt around one record, the party,
 with derived stages, work queues, whole-job commands, a send wizard, an intake review gate, an inbox
 for replies and bounces, a `pg_cron` scheduler and named roles. Behaviour is `docs/spec/v3.md`; the
 branch map is `docs/modules-v3.md` (`P`–`X`, each PR straight to `main`, migrations from `0200`); the

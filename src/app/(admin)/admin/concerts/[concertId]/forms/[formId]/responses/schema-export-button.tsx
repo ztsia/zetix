@@ -71,7 +71,10 @@ export function SchemaExportButton({
             columns,
             timeZone: table.timeZone,
           }}
-          scopeNote="Every response, with a column per question from the schema each one was answered against."
+          scope={{
+            count: table.rows.length,
+            label: `all ${table.rows.length} response${table.rows.length === 1 ? '' : 's'}, a column per question`,
+          }}
         />
       </div>
     );

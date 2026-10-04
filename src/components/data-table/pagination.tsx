@@ -29,16 +29,19 @@ export function DataTablePagination<TData extends RowData>({
   table,
   selectable,
   totalCount,
+  selectedCount,
 }: {
   table: ReactTable<DataTableFeatures, TData>;
   selectable: boolean;
   /** Server mode: rows matching the search across every page, not just this one. */
   totalCount?: number;
+  /** Server mode: rows selected across every page (spec/v3.md §32.1). */
+  selectedCount?: number;
 }) {
   const pageCount = table.getPageCount();
   const { pageIndex, pageSize } = table.state.pagination;
   const filteredRows = totalCount ?? table.getFilteredRowModel().rows.length;
-  const selectedRows = table.getFilteredSelectedRowModel().rows.length;
+  const selectedRows = selectedCount ?? table.getFilteredSelectedRowModel().rows.length;
 
   return (
     <div className="flex flex-col-reverse items-center gap-4 px-1 sm:flex-row sm:justify-between">

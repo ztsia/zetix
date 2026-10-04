@@ -245,6 +245,26 @@ export const SETTING_GROUPS: { title: string; blurb: string; settings: SettingSp
         concert: true,
       },
       {
+        key: 'checkin.walk_ins_enabled',
+        label: 'Record walk-ins at the door',
+        kind: 'boolean',
+        description:
+          'Lets ushers record people admitted with no ticket — a headcount and, optionally, a name (spec/v3.md §32.2).',
+        operational: false,
+        level: 'system',
+        concert: true,
+      },
+      {
+        key: 'checkin.walk_in_max_headcount',
+        min: 1,
+        label: 'Largest walk-in group',
+        kind: 'number',
+        description: 'The most people one walk-in tap may record, so a typo of 30 for 3 is caught.',
+        operational: false,
+        level: 'system',
+        concert: true,
+      },
+      {
         key: 'import.fuzzy_match_threshold',
         min: 0,
         max: 1,

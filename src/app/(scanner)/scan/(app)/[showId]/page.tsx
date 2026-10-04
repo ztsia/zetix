@@ -80,6 +80,16 @@ export default async function ScannerShowPage({
   });
 
   /**
+   * Walk-ins are off unless the concert turns them on, and one tap records at
+   * most `checkin.walk_in_max_headcount` people (spec/v3.md §32.5). Both are
+   * re-checked by the server on sync; these only decide what the phone offers.
+   */
+  const [walkInsEnabled, walkInMax] = await Promise.all([
+    resolveSetting<boolean>('checkin.walk_ins_enabled', { showId: id, concertId: show.concertId }),
+    resolveSetting<number>('checkin.walk_in_max_headcount', { showId: id, concertId: show.concertId }),
+  ]);
+
+  /**
    * **With exactly one assignment the show pill is read-only** (§12.1).
    *
    * The pill exists so an usher can always see which show they are admitting
@@ -112,10 +122,13 @@ export default async function ScannerShowPage({
         doorsOpenAt: show.doorsOpenAt?.toISOString() ?? null,
         timezone: show.timezone,
       }}
+      operatorId={user.id}
       operatorName={user.displayName ?? user.email}
       canSwitchShows={canSwitchShows}
       manifestExpiresAt={expiresAt}
       scanDebounceMs={debounceMs ?? 0}
+      // Offered only with a cap set: the server refuses walk-ins without one.
+      walkIns={walkInsEnabled === true && walkInMax != null ? { maxHeadcount: walkInMax } : null}
     />
   );
 }

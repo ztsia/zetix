@@ -114,6 +114,14 @@ const SYSTEM_SEEDS: Record<string, unknown> = {
   'scheduler.history_days': 7,
   'inbox.match_fallback_days': 30,
   'inbox.sync_budget_seconds': 20,
+
+  /**
+   * Module `Y` (spec/v3.md §32.5): walk-ins are off until a concert turns them
+   * on, and one tap records at most this many people. Both describe the door's
+   * runtime, not this event.
+   */
+  'checkin.walk_ins_enabled': false,
+  'checkin.walk_in_max_headcount': 10,
 };
 
 async function main() {

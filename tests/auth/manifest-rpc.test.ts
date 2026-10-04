@@ -39,7 +39,13 @@ import {
  */
 
 type ManifestRow = {
+  attendee_id: string | number;
   qr_token_sha256: string | null;
+  has_ticket: boolean;
+  name_source: string;
+  segment_name: string | null;
+  checked_in_at: Date | null;
+  checked_in_by: string | null;
   ticket_code: string | null;
   name: string;
   player_name: string | null;
@@ -228,7 +234,7 @@ describe('manifest_for_show()', () => {
     });
   });
 
-  describe('shape — the seven fields of spec/checkin.md §12.3', () => {
+  describe('shape — spec/checkin.md §12.3, widened by spec/v3.md §32.2', () => {
     it('hashes the token and never returns the token itself', async () => {
       // The manifest lands in IndexedDB on an usher's phone. A raw token there
       // is a usable ticket for anyone who picks the phone up.
@@ -240,20 +246,81 @@ describe('manifest_for_show()', () => {
       expect(JSON.stringify(row)).not.toContain('tok-assigned-guest');
     });
 
-    it('returns exactly the seven specified fields', async () => {
+    it('returns exactly the specified fields', async () => {
       const id = await createUser('ADMIN');
       const [row] = await manifestAs(id, assignedShow);
       expect(Object.keys(row).sort()).toEqual(
         [
+          'attendee_id',
+          'checked_in_at',
+          'checked_in_by',
+          'has_ticket',
           'name',
+          'name_source',
           'party_size',
           'player_name',
           'qr_token_sha256',
           'registration_id',
+          'segment_name',
           'status',
           'ticket_code',
         ].sort(),
       );
+    });
+
+    it('keeps a seat with no ticket addressable by its attendee id', async () => {
+      // §32.2: the digest was the door's only key, and a seat with no token
+      // has none — so every such seat collided on null and the sync queue
+      // refused them all night.
+      const registrationId = await createRegistration({
+        showId: assignedShow,
+        segmentId: assignedSegment,
+      });
+      await seedAttendee({
+        registrationId,
+        showId: assignedShow,
+        segmentId: assignedSegment,
+        fullName: 'Late Approval',
+        qrToken: null,
+        ticketCode: null,
+      });
+
+      const id = await createUser('ADMIN');
+      const rows = await manifestAs(id, assignedShow);
+      const late = rows.find((r) => r.name === 'Late Approval');
+      expect(late).toMatchObject({ has_ticket: false, qr_token_sha256: null });
+      expect(Number(late?.attendee_id)).toBeGreaterThan(0);
+      const ticketed = rows.find((r) => r.name === 'Assigned Guest');
+      expect(ticketed?.has_ticket).toBe(true);
+      expect(new Set(rows.map((r) => String(r.attendee_id))).size).toBe(rows.length);
+    });
+
+    it('carries the first live check-in and who made it, skipping reverted ones', async () => {
+      // §12.3 always promised "check-in state"; without it a phone could not
+      // say "already in" for a guest another phone admitted.
+      const id = await createUser('ADMIN');
+      const usher = await createUser('OPERATOR');
+      await sql`update app_users set display_name = 'Bob' where id = ${usher}::uuid`;
+      const [row] = await manifestAs(id, assignedShow);
+      expect(row.checked_in_at).toBeNull();
+
+      await sql`
+        insert into check_ins (attendee_id, show_id, operator_id, scanned_at, source, reverted_at)
+        values
+          (${row.attendee_id}, ${assignedShow}, ${id}::uuid, '2026-09-19T11:00:00Z', 'ONLINE', now()),
+          (${row.attendee_id}, ${assignedShow}, ${usher}::uuid, '2026-09-19T11:42:00Z', 'ONLINE', null),
+          (${row.attendee_id}, ${assignedShow}, ${id}::uuid, '2026-09-19T11:50:00Z', 'MANUAL', null)
+      `;
+      const [after] = await manifestAs(id, assignedShow);
+      expect(new Date(after.checked_in_at as Date).toISOString()).toBe('2026-09-19T11:42:00.000Z');
+      expect(after.checked_in_by).toBe('Bob');
+    });
+
+    it('names the segment and whether the name is a placeholder', async () => {
+      const id = await createUser('ADMIN');
+      const [row] = await manifestAs(id, assignedShow);
+      expect(row.name_source).toBe('PROVIDED');
+      expect(typeof row.segment_name).toBe('string');
     });
 
     it('carries party size and the inviting player, for the offline party control', async () => {

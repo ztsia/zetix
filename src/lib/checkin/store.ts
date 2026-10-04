@@ -1,4 +1,4 @@
-import type { ManifestEntry } from './manifest';
+import { entryKey, type ManifestEntry, type ManifestIndex } from './manifest';
 import type { LocalCheckIn } from './evaluate';
 
 /**
@@ -21,9 +21,15 @@ import type { LocalCheckIn } from './evaluate';
  */
 
 const DB_NAME = 'zetix-checkin';
-const DB_VERSION = 1;
+/**
+ * 2 adds the walk-ins store (spec/v3.md §32.2). The upgrade only creates what
+ * is missing, so a phone that already holds a v1 roster and queued scans keeps
+ * both — `qa/e2e/y-door.spec.ts` builds a v1 database in a real browser and checks.
+ */
+const DB_VERSION = 2;
 const MANIFESTS = 'manifests';
 const QUEUE = 'queue';
+const WALK_INS = 'walkins';
 
 /** A manifest as stored, with what the door needs to judge whether it is stale. */
 export type StoredManifest = {
@@ -40,13 +46,55 @@ export type QueuedScan = {
   /** Local id, assigned by the store. */
   id?: number;
   showId: number;
-  qrTokenSha256: string;
+  /**
+   * The seat, by attendee id (spec/v3.md §32.2). Absent on a row queued by a
+   * build before 0205, which knew only the digest.
+   */
+  attendeeId?: number | null;
+  /** Null for a seat with no ticket, admitted from Search. */
+  qrTokenSha256: string | null;
   scannedAt: string;
   source: 'ONLINE' | 'OFFLINE_SYNC' | 'MANUAL';
   deviceId: string;
   overrideReason?: string | null;
   /** Set once a receipt comes back; kept, not deleted, so the tab can show history. */
   syncedAt?: string | null;
+  /**
+   * Set when the server refused the row, or it could never be sent (§32.2).
+   * A refused row is set aside and **never re-sent**: one bad row must not ride
+   * along in every later batch and block the rest of the night's admissions.
+   */
+  refusedAt?: string | null;
+  /** What the operator reads under "couldn't sync — tap for details". */
+  refusedReason?: string | null;
+  /**
+   * Who made the admission (spec/v3.md §32.2). A queued row is only ever sent
+   * by the operator who made it, and never re-attributed to whoever signs in
+   * on this phone next. Absent on rows queued before the tag existed.
+   */
+  operatorId?: string | null;
+  /** Their name, so the next person can be told whose scans are waiting. */
+  operatorName?: string | null;
+};
+
+/**
+ * A walk-in the phone has recorded (spec/v3.md §32.2): people admitted with no
+ * ticket and no roster row. Written here **before** any network attempt, like a
+ * scan, and keyed by the id minted at tap time, which is what makes a re-sent
+ * sync harmless on the server.
+ */
+export type QueuedWalkIn = {
+  clientId: string;
+  showId: number;
+  headcount: number;
+  label: string | null;
+  admittedAt: string;
+  deviceId: string;
+  operatorId: string;
+  operatorName: string;
+  syncedAt?: string | null;
+  refusedAt?: string | null;
+  refusedReason?: string | null;
 };
 
 export type CheckinStore = {
@@ -58,6 +106,20 @@ export type CheckinStore = {
   /** Everything this device has scanned for the show, synced or not. */
   allScans(showId: number): Promise<QueuedScan[]>;
   markSynced(ids: number[], at: string): Promise<void>;
+  /** Set rows aside as refused, each with its reason. */
+  markRefused(rows: { id: number; reason: string }[], at: string): Promise<void>;
+  /**
+   * Sign-out (spec/v3.md §32.2): every roster on this phone goes, and so does
+   * every row the server already has. Unsynced rows stay — a person was let in
+   * and the record of it is not this operator's to throw away.
+   */
+  wipeForSignOut(): Promise<void>;
+  enqueueWalkIn(walkIn: QueuedWalkIn): Promise<void>;
+  allWalkIns(showId: number): Promise<QueuedWalkIn[]>;
+  /** Settle walk-ins by their phone-minted ids. */
+  updateWalkIns(changes: { clientId: string; change: Partial<QueuedWalkIn> }[]): Promise<void>;
+  /** An operator undoing their own entry before it synced; never a synced one. */
+  deleteUnsyncedWalkIn(clientId: string): Promise<boolean>;
 };
 
 export async function openCheckinStore(): Promise<CheckinStore> {
@@ -97,6 +159,10 @@ function openDatabase(): Promise<IDBDatabase | null> {
       if (!db.objectStoreNames.contains(QUEUE)) {
         const queue = db.createObjectStore(QUEUE, { keyPath: 'id', autoIncrement: true });
         queue.createIndex('showId', 'showId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(WALK_INS)) {
+        const walkIns = db.createObjectStore(WALK_INS, { keyPath: 'clientId' });
+        walkIns.createIndex('showId', 'showId', { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -147,26 +213,76 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
     },
 
     async markSynced(ids, at) {
-      await Promise.all(
-        ids.map(
-          (id) =>
-            new Promise<void>((resolve, reject) => {
-              const tx = db.transaction(QUEUE, 'readwrite');
-              const store = tx.objectStore(QUEUE);
-              const get = store.get(id);
-              get.onsuccess = () => {
-                const row = get.result as QueuedScan | undefined;
-                if (!row) return resolve();
-                const put = store.put({ ...row, syncedAt: at });
-                put.onsuccess = () => resolve();
-                put.onerror = () => reject(put.error);
-              };
-              get.onerror = () => reject(get.error);
-            }),
-        ),
+      await patch(ids.map((id) => ({ id, change: { syncedAt: at } })));
+    },
+
+    async markRefused(rows, at) {
+      await patch(
+        rows.map(({ id, reason }) => ({ id, change: { refusedAt: at, refusedReason: reason } })),
       );
     },
+
+    async wipeForSignOut() {
+      await run(MANIFESTS, 'readwrite', (s) => s.clear());
+      const rows = await run<QueuedScan[]>(QUEUE, 'readonly', (s) => s.getAll());
+      const synced = (rows ?? []).filter((r) => r.syncedAt && r.id !== undefined);
+      await Promise.all(
+        synced.map((r) => run(QUEUE, 'readwrite', (s) => s.delete(r.id as number))),
+      );
+      const walkIns = await run<QueuedWalkIn[]>(WALK_INS, 'readonly', (s) => s.getAll());
+      await Promise.all(
+        (walkIns ?? [])
+          .filter((w) => w.syncedAt)
+          .map((w) => run(WALK_INS, 'readwrite', (s) => s.delete(w.clientId))),
+      );
+    },
+
+    async enqueueWalkIn(walkIn) {
+      await run(WALK_INS, 'readwrite', (s) => s.add(walkIn));
+    },
+
+    async allWalkIns(showId) {
+      const rows = await run<QueuedWalkIn[]>(WALK_INS, 'readonly', (s) =>
+        s.index('showId').getAll(showId),
+      );
+      return rows ?? [];
+    },
+
+    async updateWalkIns(changes) {
+      for (const { clientId, change } of changes) {
+        const row = await run<QueuedWalkIn | undefined>(WALK_INS, 'readonly', (s) => s.get(clientId));
+        if (row) await run(WALK_INS, 'readwrite', (s) => s.put({ ...row, ...change }));
+      }
+    },
+
+    async deleteUnsyncedWalkIn(clientId) {
+      const row = await run<QueuedWalkIn | undefined>(WALK_INS, 'readonly', (s) => s.get(clientId));
+      if (!row || row.syncedAt) return false;
+      await run(WALK_INS, 'readwrite', (s) => s.delete(clientId));
+      return true;
+    },
   };
+
+  function patch(changes: { id: number; change: Partial<QueuedScan> }[]): Promise<void[]> {
+    return Promise.all(
+      changes.map(
+        ({ id, change }) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(QUEUE, 'readwrite');
+            const store = tx.objectStore(QUEUE);
+            const get = store.get(id);
+            get.onsuccess = () => {
+              const row = get.result as QueuedScan | undefined;
+              if (!row) return resolve();
+              const put = store.put({ ...row, ...change });
+              put.onsuccess = () => resolve();
+              put.onerror = () => reject(put.error);
+            };
+            get.onerror = () => reject(get.error);
+          }),
+      ),
+    );
+  }
 }
 
 /**
@@ -180,6 +296,7 @@ function indexedDbStore(db: IDBDatabase): CheckinStore {
 function memoryStore(): CheckinStore {
   const manifests = new Map<number, StoredManifest>();
   const queue: QueuedScan[] = [];
+  const walkIns = new Map<string, QueuedWalkIn>();
   let nextId = 1;
 
   return {
@@ -203,14 +320,63 @@ function memoryStore(): CheckinStore {
         if (row.id !== undefined && ids.includes(row.id)) row.syncedAt = at;
       }
     },
+    async markRefused(rows, at) {
+      for (const { id, reason } of rows) {
+        const row = queue.find((r) => r.id === id);
+        if (row) Object.assign(row, { refusedAt: at, refusedReason: reason });
+      }
+    },
+    async wipeForSignOut() {
+      manifests.clear();
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].syncedAt) queue.splice(i, 1);
+      }
+      for (const [id, w] of walkIns) if (w.syncedAt) walkIns.delete(id);
+    },
+    async enqueueWalkIn(walkIn) {
+      walkIns.set(walkIn.clientId, walkIn);
+    },
+    async allWalkIns(showId) {
+      return [...walkIns.values()].filter((w) => w.showId === showId);
+    },
+    async updateWalkIns(changes) {
+      for (const { clientId, change } of changes) {
+        const row = walkIns.get(clientId);
+        if (row) walkIns.set(clientId, { ...row, ...change });
+      }
+    },
+    async deleteUnsyncedWalkIn(clientId) {
+      const row = walkIns.get(clientId);
+      if (!row || row.syncedAt) return false;
+      walkIns.delete(clientId);
+      return true;
+    },
   };
 }
 
-/** Queued scans as the evaluator wants them (spec/checkin.md §12.1). */
-export function toLocalCheckIns(scans: readonly QueuedScan[]): LocalCheckIn[] {
-  return scans.map((s) => ({
-    qrTokenSha256: s.qrTokenSha256,
-    scannedAt: s.scannedAt,
-    source: s.source,
-  }));
+/**
+ * Queued scans as the evaluator wants them (spec/checkin.md §12.1), keyed by
+ * seat.
+ *
+ * A refused row still counts here: the person was let in, and this phone saw
+ * it. What the server made of it is a separate question, answered on the
+ * "couldn't sync" list rather than by pretending the admission did not happen.
+ *
+ * A row queued before 0205 carries only a digest, so its seat is found through
+ * the manifest; one that matches nothing keeps a key of its own and simply
+ * joins no seat.
+ */
+export function toLocalCheckIns(
+  scans: readonly QueuedScan[],
+  index?: Pick<ManifestIndex, 'byHash' | 'keyOf'>,
+): LocalCheckIn[] {
+  return scans.map((s) => {
+    let key: string;
+    if (s.attendeeId != null) key = entryKey({ attendeeId: s.attendeeId, qrTokenSha256: null });
+    else {
+      const entry = s.qrTokenSha256 ? index?.byHash.get(s.qrTokenSha256) : undefined;
+      key = entry && index ? index.keyOf(entry) : `q${s.id ?? s.scannedAt}`;
+    }
+    return { key, scannedAt: s.scannedAt, source: s.source };
+  });
 }

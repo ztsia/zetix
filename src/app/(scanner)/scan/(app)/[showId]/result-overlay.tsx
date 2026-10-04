@@ -4,6 +4,7 @@ import { CheckCircle2, CircleAlert, CircleSlash, TriangleAlert } from 'lucide-re
 import { cn } from '@/lib/utils';
 import type { ScanResult } from '@/lib/checkin/evaluate';
 import { Button } from '@/components/ui/button';
+import { formatDoorTime } from './format';
 
 /**
  * The scan result, over the camera (spec/checkin.md §12.1, spec/ref.md §1.2).
@@ -32,6 +33,7 @@ const HEADLINE: Record<ScanResult['outcome'], string> = {
   ALREADY_CHECKED_IN: 'Already checked in',
   WRONG_SHOW: 'Wrong show',
   CANCELLED: 'Cancelled',
+  ON_HOLD: 'Not confirmed',
   NOT_FOUND: 'Invalid ticket',
 };
 
@@ -43,6 +45,7 @@ function Icon({ outcome }: { outcome: ScanResult['outcome'] }) {
     case 'ALREADY_CHECKED_IN':
       return <TriangleAlert className={className} aria-hidden />;
     case 'CANCELLED':
+    case 'ON_HOLD':
       return <CircleSlash className={className} aria-hidden />;
     default:
       return <CircleAlert className={className} aria-hidden />;
@@ -105,13 +108,18 @@ export function ResultOverlay({
         <p className="text-lg font-semibold">Refer to desk</p>
       )}
 
+      {result.outcome === 'ON_HOLD' && (
+        // spec/v3.md §32.3: their own page says the seat is on hold.
+        <p className="text-lg font-semibold">On the waitlist or awaiting review — refer to desk</p>
+      )}
+
       {result.outcome === 'WRONG_SHOW' && result.wrongShowName && (
         <p className="text-lg font-semibold">This ticket is for {result.wrongShowName}</p>
       )}
 
       {result.firstScan && (
         <p className="text-sm opacity-80">
-          First scanned {formatTime(result.firstScan.at, timeZone)}
+          First scanned {formatDoorTime(result.firstScan.at, timeZone)}
           {result.firstScan.operatorName ? ` by ${result.firstScan.operatorName}` : ''}
         </p>
       )}
@@ -125,8 +133,10 @@ export function ResultOverlay({
 
       <div className="mt-2 flex w-full max-w-xs flex-col gap-2">
         {result.entry && (result.party?.remaining ?? 0) > 0 && admitted && (
+          // Opens the party sheet with everyone still outside ticked: one more
+          // tap, which buys the usher the chance to untick who is not here.
           <Button size="lg" variant="secondary" className="h-14 text-base" onClick={onOpenDetail}>
-            Admit remaining {result.party?.remaining}
+            Party of {result.party?.size} · choose who&rsquo;s here
           </Button>
         )}
 
@@ -149,32 +159,4 @@ export function ResultOverlay({
       </div>
     </div>
   );
-}
-
-/**
- * The first-scan time, **in the concert's zone and never the phone's**
- * (`CLAUDE.md`, spec/domain.md §6.1).
- *
- * This is the one absolute time the door renders, and it is read to decide
- * whether a duplicate is somebody's second attempt tonight or a scan from an
- * earlier show. An usher whose phone is set to another timezone — or is simply
- * roaming — would otherwise be handed a number that is wrong by hours and looks
- * entirely plausible.
- *
- * A null zone falls back to the device's, and says so, because the alternative
- * is either a hardcoded zone (an operational value in code) or refusing to show
- * a time the operator needs.
- */
-function formatTime(iso: string, timeZone: string | null): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      ...(timeZone ? { timeZone } : {}),
-    });
-  } catch {
-    // An unknown zone makes Intl throw a RangeError. A wrong-looking time is
-    // still better than an overlay that fails to render at a door.
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
 }

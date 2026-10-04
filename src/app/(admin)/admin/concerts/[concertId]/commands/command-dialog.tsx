@@ -58,6 +58,8 @@ import { READ_ONLY_DIGEST, READ_ONLY_MESSAGE } from '@/lib/auth/read-only';
 
 type Stage =
   | { kind: 'loading' }
+  /** A choice the command needs is not made yet: nothing to preview. */
+  | { kind: 'awaiting'; message: string }
   | { kind: 'error'; message: string }
   | { kind: 'preview'; preview: Preview }
   | { kind: 'running'; preview: Preview; report: RunReport | null }
@@ -75,6 +77,7 @@ export function CommandDialog({
   defaultOpen = false,
   onClosed,
   renderOptions,
+  awaiting,
   onDone,
 }: {
   concertId: number;
@@ -97,6 +100,13 @@ export function CommandDialog({
    * depends on it (§23.5: the overage is shown before the override is used).
    */
   renderOptions?: (params: unknown, setParams: (next: unknown) => void) => React.ReactNode;
+  /**
+   * What to ask for while a required choice is still unmade — a destination
+   * segment, say — or null once the params can be previewed. Without it the
+   * dialog previewed `{}` and showed "That request was malformed" before the
+   * admin had chosen anything.
+   */
+  awaiting?: (params: unknown) => string | null;
   /** After a run finishes and the dialog closes — clear the table's selection. */
   onDone?: () => void;
 }) {
@@ -113,6 +123,11 @@ export function CommandDialog({
   const loadPreview = React.useCallback(
     async (withParams: unknown) => {
       if (!selection) return;
+      const prompt = awaiting?.(withParams) ?? null;
+      if (prompt) {
+        setStage({ kind: 'awaiting', message: prompt });
+        return;
+      }
       setStage({ kind: 'loading' });
       setRunError(null);
       setPhrase('');
@@ -128,7 +143,7 @@ export function CommandDialog({
       if (!alive.current) return;
       setStage(result.ok ? { kind: 'preview', preview: result.value } : { kind: 'error', message: result.error });
     },
-    [command, concertId, selection],
+    [command, concertId, selection, awaiting],
   );
 
   function setParams(next: unknown) {
@@ -215,10 +230,15 @@ export function CommandDialog({
     else setRunError(result.error);
   }
 
-  const preview = stage.kind === 'loading' || stage.kind === 'error' ? null : stage.preview;
+  const preview =
+    stage.kind === 'loading' || stage.kind === 'error' || stage.kind === 'awaiting'
+      ? null
+      : stage.preview;
   const title = preview
     ? `${preview.verb} ${preview.runnable} ${preview.runnable === 1 ? preview.noun.one : preview.noun.many}`
-    : 'Preparing…';
+    : stage.kind === 'awaiting'
+      ? 'One more choice'
+      : 'Preparing…';
   const labels = React.useMemo(
     () => new Map(preview?.rows.map((row) => [row.id, row.label]) ?? []),
     [preview],
@@ -245,7 +265,11 @@ export function CommandDialog({
         </DialogHeader>
 
         <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
-          {renderOptions && (stage.kind === 'loading' || stage.kind === 'preview' || stage.kind === 'error') && (
+          {renderOptions &&
+            (stage.kind === 'loading' ||
+              stage.kind === 'preview' ||
+              stage.kind === 'error' ||
+              stage.kind === 'awaiting') && (
             <div className="mb-4 flex flex-col gap-3 rounded-lg border p-3">
               <CommandOptions render={renderOptions} params={params} onChange={setParams} />
             </div>
@@ -256,6 +280,10 @@ export function CommandDialog({
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-5 w-1/2" />
             </div>
+          )}
+
+          {stage.kind === 'awaiting' && (
+            <p className="text-muted-foreground py-2 text-sm">{stage.message}</p>
           )}
 
           {stage.kind === 'error' && (
@@ -321,6 +349,11 @@ export function CommandDialog({
           )}
           {(stage.kind === 'report' || stage.kind === 'error') && (
             <Button onClick={() => onOpenChange(false)}>Close</Button>
+          )}
+          {stage.kind === 'awaiting' && (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
           )}
         </DialogFooter>
       </DialogContent>

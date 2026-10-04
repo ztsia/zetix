@@ -28,6 +28,7 @@ import {
 } from '@/lib/activity/labels';
 import { RunDialog } from '../commands/run-dialog';
 import { StatusBadge } from '../commands/run-report';
+import { exportActivityAction } from './export-actions';
 
 export function ActivityView({
   concertId,
@@ -215,6 +216,30 @@ export function ActivityView({
             onRowClick={setDetail}
             emptyTitle="Nothing recorded yet"
             emptyDescription="Changes made in this concert appear here."
+            export={{
+              filename: 'activity',
+              sheetName: 'Changes',
+              timeZone,
+              // The whole view and search, never the page (spec/v3.md §32.1).
+              load: () =>
+                exportActivityAction({
+                  concertId,
+                  view: state.extra.view ?? null,
+                  search: state.search,
+                  runId: Number(state.extra.run) > 0 ? Number(state.extra.run) : null,
+                }),
+              columns: [
+                { header: 'When', value: (r: ActivityRow) => new Date(r.at) },
+                { header: 'Who', value: (r: ActivityRow) => r.actor, width: 20 },
+                { header: 'Action', value: (r: ActivityRow) => r.action, width: 28 },
+                { header: 'Record', value: (r: ActivityRow) => r.entityType },
+                { header: 'Record id', value: (r: ActivityRow) => r.entityId },
+                { header: 'Reason', value: (r: ActivityRow) => r.reason, width: 40 },
+                { header: 'Run', value: (r: ActivityRow) => r.commandRunId },
+                { header: 'Before', value: (r: ActivityRow) => jsonCell(r.before), width: 40 },
+                { header: 'After', value: (r: ActivityRow) => jsonCell(r.after), width: 40 },
+              ],
+            }}
           />
         </>
       )}
@@ -274,4 +299,10 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
       </pre>
     </div>
   );
+}
+
+/** A before or after value as one spreadsheet cell. */
+function jsonCell(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
 }

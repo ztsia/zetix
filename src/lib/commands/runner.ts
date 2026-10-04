@@ -125,7 +125,11 @@ async function resolveTargets(
   selection: Selection<unknown>,
 ): Promise<number[]> {
   if (isFilterSelection(selection)) {
-    const excluded = new Set(selection.excludedIds);
+    const excluded = new Set(
+      def.excludes && selection.excludedIds.length > 0
+        ? await def.excludes(tx, ctx, selection.excludedIds)
+        : selection.excludedIds,
+    );
     const matched = await def.match(tx, ctx, selection.filter);
     return matched.filter((id) => !excluded.has(id));
   }

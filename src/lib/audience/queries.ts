@@ -4,6 +4,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { getDb } from '@/db/client';
 import { segmentPool, type Executor, type SegmentPool } from '@/db/allocation';
 import { likePattern } from '@/lib/trash/queries';
+import { isFilterSelection, type Selection } from '@/lib/commands/selection';
 import {
   FLAG_COLUMN,
   findView,
@@ -417,6 +418,57 @@ export async function matchSeatIds(
      order by p.requested_at, a.registration_id, a.requested_at, a.id
   `);
   return rows.map((row) => Number(row.id));
+}
+
+// ---------------------------------------------------------------------------
+// Export: the whole selection, never a page (spec/v3.md §32.1)
+// ---------------------------------------------------------------------------
+
+const idArray = (ids: number[]) => sql`${`{${ids.join(',')}}`}::bigint[]`;
+
+/**
+ * Every party a selection covers, in the table's order, for export.
+ *
+ * The same WHERE the listing and `matchPartyIds` use, so the file holds exactly
+ * what "Select all N matching" named, minus what was unticked. Ticked ids are
+ * re-scoped to this concert: an id from elsewhere exports nothing.
+ */
+export async function exportParties(
+  concertId: number,
+  selection: Selection<AudienceFilter>,
+  sorting: SortingState,
+): Promise<PartyRow[]> {
+  const where = isFilterSelection(selection)
+    ? sql`${partyWhere(concertId, partyFilter(selection.filter))}
+          and not (p.registration_id = any(${idArray(selection.excludedIds)}))`
+    : sql`p.concert_id = ${concertId} and p.registration_id = any(${idArray(selection.ids)})`;
+  const rows = await getDb().execute<PartyDbRow>(sql`
+    select ${PARTY_COLUMNS}
+      from party_pipeline p
+      ${PARTY_JOINS}
+     where ${where}
+     ${orderBy(sorting, PARTY_SORT, 'p.requested_at asc, p.registration_id asc')}
+  `);
+  return rows.map(toParty);
+}
+
+/** Every seat a selection covers, in the table's order, for export. */
+export async function exportSeats(
+  concertId: number,
+  selection: Selection<AudienceFilter>,
+  sorting: SortingState,
+): Promise<SeatRow[]> {
+  const where = isFilterSelection(selection)
+    ? sql`${partyWhere(concertId, partyFilter(selection.filter))} and ${seatWhere(selection.filter)}
+          and not (a.id = any(${idArray(selection.excludedIds)}))`
+    : sql`p.concert_id = ${concertId} and a.deleted_at is null and a.id = any(${idArray(selection.ids)})`;
+  const rows = await getDb().execute<SeatDbRow>(sql`
+    select ${SEAT_COLUMNS}
+      from ${SEAT_FROM}
+     where ${where}
+     ${orderBy(sorting, SEAT_SORT, 'p.requested_at asc, a.registration_id asc, a.id asc')}
+  `);
+  return rows.map(toSeat);
 }
 
 // ---------------------------------------------------------------------------

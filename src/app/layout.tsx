@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Geist, Inter, Montserrat, Outfit } from "next/font/google";
 import { cn } from "@/lib/utils";
+import { HAS_MARK } from '@/lib/brand';
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -20,6 +21,13 @@ export const metadata: Metadata = {
   title: 'Zetix',
   // Every tokenised surface is noindex (spec/v2.md §13.3, ref.md §7).
   robots: { index: false, follow: false },
+  // The Zetix copy's icons (`@/lib/brand`); it publishes without `favicon.ico`, so these are its only ones.
+  ...(HAS_MARK && {
+    icons: {
+      icon: { url: '/brand/zetix-favicon.svg', type: 'image/svg+xml' },
+      apple: '/brand/zetix-apple-icon.png',
+    },
+  }),
 };
 
 export default function RootLayout({

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Check, ChevronsUpDown, LayoutList, LogOut, Music4 } from 'lucide-react';
+import { Check, ChevronsUpDown, LayoutList, LogOut } from 'lucide-react';
+import { BrandTile } from '@/components/brand/brand-tile';
 import {
   Sidebar,
   SidebarContent,
@@ -79,9 +80,7 @@ export function AppSidebar({
                     size="lg"
                     className="data-[popup-open]:bg-sidebar-accent"
                   >
-                    <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                      <Music4 className="size-4" />
-                    </div>
+                    <BrandTile className="size-8" glyphClassName="size-4" />
                     <div className="grid flex-1 text-left leading-tight">
                       <span className="truncate font-medium">
                         {concert?.name ?? 'Zetix'}

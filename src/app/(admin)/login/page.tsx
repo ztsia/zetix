@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Music4 } from 'lucide-react';
+import { BrandTile } from '@/components/brand/brand-tile';
 import { getSessionUser } from '@/lib/auth/session';
 import { safeRedirect } from '@/lib/auth/redirect-target';
 import {
@@ -42,9 +42,7 @@ export default async function AdminLoginPage({
     <main className="flex min-h-svh items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <div className="bg-primary text-primary-foreground flex size-10 items-center justify-center rounded-lg">
-            <Music4 className="size-5" />
-          </div>
+          <BrandTile className="size-10" glyphClassName="size-5" />
           <h1 className="text-lg font-semibold">Zetix</h1>
         </div>
 

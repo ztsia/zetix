@@ -36,7 +36,8 @@ import { sql as dsql } from 'drizzle-orm';
 import { getDb, getSql } from '../src/db/client';
 import { claimSeats, lockShowForClaim, promoteSeats, type SeatRequest } from '../src/db/allocation';
 import { seedDefaultTemplates } from '../src/lib/email/defaults';
-import { queueBlast } from '../src/lib/email/queue';
+import { partyRecipient, queueBlast } from '../src/lib/email/queue';
+import { escapeMergeValues, renderTemplate } from '../src/lib/email/render';
 import { confirmBatch } from '../src/lib/email/mutations';
 import { dispatchBatch } from '../src/lib/email/dispatch';
 import { createStreamTransport } from '../src/lib/mail/transport';
@@ -469,6 +470,8 @@ async function main() {
               'checkin.walk_ins_enabled': true,
               'checkin.walk_in_max_headcount': PARTY_CAP,
               'portal.feedback_enabled': true,
+              'portal.booklet_enabled': true,
+              'portal.notes_enabled': true,
             })}::text::jsonb)
     returning id
   `;
@@ -676,6 +679,40 @@ async function main() {
     `;
   }
 
+  // Notes from the rehearsal's audience: most approved and on the wall, some waiting, one hidden.
+  const NOTES = [
+    'Your solo in the slow movement gave me goosebumps. Thank you!',
+    'So good to see you up there — the whole family is proud of you.',
+    'The brass section sounded magnificent from the back row.',
+    'Thank you for letting us watch you work. Seeing the conductor stop and fix things was fascinating.',
+    'My daughter wants to learn the violin now. Blame yourselves!',
+    'Bravo to everyone — the serenade was the highlight of our weekend.',
+    'Lovely afternoon. The percussion kept the little ones spellbound.',
+    'You looked so calm on stage. See you at the gala!',
+    'What a warm sound in that hall. Thank you all.',
+    'First time at a rehearsal, definitely not the last.',
+  ];
+  const writers = await sql<{ id: string; full_name: string | null }[]>`
+    select a.id, a.full_name from attendees a
+     where a.segment_id = ${rehearsalPublic.id} and a.full_name is not null
+       and exists (select 1 from check_ins c where c.attendee_id = a.id)
+     order by a.id desc limit ${NOTES.length}
+  `;
+  for (const [i, writer] of writers.entries()) {
+    const state = i < 6 ? 'PUBLISHED' : i < 9 ? 'PENDING' : 'HIDDEN';
+    const anonymous = i % 4 === 3;
+    const written = at(REHEARSAL.day + between(0, 1), `${between(17, 22)}:${String(between(0, 59)).padStart(2, '0')}`);
+    await sql`
+      insert into portal_notes (concert_id, show_id, attendee_id, to_player_id, display_name, is_anonymous, body,
+                                moderation_status, wall_status, moderated_by, moderated_at, created_at, updated_at)
+      values (${concertId}, ${rehearsalId}, ${writer.id}, ${i % 3 === 2 ? null : pick(playerIds).id},
+              ${writer.full_name}, ${anonymous}, ${NOTES[i]},
+              ${state === 'PUBLISHED' ? 'APPROVED' : state}, ${state === 'PUBLISHED' ? 'PUBLISHED' : 'NOT_PUBLISHED'},
+              ${state === 'PENDING' ? null : adminId}, ${state === 'PENDING' ? null : minutesAfter(written, 600).toISOString()}::timestamptz,
+              ${written.toISOString()}::timestamptz, ${written.toISOString()}::timestamptz)
+    `;
+  }
+
   // ── The gala: players' guests ───────────────────────────────────────────────
   const playerParties: { registrationId: number; extras: number }[] = [];
   for (const player of playerIds.slice(0, 46)) {
@@ -773,7 +810,7 @@ async function main() {
     `;
     const bouncedAt = minutesAfter(outbox.sent_at, 4);
     await sql`
-      update email_outbox set bounced_at = ${bouncedAt.toISOString()}::timestamptz, bounce_code = '550 5.1.1',
+      update email_outbox set status = 'BOUNCED', bounced_at = ${bouncedAt.toISOString()}::timestamptz, bounce_code = '550 5.1.1',
              bounce_detail = 'The email account that you tried to reach does not exist.'
        where id = ${outbox.id}
     `;
@@ -822,12 +859,19 @@ async function main() {
        where p.segment_id = ${galaPublic.id} and p.stage = 'READY_TO_SEND' order by p.registration_id limit 1
     `;
     if (party) {
+      // Rendered the way `queueBlast()` renders, so the message reads like every other ticket email.
+      const recipient = await partyRecipient(getDb(), Number(party.registration_id));
+      const [template] = await sql<{ subject: string; body_md: string }[]>`
+        select subject, body_md from email_templates where key = 'public_ticket'
+      `;
+      const context = escapeMergeValues(recipient!.context);
       await sql`
-        insert into email_outbox (registration_id, template_key, purpose, to_email, to_name, subject, body_md, status,
-                                  attempts, last_error, created_at, updated_at)
+        insert into email_outbox (registration_id, template_key, purpose, to_email, to_name, subject, body_md, context,
+                                  status, attempts, last_error, created_at, updated_at)
         values (${party.registration_id}, 'public_ticket', 'TICKETS', ${party.contact_email}, ${party.contact_name},
-                'Your tickets for Autumn Serenade', 'Your tickets are attached.', 'FAILED', 3,
-                'Greeting never received', ${at(-1, '19:02').toISOString()}::timestamptz, ${at(-1, '19:20').toISOString()}::timestamptz)
+                ${renderTemplate(template.subject, context).text}, ${renderTemplate(template.body_md, context).text},
+                ${JSON.stringify(recipient!.context)}::jsonb, 'FAILED', 3, 'Greeting never received',
+                ${at(-1, '19:02').toISOString()}::timestamptz, ${at(-1, '19:20').toISOString()}::timestamptz)
       `;
     }
   }

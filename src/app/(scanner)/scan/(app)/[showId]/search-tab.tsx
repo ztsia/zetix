@@ -268,14 +268,19 @@ function PartyResult({
       <ItemMedia variant="icon">{state.icon}</ItemMedia>
       <ItemContent>
         <ItemTitle className="text-base">
-          {matchedName && matchedName !== party.label ? (
-            <>
-              <Highlighted name={matchedName} range={party.highlight} />
-              <span className="text-muted-foreground font-normal"> · {party.label}&rsquo;s party</span>
-            </>
-          ) : (
-            <Highlighted name={party.label} range={matchedName ? party.highlight : null} />
-          )}
+          {/* One child: ItemTitle is a flex row, so the name's text, its <mark> and the party
+              label would otherwise each become a gapped flex item, the label a wrapped column.
+              Left-aligned, because the row is a <button> and would centre a wrapped line. */}
+          <span className="text-left">
+            {matchedName && matchedName !== party.label ? (
+              <>
+                <Highlighted name={matchedName} range={party.highlight} />
+                <span className="text-muted-foreground font-normal"> · {party.label}&rsquo;s party</span>
+              </>
+            ) : (
+              <Highlighted name={party.label} range={matchedName ? party.highlight : null} />
+            )}
+          </span>
         </ItemTitle>
         <ItemDescription>
           {party.size > 1 ? `Party of ${party.size}` : 'One seat'}

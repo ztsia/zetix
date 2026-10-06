@@ -578,12 +578,12 @@ async function main() {
   }) => {
     const [row] = await sql<{ id: string }[]>`
       insert into registration_forms (segment_id, show_id, kind, title, slug, schema, schema_version, status,
-                                      opens_at, closes_at, max_tickets_per_response, description_md,
+                                      opens_at, closes_at, description_md,
                                       confirmation_message_md, one_response_per_identity)
       values (${values.segmentId ?? null}, ${values.showId ?? null}, ${values.kind}, ${values.title}, ${values.slug},
               ${JSON.stringify(values.schema)}::text::jsonb, 1, ${values.status},
               ${values.opens?.toISOString() ?? null}::timestamptz, ${values.closes?.toISOString() ?? null}::timestamptz,
-              ${values.kind === 'PUBLIC' ? PARTY_CAP : null}, ${values.description ?? null},
+              ${values.description ?? null},
               'Thank you — we have your registration, and your tickets will follow by email.',
               ${values.kind === 'PLAYER'})
       returning id

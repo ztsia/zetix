@@ -20,6 +20,12 @@
  * Overrides, all optional: DEMO_DATABASE_URL, DEMO_PORT (3100),
  * DEMO_STUB_PORT (54329), DEMO_ADMIN_PASSWORD, DEMO_VIEWER_PASSWORD,
  * DEMO_OPERATOR_CODE.
+ *
+ * **DEMO_SMTP_PORT** sends the demo's mail to a catcher on that port of
+ * 127.0.0.1 — Mailpit, say (`docker run -p 1025:1025 -p 8025:8025
+ * axllent/mailpit`) — so a send can be watched arriving. Only ever
+ * 127.0.0.1, and with no password the inbox stays unconfigured. Unset, the
+ * demo has no mailbox at all and every send fails closed.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -79,6 +85,17 @@ const DEMO_ENV = {
   STUB_PORT: String(STUB_PORT),
   STUB_USERS: '[]',
 };
+
+const SMTP_PORT = process.env.DEMO_SMTP_PORT ? Number(process.env.DEMO_SMTP_PORT) : null;
+if (SMTP_PORT !== null) {
+  if (!(SMTP_PORT > 0)) fail(`DEMO_SMTP_PORT is not a port: ${process.env.DEMO_SMTP_PORT}`);
+  Object.assign(DEMO_ENV, {
+    GMAIL_USER: 'tickets@example.org',
+    SMTP_HOST: '127.0.0.1',
+    SMTP_PORT: String(SMTP_PORT),
+    SMTP_SECURE: 'false',
+  });
+}
 
 /** Every key the env files define and the demo does not, set to nothing. */
 const blanked = {};
@@ -185,7 +202,8 @@ console.log(`
   The demo is on ${DEMO_ENV.APP_URL}
     admin   admin@example.org    ${PASSWORDS.admin}
     viewer  visitor@example.org  ${PASSWORDS.viewer}
-    ushers  aisyah, jun-hao, priya — access code ${PASSWORDS.operator}
+    ushers  aisyah, jun-hao, priya — access code ${PASSWORDS.operator}${SMTP_PORT ? `
+    mail    to the catcher on 127.0.0.1:${SMTP_PORT}` : ''}
 `);
 
 const next = spawn(process.execPath, [NEXT_CLI, 'dev', '-p', String(PORT)], { env, stdio: 'inherit' });

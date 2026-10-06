@@ -151,3 +151,18 @@ describe('the provider on <html>', () => {
     expect(builder).toContain('data-form-surface');
   });
 });
+
+describe('the theme labels', () => {
+  /**
+   * Three ids are tweakcn's names, which are brands, and the labels are what a
+   * visitor reads (spec/v3.md §29.5, §31). The ids stay so a stored choice still
+   * applies; the labels must not drift back to the brands.
+   */
+  it('names no brand, while the brand-named ids stay', () => {
+    const labels = CONSOLE_THEMES.map((theme) => theme.label.toLowerCase());
+    for (const brand of ['claude', 'supabase', 'vercel']) expect(labels).not.toContain(brand);
+
+    const byId = Object.fromEntries(CONSOLE_THEMES.map((theme) => [theme.id, theme.label]));
+    expect(byId).toMatchObject({ claude: 'Terracotta', supabase: 'Emerald', vercel: 'Mono' });
+  });
+});

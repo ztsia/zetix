@@ -87,7 +87,9 @@ export function SettingRow({
   return (
     <div className="flex flex-col gap-2 border-b px-4 py-3 last:border-b-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        {/* Grows and wraps its own text, so a long description no longer pushes the
+            controls onto a line of their own. */}
+        <div className="min-w-0 flex-1 basis-72">
           <label htmlFor={id} className="text-sm font-medium">
             {spec.label}
           </label>
@@ -136,7 +138,7 @@ export function SettingRow({
               readOnly={!canEdit}
               inputMode={spec.kind === 'number' ? 'numeric' : undefined}
               placeholder={concert ? (inherited === '' ? 'inherit' : `inherit (${inherited})`) : spec.operational ? 'not set' : ''}
-              className={spec.kind === 'json' ? 'w-96 font-mono text-xs' : 'w-40'}
+              className={spec.kind === 'json' ? 'w-96 font-mono text-xs' : spec.kind === 'text' ? 'w-64' : 'w-40'}
             />
           )}
 

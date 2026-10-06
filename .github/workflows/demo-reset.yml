@@ -1,0 +1,71 @@
+# Rebuilds the public demo once a week (spec/v3.md §31, docs/local.md §18).
+#
+# The demo's dates are relative to the day it was seeded: one show nine days
+# behind, the gala 21 days ahead. Left alone, the gala ends and auto-completes
+# three weeks after a seed, and the demo stops showing a concert in progress.
+# A weekly reset keeps it between two and three weeks out, and also undoes
+# whatever a visitor with a published sign-in changed.
+#
+# **It runs only in the demo's repository**, against the demo's own Supabase
+# project. Its secrets exist nowhere else. And the seed itself refuses any
+# database it did not mark (`demo.instance`), so even a production URL put
+# here by mistake would be refused before anything was written.
+#
+# Requires repo secrets: DEMO_DATABASE_URL (the demo project's session pooler,
+# port 5432), DEMO_SUPABASE_URL, DEMO_SUPABASE_ANON_KEY,
+# DEMO_SUPABASE_SERVICE_ROLE_KEY, DEMO_ADMIN_PASSWORD, DEMO_VIEWER_PASSWORD,
+# DEMO_OPERATOR_CODE, and APP_URL — the demo's alias, shared with
+# keepalive.yml. The seed writes ticket and update links into the messages it
+# sends, and dispatch refuses to run without it.
+#
+# GitHub disables a public repository's scheduled workflows after 60 days with
+# no commits. Re-enable it under Actions, or run it by hand, when that happens.
+name: demo-reset
+
+on:
+  schedule:
+    - cron: '0 20 * * 0' # Monday 04:00 Asia/Kuala_Lumpur
+  workflow_dispatch:
+
+concurrency:
+  group: demo-reset
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    if: github.repository == 'ztsia/zetix'
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DEMO_DATABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.DEMO_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.DEMO_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.DEMO_SUPABASE_SERVICE_ROLE_KEY }}
+      DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
+      DEMO_VIEWER_PASSWORD: ${{ secrets.DEMO_VIEWER_PASSWORD }}
+      DEMO_OPERATOR_CODE: ${{ secrets.DEMO_OPERATOR_CODE }}
+      APP_URL: ${{ secrets.APP_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The schema moves with the repository, so the demo is migrated before
+      # it is seeded. Already-applied migrations are skipped.
+      - name: Migrate
+        run: pnpm db:migrate
+
+      - name: Seed
+        run: pnpm demo:seed --reset

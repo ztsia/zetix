@@ -182,7 +182,7 @@ if (seed.status !== 0) {
 }
 
 console.log(`
-  Zetix demo on ${DEMO_ENV.APP_URL}
+  The demo is on ${DEMO_ENV.APP_URL}
     admin   admin@example.org    ${PASSWORDS.admin}
     viewer  visitor@example.org  ${PASSWORDS.viewer}
     ushers  aisyah, jun-hao, priya — access code ${PASSWORDS.operator}

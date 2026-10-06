@@ -9,9 +9,10 @@ import { createConcert, setSystemSetting } from '../helpers/fixtures';
  * script**, as `tests/settings/seed.test.ts` does and for the same reason.
  *
  * `scripts/seed-demo.ts --reset` truncates every table. The only thing standing
- * between that and a production database is the `demo.instance` mark: a
- * database with concerts and no mark is refused, with or without `--reset`.
- * These tests hold it to that.
+ * between that and a real database is the `demo.instance` mark: a database
+ * holding any row and no mark is refused, with or without `--reset`, and
+ * `--check` says so without writing. Not merely concerts: an install with its
+ * accounts and settings but no concert yet is somebody's too (QA, module X).
  *
  * **The child can never reach a real service.** The script loads `.env.local`,
  * which on a developer machine holds production's Supabase URL and service-role
@@ -47,7 +48,7 @@ function runDemoSeed(args: string[] = []) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-const FOREIGN = /holds 1 concert\(s\) the demo did not create/;
+const FOREIGN = /holds data the demo did not create \(in [^)]*concerts/;
 /** Where an accepted run stops: the first account, before Auth is called. */
 const PAST_THE_GUARD = /DEMO_ADMIN_PASSWORD is not set/;
 
@@ -97,6 +98,32 @@ describe('scripts/seed-demo.ts guard', () => {
     expect(await mark()).toBeUndefined();
   });
 
+  it('refuses a database with settings and no concert', async () => {
+    await setSystemSetting('email.from_name', 'Real Orchestra');
+
+    const run = runDemoSeed();
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(/did not create \(in system_settings\)/);
+    expect(await settingsCount()).toBe(1);
+    expect(await mark()).toBeUndefined();
+  });
+
+  it('refuses a database with accounts and no concert, even with --reset', async () => {
+    await sql`
+      insert into app_users (id, email, display_name, role)
+      values (gen_random_uuid(), 'real.admin@example.org', 'Real Admin', 'ADMIN')
+    `;
+
+    const run = runDemoSeed(['--reset']);
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(/did not create \(in app_users\)/);
+    const [users] = await sql<{ n: number }[]>`select count(*)::int as n from app_users`;
+    expect(users.n).toBe(1);
+    expect(await settingsCount()).toBe(0);
+  });
+
   it('treats a mark that is not `true` as no mark', async () => {
     await createConcert('Real Concert');
     await setSystemSetting('demo.instance', false);
@@ -116,6 +143,35 @@ describe('scripts/seed-demo.ts guard', () => {
 
     expect(run.status).toBe(1);
     expect(run.stderr).toMatch(/already holds the demo\. Run with --reset/);
+    expect(await concerts()).toEqual(['Autumn Serenade']);
+  });
+
+  it('--check refuses a database it did not mark, and writes nothing', async () => {
+    await createConcert('Real Concert');
+
+    const run = runDemoSeed(['--check']);
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toMatch(FOREIGN);
+    expect(await settingsCount()).toBe(0);
+  });
+
+  it('--check accepts an empty database without marking it', async () => {
+    const run = runDemoSeed(['--check']);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(/An empty database/);
+    expect(await settingsCount()).toBe(0);
+  });
+
+  it('--check accepts a marked database without wiping it', async () => {
+    await setSystemSetting('demo.instance', true);
+    await createConcert('Autumn Serenade');
+
+    const run = runDemoSeed(['--check']);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(/A demo database/);
     expect(await concerts()).toEqual(['Autumn Serenade']);
   });
 

@@ -11,11 +11,15 @@
  *
  *   pnpm demo:seed            # an empty database, or one this script seeded
  *   pnpm demo:seed --reset    # wipe a demo database and seed it again
+ *   pnpm demo:seed --check    # only say whether it may; writes nothing
  *
- * **It refuses any database holding a concert it did not create.** The first
- * run on an empty database marks it as a demo (`demo.instance`); `--reset`
- * wipes only a marked one. Production has concerts and no mark, so neither
- * path can touch it.
+ * **It refuses any database holding a row it did not write.** Empty means every
+ * table empty, not merely no concerts: an install with its accounts and
+ * settings but no concert yet is somebody's, and seeding it would overwrite
+ * their sender name and mark it — after which `--reset` would truncate their
+ * accounts. The first run on an empty database marks it as a demo
+ * (`demo.instance`); `--reset` wipes only a marked one. `--check` works before
+ * the schema exists, so a workflow can ask before it migrates anything.
  *
  * Dates are relative to the day it runs, so the demo always has one show behind
  * it and one ahead. Names are invented; addresses are at reserved domains, and
@@ -54,6 +58,7 @@ import type { FormSchema } from '../src/lib/forms/schema';
 
 const sql = getSql();
 const RESET = process.argv.includes('--reset');
+const CHECK = process.argv.includes('--check');
 const MARK = 'demo.instance';
 
 // ── The example concert's facts (docs/context.example.md §5) ──────────────────
@@ -166,21 +171,55 @@ const minutesAfter = (instant: Date | string, minutes: number) =>
 
 // ── Guard and reset ───────────────────────────────────────────────────────────
 
-async function guard(): Promise<void> {
-  const [state] = await sql<{ concerts: number; marked: boolean }[]>`
-    select (select count(*)::int from concerts) as concerts,
-           exists (select 1 from system_settings where key = ${MARK} and value = 'true'::jsonb) as marked
+/** Whether the demo marked this database. False before the schema exists. */
+async function isMarked(): Promise<boolean> {
+  const [schema] = await sql<{ present: boolean }[]>`
+    select to_regclass('public.system_settings') is not null as present
   `;
-  if (state.marked && !RESET) {
+  if (!schema.present) return false;
+  const [row] = await sql<{ marked: boolean }[]>`
+    select exists (select 1 from system_settings where key = ${MARK} and value = 'true'::jsonb) as marked
+  `;
+  return row.marked;
+}
+
+/** Every public table holding a row, bar drizzle's bookkeeping — which a fresh migration fills. */
+async function occupiedTables(): Promise<string[]> {
+  const tables = await sql<{ name: string }[]>`
+    select tablename as name from pg_tables
+     where schemaname = 'public' and tablename <> '__drizzle_migrations'
+     order by tablename
+  `;
+  const occupied: string[] = [];
+  for (const { name } of tables) {
+    const [row] = await sql.unsafe<{ e: boolean }[]>(
+      `select exists (select 1 from public."${name.replace(/"/g, '""')}") as e`,
+    );
+    if (row.e) occupied.push(name);
+  }
+  return occupied;
+}
+
+/** Throws unless the run may go ahead; wipes first on `--reset`. Returns false under `--check`. */
+async function guard(): Promise<boolean> {
+  const marked = await isMarked();
+  if (!marked) {
+    const occupied = await occupiedTables();
+    if (occupied.length > 0) {
+      throw new Error(
+        `This database holds data the demo did not create (in ${occupied.join(', ')}). ` +
+          'The demo seed only writes to an empty database or to one it marked itself.',
+      );
+    }
+  }
+  if (CHECK) {
+    console.log(marked ? 'A demo database: the seed may reset it.' : 'An empty database: the seed may build the demo in it.');
+    return false;
+  }
+  if (marked && !RESET) {
     throw new Error('This database already holds the demo. Run with --reset to build it again.');
   }
-  if (!state.marked && state.concerts > 0) {
-    throw new Error(
-      `This database holds ${state.concerts} concert(s) the demo did not create. ` +
-        'The demo seed only writes to an empty database or to one it marked itself.',
-    );
-  }
-  if (state.marked && RESET) {
+  if (marked && RESET) {
     await sql.unsafe(`
       do $$
       declare stmt text;
@@ -195,6 +234,7 @@ async function guard(): Promise<void> {
     `);
     console.log('Wiped the demo database.');
   }
+  return true;
 }
 
 async function setSystem(key: string, value: unknown): Promise<void> {
@@ -439,7 +479,10 @@ async function bookletPdf(): Promise<Uint8Array> {
 // ── The build ─────────────────────────────────────────────────────────────────
 
 async function main() {
-  await guard();
+  if (!(await guard())) {
+    await sql.end();
+    return;
+  }
 
   // System values, the email templates, the mark.
   const require = createRequire(import.meta.url);

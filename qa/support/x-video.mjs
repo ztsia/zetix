@@ -2,9 +2,12 @@
 //
 // Against `DEMO_SMTP_PORT=1025 pnpm demo`, freshly seeded, with Mailpit catching mail:
 //   docker run -d --name zetix-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
-// Run it with `src/lib/brand.ts` reading 'Zetix' (uncommitted), so the console shows the mark as
-// the public copy does. Clips: console, register, intake, send, door, guest — in that order,
-// because each leaves the demo as the next expects it (the guest registers, intake approves them).
+// Run it in the published copy (`scripts/publish/publish.mjs` without `--push`), never here: the
+// rename reaches text `brand.ts` does not, such as the sign-in heading and the page titles
+// (spec/v3.md §31). Clips: console, themes, register, intake, reply, allocation, editor, send,
+// guest, door — recorded in that order, because some leave the demo as a later one expects it.
+// One guest, Eleanor, runs through the story: she registers, her tickets are sent, her email is
+// opened, her ticket page is shown, and the door admits her. The edit reorders the clips.
 //
 // Desktop clips are 1920×1080 with a drawn cursor that glides; phone clips are a Pixel 7 driven by
 // real touch input, with a circle where the finger lands — never a cursor on a phone. Each clip is
@@ -40,6 +43,21 @@ const sql = postgres(process.env.DEMO_DATABASE_URL ?? 'postgresql://postgres@loc
 const [concert] = await sql`select id from concerts order by id limit 1`;
 const [rehearsal, gala] = await sql`select id from shows order by starts_at`;
 const C = `/admin/concerts/${concert.id}`;
+const [template] = await sql`
+  select id from ticket_templates where concert_id = ${concert.id} or concert_id is null
+   order by (concert_id is null), id desc limit 1`;
+const [replied] = await sql`
+  select t.registration_id from email_messages m join email_threads t on t.id = m.thread_id
+   where m.direction = 'INBOUND' and not m.is_bounce order by m.message_at limit 1`;
+
+/** Eleanor's own seat, once she has registered (the `register` clip); null before. */
+const eleanor = async () => {
+  const [row] = await sql`
+    select a.qr_token, a.ticket_sent_at from attendees a join registrations r on r.id = a.registration_id
+     where r.contact_email = ${GUEST.email} and a.full_name = ${GUEST.name} and a.deleted_at is null
+     order by a.id desc limit 1`;
+  return row ?? null;
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -162,6 +180,13 @@ function desktop(page) {
         await sleep(16);
       }
       await sleep(250);
+    },
+    /** Scroll smoothly until the element sits near the top of the window. */
+    async reveal(locator, ms = 1100) {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error(`nothing to reveal: ${locator}`);
+      const dy = box.y - 180;
+      if (Math.abs(dy) > 24) await self.scroll(dy, ms);
     },
     hold: (ms) => sleep(ms),
   };
@@ -381,7 +406,26 @@ await clip('01', 'console', { device: 'desktop', admin: true }, async ({ page, d
   await d.hold(1400);
 });
 
-await clip('02', 'register', { device: 'phone' }, async ({ page, d, mark }) => {
+await clip('02', 'themes', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+  await page.goto(`${C}/home`);
+  await settle(page);
+  await hideBanner(page);
+  await mark('home');
+  await d.hold(900);
+  await d.click(page.getByRole('button', { name: /^Appearance/ }).first());
+  await d.hold(700);
+  // The menu stays open while a choice applies, so every change happens live behind it.
+  const menu = page.getByRole('menu');
+  for (const label of ['Terracotta', 'Amethyst', 'Dark', 'Emerald', 'Mono', 'Default', 'Light']) {
+    await d.click(menu.getByRole('menuitemradio', { name: label }));
+    await mark(label.toLowerCase());
+    await d.hold(label === 'Dark' ? 1300 : 1000);
+  }
+  await page.keyboard.press('Escape');
+  await d.hold(800);
+});
+
+await clip('03', 'register', { device: 'phone' }, async ({ page, d, mark }) => {
   await page.goto('/f/autumn-gala');
   await settle(page);
   await mark('form');
@@ -402,9 +446,15 @@ await clip('02', 'register', { device: 'phone' }, async ({ page, d, mark }) => {
   await settle(page, 600);
   await mark('done');
   await d.hold(2600);
+  // A public form asks the registrant to confirm her address; she taps the link in that email.
+  const [her] = await sql`select verification_token from registrations where contact_email = ${GUEST.email} order by id desc limit 1`;
+  await page.goto(`/f/verify?t=${encodeURIComponent(her.verification_token)}`);
+  await settle(page, 600);
+  await mark('verified');
+  await d.hold(2200);
 });
 
-await clip('03', 'intake', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+await clip('04', 'intake', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
   await page.goto(`${C}/forms`);
   await settle(page);
   await hideBanner(page);
@@ -442,13 +492,69 @@ await clip('03', 'intake', { device: 'desktop', admin: true }, async ({ page, d,
   await d.hold(1400);
 });
 
-await clip('04', 'send', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+await clip('05', 'reply', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+  await page.goto(`${C}/audience/${replied.registration_id}`);
+  await settle(page);
+  await hideBanner(page);
+  await mark('party');
+  await d.hold(1200);
+  // The guest's answer to her tickets email, threaded under it on her record.
+  const reply = page.getByText(/^Re: Your tickets/).first();
+  await d.reveal(reply);
+  await d.point(reply);
+  await mark('conversation');
+  await d.hold(1800);
+  await d.click(page.getByRole('button', { name: 'Reply', exact: true }).first());
+  await settle(page, 600);
+  await d.type(page.getByPlaceholder(/Write your reply/), 'Nothing to do — enjoy the evening, and thank you for letting us know.');
+  await mark('compose');
+  await d.hold(1800);
+});
+
+await clip('06', 'allocation', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+  await page.goto(`${C}/shows`);
+  await settle(page);
+  await hideBanner(page);
+  await mark('shows');
+  await d.hold(1400);
+  // The gala's hall, then how its public segment's seats stand: confirmed, and the extras pool.
+  await d.point(page.getByText(/^Hall 320$|^Hall \d+$/).last());
+  await mark('hall');
+  await d.hold(1400);
+  await d.point(page.getByText(/^\d+ in the extras pool$/).last());
+  await mark('pool');
+  await d.hold(2000);
+});
+
+await clip('07', 'editor', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
+  await page.goto(`${C}/tickets/templates/${template.id}`);
+  await settle(page, 1500);
+  await hideBanner(page);
+  await mark('editor');
+  await d.hold(1200);
+  // Konva draws the ticket on a canvas, so its elements are clicked by where they sit on it.
+  const canvas = page.locator('canvas').last();
+  const box = await canvas.boundingBox();
+  const at = (fx, fy) => d.to(box.x + box.width * fx, box.y + box.height * fy);
+  const press = async () => { await page.mouse.down(); await sleep(90); await page.mouse.up(); await sleep(500); };
+  await at(0.18, 0.36);
+  await press();
+  await mark('name');
+  await d.hold(1500);
+  await at(0.93, 0.37);
+  await press();
+  await mark('qr');
+  await d.hold(1600);
+});
+
+await clip('08', 'send', { device: 'desktop', admin: true }, async ({ page, d, mark }) => {
   await page.goto(`${C}/audience`);
   await settle(page);
   await hideBanner(page);
   await mark('audience');
   await d.hold(1000);
-  await d.click(page.getByRole('button', { name: /^Ready to send/ }).or(page.getByRole('link', { name: /^Ready to send/ })).first());
+  // Eleanor's party is confirmed but not yet issued: the wizard issues and sends in one run.
+  await d.click(page.getByRole('button', { name: /^Needs tickets/ }).or(page.getByRole('link', { name: /^Needs tickets/ })).first());
   await settle(page, 700);
   await d.click(page.getByRole('checkbox', { name: /select all/i }).first());
   await d.hold(500);
@@ -477,7 +583,12 @@ await clip('04', 'send', { device: 'desktop', admin: true }, async ({ page, d, m
   await settle(page, 1200);
   await mark('mailpit');
   await d.hold(1200);
-  await d.click(page.getByText(/Your tickets/).first());
+  const found = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${GUEST.email}"`)}`).then((r) => r.json());
+  const message = found.messages?.[0];
+  if (!message) throw new Error(`no email to ${GUEST.email} in Mailpit — was her party in "Needs tickets"?`);
+  const row = page.locator(`a[href$="${message.ID}"]`).first();
+  if (await row.count()) await d.click(row);
+  else await page.goto(`${MAILPIT}/view/${message.ID}`);
   await settle(page, 1500);
   await mark('email');
   await d.hold(1800);
@@ -485,80 +596,29 @@ await clip('04', 'send', { device: 'desktop', admin: true }, async ({ page, d, m
   await d.hold(1800);
 });
 
-const [door] = await sql`
-  select a.qr_token, a.full_name from attendees a
-   where a.show_id = ${gala.id} and a.ticket_sent_at is not null and a.qr_token is not null
-     and a.name_source = 'PROVIDED' and a.deleted_at is null
-     and not exists (select 1 from check_ins c where c.attendee_id = a.id)
-   order by a.id limit 1`;
-const y4m = path.join(os.tmpdir(), 'zetix-door-qr.y4m');
-execFileSync(process.execPath, ['qa/support/qa-qr-y4m.mjs', `${BASE}/t/${door.qr_token}`, y4m]);
+// Eleanor's ticket, once `send` has sent it; a fresh seed's gala guest when the clips run alone.
+const herTicket = async () => {
+  const her = await eleanor();
+  if (her?.ticket_sent_at) return her.qr_token;
+  if (her && (!only.length || only.includes('send'))) throw new Error(`${GUEST.name} registered but her tickets were not sent`);
+  const [row] = await sql`
+    select a.qr_token from attendees a
+     where a.show_id = ${gala.id} and a.ticket_sent_at is not null and a.qr_token is not null
+       and a.name_source = 'PROVIDED' and a.deleted_at is null
+       and not exists (select 1 from check_ins c where c.attendee_id = a.id)
+     order by a.id limit 1`;
+  return row.qr_token;
+};
 
-await clip('05', 'door', {
-  device: 'phone',
-  launch: { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${y4m}`] },
-}, async ({ page, d, mark }) => {
-  await page.context().grantPermissions(['camera'], { origin: BASE });
-  await page.goto('/scan/login');
-  await settle(page);
-  await mark('login');
-  await d.hold(900);
-  await d.type(page.locator('input[name="displayName"]'), USHER.name);
-  await d.type(page.locator('input[name="code"]'), USHER.code);
-  await d.tap(page.locator('button[type="submit"]'));
-  await page.waitForURL((u) => !u.pathname.startsWith('/scan/login'), { timeout: 60_000 });
-  await settle(page, 1200);
-  if (!page.url().includes(`/scan/${gala.id}`)) {
-    await page.goto(`/scan/${gala.id}`);
-    await settle(page, 1200);
-  }
-  await mark('ready');
-  await d.hold(1000);
-  await d.tap(page.getByRole('button', { name: 'Start scanning' }));
-  await page.getByText('Admitted', { exact: true }).waitFor({ timeout: 30_000 });
-  await mark('admitted');
-  await d.hold(2600);
-  // The camera still sees the same ticket: the second read is refused as a duplicate.
-  await d.tap(page.getByRole('button', { name: 'Next' }));
-  await page.getByText('Already checked in').waitFor({ timeout: 30_000 });
-  await mark('duplicate');
-  await d.hold(2600);
-  await d.tap(page.getByRole('tab', { name: /Search/ }).or(page.getByRole('button', { name: /^Search/ })).first());
-  const search = page.locator('input[type="search"]').first();
-  await d.type(search, 'Ingleby');
-  await settle(page, 700);
-  await mark('search');
-  await d.hold(1800);
-  await page.getByRole('button', { name: /clear/i }).first().click().catch(() => search.fill(''));
-  await d.type(search, 'Hargreaves');
-  await settle(page, 600);
-  await mark('no-match');
-  await d.hold(1400);
-  await d.tap(page.getByRole('button', { name: /Record as walk-in/ }));
-  await settle(page, 600);
-  await d.tap(page.getByRole('button', { name: 'One more' }));
-  await mark('walk-in');
-  await d.hold(1000);
-  await d.tap(page.getByRole('button', { name: /^Admit \d+ walk-in/ }));
-  await settle(page, 900);
-  await d.tap(page.getByRole('tab', { name: /Stats/ }).or(page.getByRole('button', { name: /^Stats/ })).first());
-  await settle(page, 900);
-  await mark('stats');
-  await d.hold(2400);
-});
-
-const [ticket] = await sql`
-  select qr_token from attendees
-   where show_id = ${gala.id} and ticket_sent_at is not null and qr_token is not null and name_source = 'PROVIDED'
-   order by id desc limit 1`;
+const ticket = await herTicket();
 const [after] = await sql`
   select a.qr_token from attendees a join check_ins c on c.attendee_id = a.id
    where a.show_id = ${rehearsal.id} and a.qr_token is not null
      and not exists (select 1 from feedback_responses r where r.attendee_id = a.id)
    order by a.id limit 1`;
 
-await clip('06', 'guest', { device: 'phone' }, async ({ page, d, mark }) => {
-  await page.goto(`/t/${ticket.qr_token}`);
+await clip('09', 'guest', { device: 'phone' }, async ({ page, d, mark }) => {
+  await page.goto(`/t/${ticket}`);
   await settle(page, 1200);
   await mark('ticket');
   await d.hold(1800);
@@ -587,6 +647,74 @@ await clip('06', 'guest', { device: 'phone' }, async ({ page, d, mark }) => {
   await d.tap(page.getByRole('button', { name: 'Send my note' }));
   await settle(page, 1000);
   await mark('noted');
+  await d.hold(2400);
+});
+
+const y4m = path.join(os.tmpdir(), 'zetix-door-qr.y4m');
+execFileSync(process.execPath, ['qa/support/qa-qr-y4m.mjs', `${BASE}/t/${ticket}`, y4m]);
+
+await clip('10', 'door', {
+  device: 'phone',
+  launch: { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${y4m}`] },
+}, async ({ page, d, mark }) => {
+  await page.context().grantPermissions(['camera'], { origin: BASE });
+  await page.goto('/scan/login');
+  await settle(page);
+  await mark('login');
+  await d.hold(900);
+  await d.type(page.locator('input[name="displayName"]'), USHER.name);
+  await d.type(page.locator('input[name="code"]'), USHER.code);
+  await d.tap(page.locator('button[type="submit"]'));
+  await page.waitForURL((u) => !u.pathname.startsWith('/scan/login'), { timeout: 60_000 });
+  await settle(page, 1200);
+  if (!page.url().includes(`/scan/${gala.id}`)) {
+    await page.goto(`/scan/${gala.id}`);
+    await settle(page, 1200);
+  }
+  await mark('ready');
+  await d.hold(1000);
+  // The roster is on the phone; the signal goes, and the door carries on (spec/checkin.md §12).
+  await page.context().setOffline(true);
+  await page.getByText('Offline', { exact: true }).waitFor({ timeout: 15_000 });
+  await mark('offline');
+  await d.hold(1400);
+  await d.tap(page.getByRole('button', { name: 'Start scanning' }));
+  await page.getByText('Admitted', { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByText(/^Offline · 1 waiting$/).waitFor({ timeout: 15_000 });
+  await mark('admitted');
+  await d.hold(2600);
+  // The camera still sees the same ticket: the second read is refused as a duplicate.
+  await d.tap(page.getByRole('button', { name: 'Next' }));
+  await page.getByText('Already checked in').waitFor({ timeout: 30_000 });
+  await mark('duplicate');
+  await d.hold(2200);
+  // The signal comes back, and the waiting admission syncs.
+  await page.context().setOffline(false);
+  await page.getByText(/^Offline/).waitFor({ state: 'detached', timeout: 30_000 });
+  await page.getByText(/waiting$|^Syncing/).waitFor({ state: 'detached', timeout: 60_000 }).catch(() => {});
+  await mark('synced');
+  await d.hold(1800);
+  await d.tap(page.getByRole('tab', { name: /Search/ }).or(page.getByRole('button', { name: /^Search/ })).first());
+  const search = page.locator('input[type="search"]').first();
+  await d.type(search, 'Ingleby');
+  await settle(page, 700);
+  await mark('search');
+  await d.hold(1800);
+  await page.getByRole('button', { name: /clear/i }).first().click().catch(() => search.fill(''));
+  await d.type(search, 'Hargreaves');
+  await settle(page, 600);
+  await mark('no-match');
+  await d.hold(1400);
+  await d.tap(page.getByRole('button', { name: /Record as walk-in/ }));
+  await settle(page, 600);
+  await d.tap(page.getByRole('button', { name: 'One more' }));
+  await mark('walk-in');
+  await d.hold(1000);
+  await d.tap(page.getByRole('button', { name: /^Admit \d+ walk-in/ }));
+  await settle(page, 900);
+  await d.tap(page.getByRole('tab', { name: /Stats/ }).or(page.getByRole('button', { name: /^Stats/ })).first());
+  await settle(page, 900);
+  await mark('stats');
   await d.hold(2400);
 });
 

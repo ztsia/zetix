@@ -6,12 +6,17 @@
  * evaluate -> enqueue -> POST) is otherwise unreachable from a headless test,
  * and the branch's own e2e never exercises it.
  *
- *   node qa/support/qa-qr-y4m.mjs "<payload>" /tmp/out.y4m
+ *   node qa/support/qa-qr-y4m.mjs "<payload>" /tmp/out.y4m [qrSeconds blankSeconds]
+ *
+ * Chromium loops the file, so by default the QR is in view for ever. With the two
+ * durations, the camera sees the QR for `qrSeconds` from when it starts, then an
+ * empty, dark view for `blankSeconds`: a ticket shown once and taken away, as at a
+ * real door. That variant runs at 2 frames a second to keep the file small.
  */
 import fs from 'node:fs';
 import QRCode from 'qrcode';
 
-const [, , payload, out] = process.argv;
+const [, , payload, out, qrSeconds, blankSeconds] = process.argv;
 if (!payload || !out) {
   console.error('usage: qa-qr-y4m.mjs <payload> <out.y4m>');
   process.exit(1);
@@ -19,7 +24,10 @@ if (!payload || !out) {
 
 const W = 640;
 const H = 480;
-const FRAMES = 20;
+const timed = qrSeconds !== undefined && blankSeconds !== undefined;
+const FPS = timed ? 2 : 25;
+const FRAMES = timed ? Math.round(Number(qrSeconds) * FPS) : 20;
+const BLANK = timed ? Math.round(Number(blankSeconds) * FPS) : 0;
 
 const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' });
 const size = qr.modules.size;
@@ -49,9 +57,13 @@ void quiet;
 const u = Buffer.alloc((W / 2) * (H / 2), 128);
 const v = Buffer.alloc((W / 2) * (H / 2), 128);
 
-const chunks = [Buffer.from(`YUV4MPEG2 W${W} H${H} F25:1 Ip A1:1 C420mpeg2\n`)];
+const empty = Buffer.alloc(W * H, 40); // a dark counter, nothing to read
+const chunks = [Buffer.from(`YUV4MPEG2 W${W} H${H} F${FPS}:1 Ip A1:1 C420mpeg2\n`)];
 for (let f = 0; f < FRAMES; f++) {
   chunks.push(Buffer.from('FRAME\n'), y, u, v);
+}
+for (let f = 0; f < BLANK; f++) {
+  chunks.push(Buffer.from('FRAME\n'), empty, u, v);
 }
 fs.writeFileSync(out, Buffer.concat(chunks));
 console.log(`${out} ${size}x${size} modules, scale ${scale}`);

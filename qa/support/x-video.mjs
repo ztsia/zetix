@@ -195,6 +195,16 @@ function desktop(page) {
 
 // ── Driving a phone with touch, and drawing where the finger lands ────────────
 
+/** Whether nothing a finger drags can move `el`: it is fixed or sticky, or the page has no more to scroll. */
+function cannotScroll(el) {
+  for (let node = el; node && node !== document.body; node = node.parentElement) {
+    const position = getComputedStyle(node).position;
+    if (position === 'fixed' || position === 'sticky') return true;
+  }
+  const page = document.scrollingElement;
+  return page.scrollTop + innerHeight >= page.scrollHeight - 2;
+}
+
 async function phone(page) {
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
@@ -246,6 +256,10 @@ async function phone(page) {
         if (!box) return;
         const bottom = box.y + box.height;
         if (box.y >= 70 && bottom <= view.height - 110) return;
+        // On screen but in a bar or sheet that never scrolls (the tab bar, a drawer's button), or
+        // at the end of the page: a swipe cannot move it, and would only draw a stray gesture.
+        // (Two pixels of slack: the tab bar's edge measures 915.05 in a 915-pixel window.)
+        if (box.y >= 0 && bottom <= view.height + 2 && (await locator.evaluate(cannotScroll))) return;
         const need = bottom > view.height - 110 ? bottom - (view.height - 160) : box.y - 120;
         const step = Math.max(-420, Math.min(420, need));
         await self.swipe(view.height * 0.62, view.height * 0.62 - step, { ms: 420 });
@@ -337,6 +351,7 @@ async function clip(n, name, { device, admin = false, launch = null }, body) {
   let shots = 0;
   const mark = async (label) => {
     if (begin === null) begin = Date.now();
+    if (process.env.TIMING === '1') console.log(`  ${name} ${label} +${((Date.now() - begin) / 1000).toFixed(1)}s`);
     if (DRY) await page.screenshot({ path: path.join(out, `${n}-${name}-${String(++shots).padStart(2, '0')}-${label}.png`) });
   };
   const driver = isPhone ? await phone(page) : desktop(page);
@@ -364,7 +379,7 @@ async function clip(n, name, { device, admin = false, launch = null }, body) {
 }
 
 const settle = async (page, ms = 900) => {
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
   await sleep(ms);
 };
 const hideBanner = async (page) => {
@@ -657,7 +672,9 @@ await clip('09', 'guest', { device: 'phone' }, async ({ page, d, mark }) => {
 });
 
 const y4m = path.join(os.tmpdir(), 'zetix-door-qr.y4m');
-execFileSync(process.execPath, ['qa/support/qa-qr-y4m.mjs', `${BASE}/t/${ticket}`, y4m]);
+// Her ticket is held up for 7 s, long enough to admit her and read it again as a duplicate,
+// then taken away: a looping QR is read again every few seconds, over every later beat.
+execFileSync(process.execPath, ['qa/support/qa-qr-y4m.mjs', `${BASE}/t/${ticket}`, y4m, '7', '150']);
 
 await clip('10', 'door', {
   device: 'phone',
@@ -679,6 +696,7 @@ await clip('10', 'door', {
   }
   await mark('ready');
   await d.hold(1000);
+  // After the signal toggles, Playwright never sees the network go idle: plain pauses from here.
   // The roster is on the phone; the signal goes, and the door carries on (spec/checkin.md §12).
   await page.context().setOffline(true);
   await page.getByText('Offline', { exact: true }).waitFor({ timeout: 15_000 });
@@ -703,23 +721,23 @@ await clip('10', 'door', {
   await d.tap(page.getByRole('tab', { name: /Search/ }).or(page.getByRole('button', { name: /^Search/ })).first());
   const search = page.locator('input[type="search"]').first();
   await d.type(search, 'Ingleby');
-  await settle(page, 700);
+  await sleep(700);
   await mark('search');
   await d.hold(1800);
   await page.getByRole('button', { name: /clear/i }).first().click().catch(() => search.fill(''));
   await d.type(search, 'Hargreaves');
-  await settle(page, 600);
+  await sleep(600);
   await mark('no-match');
   await d.hold(1400);
   await d.tap(page.getByRole('button', { name: /Record as walk-in/ }));
-  await settle(page, 600);
+  await sleep(600);
   await d.tap(page.getByRole('button', { name: 'One more' }));
   await mark('walk-in');
   await d.hold(1000);
   await d.tap(page.getByRole('button', { name: /^Admit \d+ walk-in/ }));
-  await settle(page, 900);
+  await sleep(900);
   await d.tap(page.getByRole('tab', { name: /Stats/ }).or(page.getByRole('button', { name: /^Stats/ })).first());
-  await settle(page, 900);
+  await sleep(900);
   await mark('stats');
   await d.hold(2400);
 });

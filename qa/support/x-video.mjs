@@ -9,7 +9,8 @@
 // One guest, Eleanor, runs through the story: she registers, her tickets are sent, her email is
 // opened, her ticket page is shown, and the door admits her. The edit reorders the clips.
 //
-// Desktop clips are 1920×1080 with a drawn cursor that glides; phone clips are a Pixel 7 driven by
+// Desktop clips are a 1440×810 window at twice its density (2880×1620 frames), so the edit can push
+// in on a dialog and stay sharp, with a drawn cursor that glides; phone clips are a Pixel 7 driven by
 // real touch input, with a circle where the finger lands — never a cursor on a phone. Each clip is
 // recorded as WebM, trimmed to start once its first page has settled, and converted to an H.264
 // MP4 by the system ffmpeg. DRY=1 takes a screenshot at each mark instead of recording.
@@ -138,7 +139,7 @@ function overlay(kind) {
 // ── Driving a desktop page with a visible cursor ──────────────────────────────
 
 function desktop(page) {
-  let at = { x: 960, y: 540 };
+  let at = { x: DESKTOP.css.width / 2, y: DESKTOP.css.height / 2 };
   const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
   const self = {
     page,
@@ -315,20 +316,35 @@ const PHONE = {
 };
 
 /**
+ * The desktop, launched the same way and for the same reason: emulating a scale factor would
+ * screencast at CSS size. 1440×810 CSS at 2× is 2880×1620, so a 2× push in the edit is still
+ * one source pixel per output pixel, and the interface is a third larger in the frame than at 1920.
+ */
+const DESKTOP = {
+  css: { width: 1440, height: 810 },
+  scale: 2,
+  get video() {
+    return { width: this.css.width * this.scale, height: this.css.height * this.scale };
+  },
+  args() {
+    return [`--force-device-scale-factor=${this.scale}`, `--window-size=${this.css.width},${this.css.height}`];
+  },
+};
+
+/**
  * One clip: a fresh context, recorded; `body` drives it. `marks` timestamps where the clip
  * begins (the first page settled), so the blank start can be cut.
  */
 async function clip(n, name, { device, admin = false, launch = null }, body) {
   if (only.length && !only.includes(name)) return;
   const isPhone = device === 'phone';
-  const size = isPhone ? PHONE.video : { width: 1920, height: 1080 };
+  const size = isPhone ? PHONE.video : DESKTOP.video;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zetix-video-'));
-  const own = isPhone || launch;
-  const owner = own ? await chromium.launch({ args: [...(launch?.args ?? []), ...(isPhone ? PHONE.args() : [])] }) : browser;
+  const owner = await chromium.launch({ args: [...(launch?.args ?? []), ...(isPhone ? PHONE : DESKTOP).args()] });
   const ctx = await owner.newContext({
     ...(isPhone
       ? { viewport: null, hasTouch: true, userAgent: devices['Pixel 7'].userAgent }
-      : { viewport: size, deviceScaleFactor: 1 }),
+      : { viewport: null }),
     baseURL: BASE,
     colorScheme: 'light',
     ...(admin ? { storageState: await signedInState() } : {}),
@@ -364,7 +380,7 @@ async function clip(n, name, { device, admin = false, launch = null }, body) {
   } finally {
     const video = page.video();
     await ctx.close();
-    if (own) await owner.close();
+    await owner.close();
     if (video) {
       const webm = await video.path();
       const mp4 = path.join(out, `${n}-${name}.mp4`);

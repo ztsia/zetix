@@ -579,13 +579,19 @@ await clip('08', 'send', { device: 'desktop', admin: true }, async ({ page, d, m
   await d.hold(2200);
   await d.click(page.getByRole('dialog').getByRole('button', { name: 'Close' }).first());
   await d.hold(800);
+  // Dispatch sends one message at a time, PDFs attached, and Eleanor's is queued last: open the
+  // mailbox once hers has landed, so it is at the top of the list.
+  let message = null;
+  for (let tries = 0; tries < 90 && !message; tries++) {
+    const found = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${GUEST.email}"`)}`).then((r) => r.json());
+    message = found.messages?.[0] ?? null;
+    if (!message) await sleep(2000);
+  }
+  if (!message) throw new Error(`no email to ${GUEST.email} in Mailpit — was her party in "Needs tickets"?`);
   await page.goto(MAILPIT);
   await settle(page, 1200);
   await mark('mailpit');
   await d.hold(1200);
-  const found = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${GUEST.email}"`)}`).then((r) => r.json());
-  const message = found.messages?.[0];
-  if (!message) throw new Error(`no email to ${GUEST.email} in Mailpit — was her party in "Needs tickets"?`);
   const row = page.locator(`a[href$="${message.ID}"]`).first();
   if (await row.count()) await d.click(row);
   else await page.goto(`${MAILPIT}/view/${message.ID}`);

@@ -101,7 +101,8 @@ Some decisions worth reading:
 **Read `CLAUDE.md` first**, then `docs/spec/README.md` (the contract's index), `docs/modules.md`
 (which branch owns what), `docs/context.md` (the concert's data), `docs/ref.md` (background).
 `docs/local.md` lists what only a human or local session can do, and `docs/handoff/` carries one-time
-notes between sessions.
+notes between sessions. Those two are kept private: the published copy of this repository leaves
+them out, so a reference to either, here or in a code comment, points at nothing there.
 
 ```bash
 pnpm install
@@ -171,3 +172,7 @@ Repo secrets needed for that workflow: `APP_URL`, `CRON_SECRET`.
 > be the Vercel **production alias**, never a deployment URL and never derived
 > from `VERCEL_URL`. Do not rename or transfer the Vercel project once tickets
 > have rendered — the project name is the hostname (`docs/spec/tickets.md` §10.1).
+
+## Licence
+
+MIT. See [`LICENSE`](LICENSE). The ticket fonts in `src/assets/fonts/` keep their own licences.

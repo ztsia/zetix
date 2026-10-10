@@ -13,6 +13,19 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/**': ['./src/assets/fonts/**/*'],
   },
+
+  /**
+   * `/` is the Zetix landing page only where `SHOWCASE` is set: the demo deployment (spec/v3.md
+   * §31). Everywhere else it stays the placeholder in `src/app/page.tsx`. A rewrite rather than a
+   * branch inside that page, because a page loads every client chunk its imports reach: this way
+   * production's `/` loads nothing of the showcase. Blank reads as unset, and it is read at build,
+   * as `src/app/(showcase)/_lib/flag.ts` does for the page itself.
+   */
+  async rewrites() {
+    return {
+      beforeFiles: process.env.SHOWCASE?.trim() ? [{ source: '/', destination: '/showcase' }] : [],
+    };
+  },
 };
 
 export default nextConfig;

@@ -2,7 +2,7 @@
 
 import { useRef } from 'react';
 import { motion, useInView } from 'motion/react';
-import { DECISIONS_URL, REPO_URL } from '../_lib/content';
+import { REPO_URL } from '../_lib/content';
 import { TEAR_STUB_TRANSFORM, TEAR_UPPER } from '../_lib/tear';
 import { Wordmark } from './mark';
 import { useShowcase } from './root';
@@ -51,15 +51,12 @@ export function Curtain() {
           The house is open.
         </h2>
         <p className="zx-curtain__lead">
-          Sign in to the demo as a read-only viewer, or read the code and the decisions behind it.
+          Sign in to the demo as a read-only viewer, or read the code.
         </p>
         <div className="zx-curtain__actions">
           <button type="button" className="zx-btn zx-btn--primary" onClick={openDemo}>
             Open the demo
           </button>
-          <a className="zx-btn zx-btn--ghost" href={DECISIONS_URL}>
-            Read the decisions
-          </a>
           <a className="zx-btn zx-btn--ghost" href={REPO_URL}>
             GitHub
           </a>

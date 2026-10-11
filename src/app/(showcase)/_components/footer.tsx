@@ -1,4 +1,4 @@
-import { AUTHOR, DECISIONS_URL, REPO_URL } from '../_lib/content';
+import { AUTHOR, REPO_URL } from '../_lib/content';
 import { Mark, Wordmark } from './mark';
 
 export function Footer() {
@@ -12,7 +12,6 @@ export function Footer() {
         </p>
         <nav aria-label="Elsewhere" className="zx-footer__links">
           <a href={REPO_URL}>GitHub</a>
-          <a href={DECISIONS_URL}>Decisions</a>
           <a href={AUTHOR.url}>Made by {AUTHOR.name}</a>
         </nav>
       </div>

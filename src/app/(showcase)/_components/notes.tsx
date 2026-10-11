@@ -1,4 +1,3 @@
-import { DECISIONS_URL } from '../_lib/content';
 import { DoubleSend } from './double-send';
 import { LockRace } from './lock-race';
 import { Sql } from './sql';
@@ -63,14 +62,6 @@ export function Notes() {
             <Sql code={OUTBOX} source="drizzle/0200_v3_schema_delta.sql" />
           </article>
         </div>
-
-        <p className="zx-notes__more">
-          Sixty decisions like these are on record, usually with the simpler option that was considered
-          and why it was worse.{' '}
-          <a className="zx-link" href={DECISIONS_URL}>
-            Read the decisions
-          </a>
-        </p>
       </div>
     </section>
   );

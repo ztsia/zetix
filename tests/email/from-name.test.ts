@@ -49,6 +49,10 @@ async function setFromName(value: unknown) {
 
 beforeAll(async () => {
   sink = await startSmtpSink();
+  // `env()` validates the whole environment before it hands over the mail settings, and CI has no
+  // Supabase project. Nothing here reaches one; set outright, so a developer's real values never do.
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
   process.env.GMAIL_USER = MAILBOX;
   process.env.SMTP_HOST = '127.0.0.1';
   process.env.SMTP_PORT = String(sink.port);

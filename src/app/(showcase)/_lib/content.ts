@@ -5,9 +5,6 @@
 /** The public repository (docs/local.md §18.2). */
 export const REPO_URL = 'https://github.com/ztsia/zetix';
 
-/** The architecture record, which §31 requires the page to link. */
-export const DECISIONS_URL = `${REPO_URL}/blob/main/docs/spec/decisions.md`;
-
 /**
  * The walkthrough's YouTube id, uploaded by the owner on 10 Oct 2026 (docs/local.md §18.2). Left
  * empty, the page says the film is not up yet instead of embedding nothing.

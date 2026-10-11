@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMotionValueEvent, useScroll } from 'motion/react';
-import { DECISIONS_URL, REPO_URL } from '../_lib/content';
+import { REPO_URL } from '../_lib/content';
 import { Mark, Wordmark } from './mark';
 import { useShowcase } from './root';
 
@@ -24,9 +24,6 @@ export function Nav() {
           <button type="button" className="zx-nav__link zx-nav__link--wide" onClick={openFilm}>
             Walkthrough
           </button>
-          <a className="zx-nav__link zx-nav__link--wide" href={DECISIONS_URL}>
-            Decisions
-          </a>
           <a className="zx-nav__link" href={REPO_URL}>
             GitHub
           </a>

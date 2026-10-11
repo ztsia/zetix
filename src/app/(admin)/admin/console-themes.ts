@@ -4,16 +4,19 @@
  * A plain module shared by the provider (client), the pre-paint script (a
  * string the server renders) and the tests. The CSS for each theme is
  * `themes.css`; the default is no `data-theme` at all.
+ *
+ * Three ids are tweakcn's names, which are brands; their labels are not
+ * (§29.5). The ids stay, so a choice already stored in a browser still applies.
  */
 export const CONSOLE_THEMES = [
   { id: 'default', label: 'Default' },
   { id: 'amber', label: 'Amber' },
   { id: 'amethyst', label: 'Amethyst' },
   { id: 'caffeine', label: 'Caffeine' },
-  { id: 'claude', label: 'Claude' },
+  { id: 'supabase', label: 'Emerald' },
   { id: 'graphite', label: 'Graphite' },
-  { id: 'supabase', label: 'Supabase' },
-  { id: 'vercel', label: 'Vercel' },
+  { id: 'vercel', label: 'Mono' },
+  { id: 'claude', label: 'Terracotta' },
 ] as const;
 
 export type ConsoleThemeId = (typeof CONSOLE_THEMES)[number]['id'];

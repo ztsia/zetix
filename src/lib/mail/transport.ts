@@ -100,11 +100,21 @@ export interface MailTransport {
 }
 
 /** The `From` header. Gmail rewrites it to the authenticated mailbox otherwise. */
-function fromHeader(user: string, displayName: string): string {
-  return `"${displayName.replace(/"/g, '')}" <${user}>`;
+/** With no display name, the bare address: still a valid `From`, and still delivered. */
+type Mailbox = string | { name: string; address: string };
+
+/**
+ * A display name goes to nodemailer as `{ name, address }`, never pre-quoted into a string:
+ * nodemailer quotes and encodes it, so a name ending in `\` cannot escape the closing quote
+ * and turn the header into a different address (QA, module X). Line breaks are flattened
+ * here; nodemailer would encode them, but a name never needs one.
+ */
+function mailbox(address: string, displayName: string | null | undefined): Mailbox {
+  const name = displayName?.replace(/\s+/g, ' ').trim();
+  return name ? { name, address } : address;
 }
 
-function toNodemailerMessage(message: OutgoingMessage, from: string) {
+function toNodemailerMessage(message: OutgoingMessage, from: Mailbox) {
   const t = message.threading;
   return {
     from,
@@ -112,7 +122,7 @@ function toNodemailerMessage(message: OutgoingMessage, from: string) {
     ...(t?.replyTo ? { replyTo: t.replyTo } : {}),
     ...(t?.inReplyTo ? { inReplyTo: t.inReplyTo } : {}),
     ...(t?.references?.length ? { references: t.references } : {}),
-    to: message.toName ? `"${message.toName.replace(/"/g, '')}" <${message.to}>` : message.to,
+    to: mailbox(message.to, message.toName),
     subject: message.subject,
     text: message.text,
     html: message.html,
@@ -145,7 +155,7 @@ function normalize(info: unknown, message: OutgoingMessage): SendResult {
   };
 }
 
-function wrap(transporter: Transporter, from: string, sender: string): MailTransport {
+function wrap(transporter: Transporter, from: Mailbox, sender: string): MailTransport {
   return {
     sender,
     async send(message) {
@@ -164,7 +174,8 @@ export type SmtpConfig = {
   secure: boolean;
   user: string;
   pass: string;
-  fromName: string;
+  /** `email.from_name`; null sends from the address alone. */
+  fromName: string | null;
 };
 
 /**
@@ -206,7 +217,7 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
     pool: true,
     maxConnections: 1,
   });
-  return wrap(transporter, fromHeader(config.user, config.fromName), config.user);
+  return wrap(transporter, mailbox(config.user, config.fromName), config.user);
 }
 
 /**
@@ -220,7 +231,7 @@ export function createSmtpTransport(config: SmtpConfig): MailTransport {
  * sends `=?UTF-8?Q?...?=`. `streamTransport` runs the same MailComposer the SMTP
  * transport does and hands back the finished bytes.
  */
-export function createStreamTransport(fromName: string, user: string): MailTransport {
+export function createStreamTransport(fromName: string | null, user: string): MailTransport {
   const transporter = nodemailer.createTransport({ streamTransport: true, buffer: true });
-  return wrap(transporter, fromHeader(user, fromName), user);
+  return wrap(transporter, mailbox(user, fromName), user);
 }

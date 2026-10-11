@@ -438,7 +438,8 @@ export function BlastQueueBanner() {
       : 0;
 
   return (
-    <Item variant="outline" size="sm" className="mx-4 mt-4 md:mx-6">
+    // `w-auto`: `Item` is `w-full`, and full width plus these margins overflowed the page sideways.
+    <Item variant="outline" size="sm" className="mx-4 mt-4 w-auto md:mx-6">
       <ItemMedia variant="icon">
         <MailIcon />
       </ItemMedia>

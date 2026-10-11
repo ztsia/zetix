@@ -643,7 +643,7 @@ export async function dispatchBatch(options: DispatchOptions = {}): Promise<Disp
    * pool inside it reuses a single connection, so the batch costs one TLS
    * handshake rather than one per message.
    */
-  const transport = options.transport ?? createConfiguredTransport();
+  const transport = options.transport ?? (await createConfiguredTransport());
   const warnings: string[] = [];
   let sent = 0;
   let failed = 0;

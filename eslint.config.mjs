@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
      * has run the QA suite locally, which trains people to ignore lint.
      */
     "qa-artifacts/**",
+    /** The demo video's Remotion edit: its own project, gitignored (spec/v3.md §31). */
+    "video-edit/**",
   ]),
   {
     /**

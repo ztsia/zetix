@@ -51,6 +51,10 @@ next-env.d.ts
 # qa run artifacts (screenshots, traces, reports)
 qa-artifacts/
 
+# the demo video's Remotion edit: its own project, raw footage and renders
+# (spec/v3.md §31). Never in git, so never in the public history either.
+video-edit/
+
 # uploaded ticket artwork, when TICKET_ASSET_DIR points inside the repo
 # (spec/tickets.md §10.3). Production uses the Supabase bucket instead.
 .ticket-assets/

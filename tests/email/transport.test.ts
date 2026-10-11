@@ -77,6 +77,26 @@ describe('the composed message', () => {
     expect(raw).toContain('To: Wellington Mainwaring <player@example.com>');
     expect(raw).toContain('From: Lakeside Community Orchestra <tickets@example.org>');
   });
+
+  /**
+   * The name used to be pre-quoted into a string with only `"` stripped, so a
+   * trailing backslash escaped the closing quote and nodemailer read the whole
+   * header as one quoted local-part — a different, non-existent sender (QA,
+   * module X). Whatever the name, the address must come through unchanged.
+   */
+  it.each(['Trailing slash \\', 'Quote " inside', 'Line\r\nBcc: someone@example.net', '<odd@example.net>'])(
+    'keeps the sender address whatever the name: %j',
+    async (name) => {
+      transport = createStreamTransport(name, 'tickets@example.org');
+      const raw = (await transport.send({ ...message, toName: name })).raw?.toString() ?? '';
+      const from = raw.match(/^From:.*$/m)?.[0] ?? '';
+      const to = raw.match(/^To:.*$/m)?.[0] ?? '';
+
+      expect(from).toMatch(/<tickets@example\.org>$/);
+      expect(to).toMatch(/<player@example\.com>$/);
+      expect(raw).not.toMatch(/^Bcc:/m);
+    },
+  );
 });
 
 describe('the stream transport and a real SMTP server agree', () => {

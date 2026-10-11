@@ -138,7 +138,8 @@ into a second branch.
 **Spec:** `v3.md` §31.
 
 Personal data out of the tree and history, `context.md` replaced by a fictional example, demo seed and
-deployment, README with screenshots.
+deployment, README with screenshots. Added 7 Oct: the demo video (a hero loop and a walkthrough) and a
+showcase landing page at `/`, shown only on the demo deployment.
 
 ---
 

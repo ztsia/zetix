@@ -2,6 +2,7 @@
   "name": "zetix",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -18,6 +19,8 @@
     "db:seed": "tsx scripts/seed-settings.ts",
     "db:seed:dev": "tsx scripts/seed-dev.ts",
     "db:seed:email": "tsx scripts/seed-email-templates.ts",
+    "demo": "node scripts/demo.mjs",
+    "demo:seed": "tsx --conditions=react-server scripts/seed-demo.ts",
     "bootstrap-admin": "tsx scripts/bootstrap-admin.ts",
     "email:form-blast": "tsx --conditions=react-server scripts/feedback-form-blast.ts"
   },
@@ -41,9 +44,11 @@
     "imapflow": "^2.0.8",
     "input-otp": "^1.5.0",
     "konva": "^10.4.0",
+    "lenis": "1.3.26",
     "lucide-react": "^1.38.0",
     "mailparser": "^3.9.28",
     "marked": "^18.0.12",
+    "motion": "14.0.0",
     "next": "16.3.4",
     "nodemailer": "^10.0.1",
     "pdf-lib": "^1.17.1",

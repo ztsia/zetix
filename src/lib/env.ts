@@ -82,9 +82,24 @@ export type Env = z.infer<typeof schema>;
 
 let cached: Env | undefined;
 
+/**
+ * **An empty variable is an unset one.** A blank `ADMIN_EMAIL=` would otherwise
+ * fail `.email()`, and a blank `SMTP_PORT=` would coerce to 0 and fail
+ * `.positive()` — taking every `env()` caller down over a variable nothing
+ * needed. Vercel and `.env` files both make blanks easy to leave, and
+ * `pnpm demo` blanks every `.env.local` key on purpose, so that no production
+ * value can reach it (QA, module X). Blank-means-unset also stops
+ * `IMAP_HOST=''` from reading as an override.
+ */
+function present(source: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(source).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1] !== ''),
+  );
+}
+
 export function env(): Env {
   if (cached) return cached;
-  const parsed = schema.safeParse(process.env);
+  const parsed = schema.safeParse(present(process.env));
   if (!parsed.success) {
     throw new Error(
       `Invalid environment:\n${parsed.error.issues

@@ -360,7 +360,7 @@ async function main() {
       console.error('Refusing to send a placeholder link, even to you.');
       process.exit(1);
     }
-    const transport = createConfiguredTransport();
+    const transport = await createConfiguredTransport();
     try {
       for (const to of testTo) {
         const rendered = renderMessage(show, sampleBody);
@@ -444,7 +444,7 @@ async function main() {
   }
   console.log('\n');
 
-  const transport = createConfiguredTransport();
+  const transport = await createConfiguredTransport();
   let sent = 0;
   let failed = 0;
   try {

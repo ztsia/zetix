@@ -55,7 +55,19 @@ chamber orchestra's concert in September 2026.
 
 The demo is a fictional concert, *Autumn Serenade*: an open rehearsal that already happened and a
 gala three weeks away. It has 195 parties at every stage, with replies, a bounce, duplicates and
-walk-ins. You need Node 22, pnpm and Docker:
+walk-ins.
+
+**Live: <https://zetix.vercel.app>.** The landing page is at the root, with the walkthrough.
+
+| | Where | Sign in |
+|---|---|---|
+| The console, read-only | <https://zetix.vercel.app/login> | `visitor@example.org` · `autumn-serenade` |
+| The door scanner, on a phone | <https://zetix.vercel.app/scan/login> | `aisyah`, `jun-hao` or `priya` · `open-doors` |
+
+The viewer sees every screen and can change nothing. An usher can admit people at the door; the
+demo is rebuilt every Monday, which undoes it. It has no mailbox, so it sends no email.
+
+To run it yourself you need Node 22, pnpm and Docker:
 
 ```bash
 docker run -d --name zetix-test -p 55432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16

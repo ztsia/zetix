@@ -25,6 +25,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { createDoorSound, type DoorSound } from '../_lib/door-sound';
+import { TIME_ZONE } from '../_lib/guest';
 import { TEAR_STUB_TRANSFORM, TEAR_UPPER } from '../_lib/tear';
 import { Plate } from './plate';
 
@@ -103,7 +104,10 @@ export function Door({ qr, children }: { qr: TicketQr; children?: React.ReactNod
     } else {
       setScreen('admitted');
       setAdmitted(true);
-      setFirstScan(new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()));
+      // In the concert's zone, as the guest's pages beside it are, never the visitor's.
+      setFirstScan(
+        new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIME_ZONE }).format(new Date()),
+      );
       if (sound) audio.current?.admitted();
     }
 

@@ -27,7 +27,7 @@ export function Film() {
       <div className="zx-wrap">
         <header className="zx-section-head">
           <h2 id="zx-film-title" className="zx-h2">
-            One guest&rsquo;s evening, in ninety seconds.
+            One guest&rsquo;s evening, in two and a half minutes.
           </h2>
           <p className="zx-section-head__lead">
             Eleanor signs up, gets her tickets by email and walks in with no signal. Captioned, so it works on

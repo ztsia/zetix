@@ -65,7 +65,7 @@ export function Notes() {
         </div>
 
         <p className="zx-notes__more">
-          Over sixty decisions like these are on record, usually with the simpler option that was considered
+          Sixty decisions like these are on record, usually with the simpler option that was considered
           and why it was worse.{' '}
           <a className="zx-link" href={DECISIONS_URL}>
             Read the decisions
